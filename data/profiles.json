@@ -1,0 +1,132 @@
+[
+  {
+    "preset_key": "azure_drift",
+    "name": "Лазурный дрейф",
+    "power": true,
+    "brightness": 92,
+    "speed": 60,
+    "effect_code": 0,
+    "color": {
+      "r": 72,
+      "g": 163,
+      "b": 255
+    }
+  },
+  {
+    "preset_key": "neon_sunset",
+    "name": "Неоновый закат",
+    "power": true,
+    "brightness": 88,
+    "speed": 60,
+    "effect_code": 0,
+    "color": {
+      "r": 255,
+      "g": 106,
+      "b": 56
+    }
+  },
+  {
+    "preset_key": "polar_mint",
+    "name": "Полярная мята",
+    "power": true,
+    "brightness": 84,
+    "speed": 60,
+    "effect_code": 0,
+    "color": {
+      "r": 112,
+      "g": 255,
+      "b": 214
+    }
+  },
+  {
+    "preset_key": "violet_pulse",
+    "name": "Фиолетовый импульс",
+    "power": true,
+    "brightness": 86,
+    "speed": 60,
+    "effect_code": 0,
+    "color": {
+      "r": 170,
+      "g": 96,
+      "b": 255
+    }
+  },
+  {
+    "preset_key": "arctic_gold",
+    "name": "Арктическое золото",
+    "power": true,
+    "brightness": 90,
+    "speed": 60,
+    "effect_code": 0,
+    "color": {
+      "r": 255,
+      "g": 196,
+      "b": 92
+    }
+  },
+  {
+    "preset_key": "pink_neon",
+    "name": "Розовый неон",
+    "power": true,
+    "brightness": 87,
+    "speed": 60,
+    "effect_code": 0,
+    "color": {
+      "r": 255,
+      "g": 92,
+      "b": 168
+    }
+  },
+  {
+    "preset_key": "northern_sky",
+    "name": "Северное небо",
+    "power": true,
+    "brightness": 91,
+    "speed": 60,
+    "effect_code": 0,
+    "color": {
+      "r": 96,
+      "g": 138,
+      "b": 255
+    }
+  },
+  {
+    "preset_key": "moon_lavender",
+    "name": "Лунная лаванда",
+    "power": true,
+    "brightness": 85,
+    "speed": 60,
+    "effect_code": 0,
+    "color": {
+      "r": 198,
+      "g": 166,
+      "b": 255
+    }
+  },
+  {
+    "preset_key": "emerald_breeze",
+    "name": "Изумрудный бриз",
+    "power": true,
+    "brightness": 89,
+    "speed": 60,
+    "effect_code": 0,
+    "color": {
+      "r": 76,
+      "g": 232,
+      "b": 180
+    }
+  },
+  {
+    "preset_key": "amber_dawn",
+    "name": "Янтарный рассвет",
+    "power": true,
+    "brightness": 88,
+    "speed": 60,
+    "effect_code": 0,
+    "color": {
+      "r": 255,
+      "g": 148,
+      "b": 66
+    }
+  }
+]

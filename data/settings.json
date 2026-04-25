@@ -1,0 +1,21 @@
+{
+  "last_device_address": "BE:59:EF:00:01:D1",
+  "window_width": 2560,
+  "window_height": 1369,
+  "last_state": {
+    "name": "last",
+    "power": true,
+    "brightness": 12,
+    "speed": 45,
+    "effect_code": 135,
+    "color": {
+      "r": 255,
+      "g": 176,
+      "b": 98
+    }
+  },
+  "theme": "dark",
+  "theme_mode": "auto",
+  "language": "ru",
+  "quick_mode": ""
+}

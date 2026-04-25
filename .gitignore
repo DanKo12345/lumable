@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Runtime data
+data/crash_logs/
+*.log
+
+# Local/editor noise
+.idea/
+.vscode/
+*.swp
+*.tmp
+*.bak
+
+# Build outputs
+build/
+dist/
+*.spec
+aoh2_launcher_build/bin/
+aoh2_launcher_build/obj/
+
+# OS noise
+Thumbs.db
+Desktop.ini
