@@ -1,0 +1,30 @@
+LumaBLE third-party notices
+
+This file is informational and is meant to keep the app's dependencies transparent.
+It is not legal advice. Check each project's license text before publishing a final build.
+
+PySide6 / Qt for Python
+License: LGPLv3 / GPLv3 / commercial Qt licensing options.
+Project: https://www.qt.io/qt-for-python
+Used for the desktop interface.
+
+bleak
+License: MIT
+Project: https://github.com/hbldh/bleak
+Used for Bluetooth Low Energy communication.
+
+platformdirs
+License: MIT
+Project: https://github.com/platformdirs/platformdirs
+Used for standard per-user application data folders.
+
+darkdetect
+License: BSD 3-Clause
+Project: https://github.com/albertosottile/darkdetect
+Used for detecting the operating system theme.
+
+Lucide Icons
+License: ISC
+Project: https://lucide.dev
+Used for small interface icons. The bundled icon license is also stored in
+app/assets/icons/lucide/LICENSE.

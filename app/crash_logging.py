@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from types import TracebackType
 
+from app.app_info import APP_AUTHOR, APP_NAME, APP_VERSION
 from app.constants import (
     CRASH_LOG_MAX_AGE_DAYS,
     CRASH_LOG_MAX_FILES,
@@ -17,12 +18,36 @@ from app.constants import (
 )
 from app.storage import DATA_DIR
 
-
 CRASH_LOG_DIR = DATA_DIR / "crash_logs"
 FATAL_LOG_PATH = CRASH_LOG_DIR / "fatal-crashes.log"
 
 _FAULT_LOG_HANDLE = None
 _INSTALLED = False
+
+
+def _display_path(value: str | Path) -> str:
+    text = str(value)
+    try:
+        home = str(Path.home())
+    except RuntimeError:
+        return text
+    if not home:
+        return text
+
+    normalized_text = text.casefold()
+    normalized_home = home.casefold()
+    if normalized_text == normalized_home:
+        return "~"
+
+    prefix = home + "\\"
+    alt_prefix = home + "/"
+    normalized_prefix = prefix.casefold()
+    normalized_alt_prefix = alt_prefix.casefold()
+    if normalized_text.startswith(normalized_prefix):
+        return "~\\" + text[len(prefix) :]
+    if normalized_text.startswith(normalized_alt_prefix):
+        return "~/" + text[len(alt_prefix) :]
+    return text
 
 
 def _ensure_crash_log_dir() -> None:
@@ -114,13 +139,15 @@ def _build_exception_report(
     thread_name: str | None = None,
 ) -> str:
     lines = [
+        f"Application: {APP_NAME} {APP_VERSION}",
+        f"Author: {APP_AUTHOR}",
         f"Timestamp: {datetime.now().isoformat()}",
         f"Context: {context}",
         f"Thread: {thread_name or threading.current_thread().name}",
         f"Python: {sys.version}",
-        f"Executable: {sys.executable}",
+        f"Executable: {_display_path(sys.executable)}",
         f"Platform: {platform.platform()}",
-        f"Working directory: {Path.cwd()}",
+        f"Working directory: {_display_path(Path.cwd())}",
         "",
         "Traceback:",
         "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)).rstrip(),

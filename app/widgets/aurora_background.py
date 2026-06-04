@@ -28,6 +28,8 @@ class AuroraBackground(QWidget):
         self._phase_target = 0.0
         self._phase_speed = 0.32
         self._frame_interval_ms = 12
+        self._capture_compatibility = False
+        self._accent = QColor(0, 0, 0, 0)
         self._elapsed = QElapsedTimer()
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.PreciseTimer)
@@ -41,9 +43,35 @@ class AuroraBackground(QWidget):
         self._dark = dark
         self.update()
 
+    def set_capture_compatibility(self, enabled: bool) -> None:
+        self._capture_compatibility = bool(enabled)
+        self._frame_interval_ms = 1000 if self._capture_compatibility else 12
+        self._timer.setInterval(self._frame_interval_ms)
+        self.update()
+
+    def set_accent_color(self, r: int, g: int, b: int, *, enabled: bool = True) -> None:
+        """
+        Blend the current LED strip color into the aurora background.
+
+        Call this whenever the strip color changes. Pass enabled=False when the
+        strip is powered off to return to the neutral backdrop.
+        """
+        if not enabled:
+            self._accent = QColor(0, 0, 0, 0)
+        else:
+            self._accent = QColor(
+                max(0, min(255, int(r))),
+                max(0, min(255, int(g))),
+                max(0, min(255, int(b))),
+                38,
+            )
+        self.update()
+
     def _tick(self):
         if not self.isVisible() or (self.window() and self.window().isMinimized()):
             self._elapsed.restart()
+            return
+        if self._capture_compatibility:
             return
 
         elapsed_ms = self._elapsed.restart()
@@ -186,9 +214,9 @@ class AuroraBackground(QWidget):
             ]
         else:
             orbs = [
-                (0.16, 0.14, 0.42, QColor(100, 160, 255, 55)),
-                (0.78, 0.18, 0.28, QColor(150, 100, 255, 42)),
-                (0.52, 0.78, 0.38, QColor(80, 200, 220, 32)),
+                (0.16, 0.14, 0.42, QColor(80, 140, 255, 70)),
+                (0.78, 0.18, 0.28, QColor(130, 90, 255, 55)),
+                (0.52, 0.78, 0.38, QColor(60, 185, 210, 42)),
             ]
         for ox, oy, size, color in orbs:
             cx = (ox + math.sin(self._phase + ox) * 0.03) * w
@@ -200,3 +228,12 @@ class AuroraBackground(QWidget):
             edge.setAlpha(0)
             grad.setColorAt(1.0, edge)
             painter.fillRect(self.rect(), grad)
+
+        if self._accent.alpha() > 0:
+            accent_grad = QRadialGradient(self.rect().center(), max(w, h) * 0.7)
+            accent_grad.setColorAt(0.0, self._accent)
+            accent_grad.setColorAt(
+                1.0,
+                QColor(self._accent.red(), self._accent.green(), self._accent.blue(), 0),
+            )
+            painter.fillRect(self.rect(), accent_grad)

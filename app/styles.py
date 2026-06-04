@@ -6,23 +6,80 @@ from app.theme import qcolor_from_token
 def build_theme_stylesheet(tokens: dict[str, str]) -> str:
     T = tokens
     is_dark = qcolor_from_token(T["text"]).lightness() > 180
-    language_background = (
-        "qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-        " stop:0 rgba(255,255,255,0.74),"
-        " stop:0.46 rgba(236,244,255,0.66),"
-        " stop:1 rgba(198,218,248,0.50))"
-        if not is_dark
-        else T["field_alt"]
-    )
-    language_border = "rgba(255, 255, 255, 0.56)" if not is_dark else T["field_border"]
+    return "".join([
+        _base_styles(T),
+        _hero_styles(T, is_dark),
+        _card_styles(T),
+        _form_styles(T, is_dark),
+        _scrollbar_styles(T, is_dark),
+    ])
+
+
+# ── base ──────────────────────────────────────────────────────────────
+
+def _base_styles(T: dict) -> str:
     return f"""
         QMainWindow, #rootWidget, #bodyCanvas, #bodyScroll, QScrollArea {{
+            background: transparent;
+        }}
+        #contentShell {{
             background: transparent;
         }}
         QLabel {{
             background: transparent;
             color: {T["text"]};
         }}
+        #statusChip, #valueChip {{
+            background: {T["chip"]};
+            border: 1px solid {T["chip_border"]};
+            border-radius: 14px;
+            color: {T["text"]};
+            font-size: 12px;
+            font-weight: 600;
+            padding: 0 12px;
+        }}
+        #sliderLabel {{
+            color: {T["text_soft"]};
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        #lastDeviceHint {{
+            color: {T["muted"]};
+            font-size: 11px;
+            font-weight: 600;
+            padding-left: 2px;
+        }}
+        #previewFrame {{
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 rgba(255,255,255,0.08),
+                stop:1 {T["surface_soft"]});
+            border: 1px solid {T["surface_border"]};
+            border-radius: 24px;
+        }}
+        #previewInfo {{
+            color: {T["text"]};
+            font-size: 12px;
+            font-weight: 600;
+        }}
+    """
+
+
+# ── hero panel ────────────────────────────────────────────────────────
+
+def _hero_styles(T: dict, is_dark: bool) -> str:
+    lang_bg = (
+        "qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+        " stop:0 rgba(255,255,255,0.74),"
+        " stop:0.46 rgba(236,244,255,0.66),"
+        " stop:1 rgba(198,218,248,0.50))"
+        if not is_dark else
+        "qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+        " stop:0 rgba(255,255,255,0.14),"
+        " stop:0.48 rgba(255,255,255,0.08),"
+        " stop:1 rgba(255,255,255,0.045))"
+    )
+    lang_border = "rgba(255, 255, 255, 0.56)" if not is_dark else "rgba(255, 255, 255, 0.13)"
+    return f"""
         #heroPanel {{
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                 stop:0 {T["surface_soft"]},
@@ -45,19 +102,29 @@ def build_theme_stylesheet(tokens: dict[str, str]) -> str:
             font-weight: 500;
             qproperty-alignment: 'AlignHCenter | AlignVCenter';
         }}
-        #heroSignature {{
+        #heroVersionText {{
             color: {T["muted"]};
             font-size: 10px;
-            font-style: italic;
-            font-weight: 500;
-            padding-left: 10px;
-            padding-right: 8px;
+            font-weight: 600;
+            padding: 0 4px 2px 0;
+        }}
+        #authorEditionText {{
+            background: transparent;
+            border: none;
+            color: {T["muted"]};
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 0 0 0;
         }}
         #languageCombo {{
-            background: {language_background};
-            border: 1px solid {language_border};
+            background: {lang_bg};
+            border: 1px solid {lang_border};
+            min-height: 40px;
+            max-height: 40px;
             padding-left: 14px;
             padding-right: 14px;
+            padding-top: 0;
+            padding-bottom: 0;
             font-size: 12px;
             font-weight: 600;
         }}
@@ -65,10 +132,19 @@ def build_theme_stylesheet(tokens: dict[str, str]) -> str:
             background: transparent;
             border: none;
             color: {T["text"]};
+            min-height: 40px;
+            max-height: 40px;
             padding: 0;
             font-size: 12px;
             font-weight: 600;
         }}
+    """
+
+
+# ── glass cards ───────────────────────────────────────────────────────
+
+def _card_styles(T: dict) -> str:
+    return f"""
         #glassCard {{
             background: transparent;
             border: none;
@@ -91,33 +167,16 @@ def build_theme_stylesheet(tokens: dict[str, str]) -> str:
             line-height: 1.25em;
             qproperty-alignment: 'AlignHCenter | AlignTop';
         }}
-        #statusChip, #valueChip {{
-            background: {T["chip"]};
-            border: 1px solid {T["chip_border"]};
-            border-radius: 14px;
-            color: {T["text"]};
-            font-size: 12px;
-            font-weight: 600;
-            padding: 0 12px;
-        }}
-        #sliderLabel {{
-            color: {T["text_soft"]};
-            font-size: 12px;
-            font-weight: 600;
-        }}
-        #previewFrame {{
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 rgba(255,255,255,0.08),
-                stop:1 {T["surface_soft"]});
-            border: 1px solid {T["surface_border"]};
-            border-radius: 24px;
-        }}
-        #previewInfo {{
-            color: {T["text"]};
-            font-size: 12px;
-            font-weight: 600;
-        }}
-        QLineEdit, QComboBox, QListWidget, QTextEdit {{
+    """
+
+
+# ── form elements ─────────────────────────────────────────────────────
+
+def _form_styles(T: dict, is_dark: bool) -> str:
+    item_bg     = "rgba(255,255,255,0.07)" if is_dark else "rgba(100,130,210,0.07)"
+    item_border = "rgba(255,255,255,0.09)" if is_dark else "rgba(100,130,210,0.18)"
+    return f"""
+        QLineEdit, QComboBox, QListWidget, QTextEdit, QTimeEdit {{
             background: {T["field"]};
             border: 1px solid {T["field_border"]};
             border-radius: 16px;
@@ -136,13 +195,13 @@ def build_theme_stylesheet(tokens: dict[str, str]) -> str:
             background: {T["field_alt"]};
             border: 1px solid {T["field_border"]};
         }}
-        QLineEdit {{
+        QLineEdit, QTimeEdit {{
             min-height: 44px;
         }}
         QComboBox {{
             min-height: 44px;
         }}
-        QLineEdit:focus, QComboBox:focus, QListWidget:focus, QTextEdit:focus {{
+        QLineEdit:focus, QComboBox:focus, QListWidget:focus, QTextEdit:focus, QTimeEdit:focus {{
             border: 1px solid rgba(94, 130, 210, 0.58);
         }}
         QComboBox::drop-down {{
@@ -156,15 +215,35 @@ def build_theme_stylesheet(tokens: dict[str, str]) -> str:
             selection-background-color: {T["list_sel"]};
             outline: none;
         }}
-        QListWidget::item {{
-            padding: 12px 14px;
+        QMenu {{
+            background: {T["field_alt"]};
+            border: 1px solid {T["field_border"]};
             border-radius: 12px;
-            margin: 3px 0;
+            padding: 6px;
+            color: {T["text"]};
+            font-size: 13px;
+            font-weight: 500;
+        }}
+        QMenu::item {{
+            padding: 8px 16px;
+            border-radius: 8px;
+        }}
+        QMenu::item:selected {{
+            background: {T["list_sel"]};
+        }}
+        QListWidget::item {{
+            padding: 10px 14px;
+            border-radius: 10px;
+            margin: 2px 4px;
+            background: {item_bg};
+            border: 1px solid {item_border};
             font-size: 13px;
             font-weight: 500;
         }}
         QListWidget::item:selected {{
             background: {T["list_sel"]};
+            border-left: 2px solid {T["accent_start"]};
+            padding-left: 10px;
         }}
         QListWidget::item:hover {{
             background: {T["list_hover"]};
@@ -182,16 +261,27 @@ def build_theme_stylesheet(tokens: dict[str, str]) -> str:
             padding: 14px 16px;
             line-height: 1.35em;
         }}
-        #logOutput {{
+        #logOutput, #diagnosticsOutput {{
             background: {T["field"]};
             border: 1px solid {T["field_border"]};
-            color: {T["text_soft"]};
-            font-size: 11px;
+            border-radius: 12px;
+            color: {T["text"]};
+            font-size: 12px;
+            line-height: 1.6em;
+            padding: 16px 18px;
         }}
+    """
+
+
+# ── scrollbars ────────────────────────────────────────────────────────
+
+def _scrollbar_styles(T: dict, is_dark: bool) -> str:
+    track = "rgba(0, 0, 0, 0.04)" if not is_dark else "rgba(255, 255, 255, 0.06)"
+    return f"""
         QScrollBar:vertical {{
             width: 14px;
             margin: 8px 3px 8px 7px;
-            background: rgba(255, 255, 255, 0.06);
+            background: {track};
             border-radius: 5px;
         }}
         QScrollBar::handle:vertical {{
@@ -206,4 +296,4 @@ def build_theme_stylesheet(tokens: dict[str, str]) -> str:
             background: transparent;
             border: none;
         }}
-        """
+    """

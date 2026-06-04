@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QEasingCurve, Property, QRectF, QSequentialAnimationGroup, Qt, QPropertyAnimation
+from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, QSequentialAnimationGroup, Qt
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen, QRadialGradient
 from PySide6.QtWidgets import QSlider
 
@@ -71,6 +71,7 @@ class LiquidSlider(QSlider):
             "blue": QColor("#76a9ff"),
             "yellow": QColor("#e7c563"),
             "purple": QColor("#b58fff"),
+            "white": QColor("#f4f7ff"),
             "neutral": QColor("#8fbfff"),
         }
         return QColor(palette.get(self.accent, palette["neutral"]))
@@ -216,6 +217,8 @@ class LiquidSlider(QSlider):
         accent = self._accent_color()
         palette = theme_manager.palette
         groove_color = qcolor_from_token(palette["surface_line"])
+        if not theme_manager.is_dark:
+            groove_color.setAlpha(72)
         handle_fill = QColor(255, 255, 255, 245)
         handle_border = QColor(255, 255, 255, 90) if theme_manager.is_dark else QColor(80, 130, 210, 90)
 

@@ -79,8 +79,8 @@ QUICK_MODES: tuple[QuickMode, ...] = (
         accent="#9a8cff",
         power=True,
         brightness=78,
-        speed=28,
-        effect_code=0x89,
+        speed=35,
+        effect_code=0x8A,
         color=(170, 96, 255),
     ),
 )

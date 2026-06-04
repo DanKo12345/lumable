@@ -1,0 +1,47 @@
+[project]
+name = "lumable"
+version = "0.1.1"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["error::RuntimeWarning"]
+
+[tool.codex]
+file_encoding = "utf-8"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+    "UP",
+    "C4",
+    "C90",
+    "RUF",
+]
+ignore = [
+    # The PySide UI code often benefits from descriptive labels and signal wiring
+    # that are wider than a strict formatter-friendly line.
+    "E501",
+    # Localized UI strings legitimately contain full-width punctuation.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # Qt classes and tests use class-level caches / small fakes deliberately.
+    "RUF012",
+]
+mccabe.max-complexity = 20
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]

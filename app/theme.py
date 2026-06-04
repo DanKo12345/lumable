@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from PySide6.QtGui import QColor
 
-
 DARK = {
     "window_start": "#09112b",
     "window_end": "#0d1136",
@@ -36,7 +35,7 @@ LIGHT = {
     "surface": "rgba(255, 255, 255, 0.72)",
     "surface_soft": "rgba(240, 245, 255, 0.82)",
     "surface_strong": "rgba(255, 255, 255, 0.92)",
-    "surface_border": "rgba(100, 130, 200, 0.28)",
+    "surface_border": "rgba(80, 110, 190, 0.42)",
     "surface_line": "rgba(100, 130, 200, 0.20)",
     "text": "#0f1a3a",
     "text_soft": "rgba(15, 30, 70, 0.78)",
@@ -52,7 +51,7 @@ LIGHT = {
     "success_end": "#3aab8f",
     "chip": "rgba(180, 205, 255, 0.38)",
     "chip_border": "rgba(100, 140, 220, 0.32)",
-    "list_sel": "rgba(72, 132, 255, 0.18)",
+    "list_sel": "rgba(72, 132, 255, 0.28)",
     "list_hover": "rgba(72, 132, 255, 0.08)",
     "scroll": "rgba(80, 120, 200, 0.35)",
 }

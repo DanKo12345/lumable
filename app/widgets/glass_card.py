@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
-from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
+from app.widgets.section_icon import SectionIcon
 
 
 class GlassCard(QFrame):
-    def __init__(self, title: str, subtitle: str | None = None, parent=None):
+    def __init__(self, title: str, subtitle: str | None = None, parent=None, icon: str | None = None):
         super().__init__(parent)
         self.setObjectName("glassCard")
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -18,12 +19,26 @@ class GlassCard(QFrame):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 22)
         outer.setSpacing(6)
+        self.icon_widget = SectionIcon(icon, self) if icon else None
+        self.header_widget = QWidget(self)
+        self.header_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.header_widget.setMinimumHeight(32)
         self.title_label = QLabel(title)
         self.title_label.setObjectName("cardTitle")
         self.title_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.title_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        self.title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.title_label.setMinimumHeight(32)
-        outer.addWidget(self.title_label)
+        header = QHBoxLayout(self.header_widget)
+        self.header_layout = header
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(0)
+        header.addStretch(1)
+        if self.icon_widget is not None:
+            header.addWidget(self.icon_widget, 0, Qt.AlignVCenter)
+            header.addSpacing(10)
+        header.addWidget(self.title_label, 0, Qt.AlignVCenter)
+        header.addStretch(1)
+        outer.addWidget(self.header_widget)
         if subtitle:
             self.subtitle_label = QLabel(subtitle)
             self.subtitle_label.setWordWrap(True)
@@ -75,7 +90,7 @@ class GlassCard(QFrame):
         if theme_manager.is_dark:
             inner_pen = QColor(255, 255, 255, 72)
         else:
-            inner_pen = QColor(90, 130, 210, 58)
+            inner_pen = QColor(80, 120, 200, 85)
         painter.setPen(QPen(inner_pen, 1.0))
         painter.drawRoundedRect(inner, radius - 4.0, radius - 4.0)
 
@@ -86,9 +101,9 @@ class GlassCard(QFrame):
         path.addRoundedRect(inner, radius - 4.0, radius - 4.0)
         painter.fillPath(path, shine)
 
-        edge = QPen(QColor(255, 255, 255, 22 if theme_manager.is_dark else 7), 1.0)
-        painter.setPen(edge)
-        painter.drawRoundedRect(rect, radius, radius)
+        if theme_manager.is_dark:
+            painter.setPen(QPen(QColor(255, 255, 255, 22), 1.0))
+            painter.drawRoundedRect(rect, radius, radius)
 
         if not theme_manager.is_dark:
             painter.setPen(QPen(QColor(90, 130, 210, 66), 1.0))

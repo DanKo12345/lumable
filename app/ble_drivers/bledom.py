@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from app.ble_drivers.base import EffectPreset, LedBleDriver, clamp, normalize_uuid, packet, scale_percent_to_byte
-
 
 TARGET_SERVICE_UUID = "92053be9-a2b2-d3c5-eab1-15e3cea66b2c"
 
@@ -34,10 +34,6 @@ def build_alt_brightness_command(value: int) -> bytes:
     return packet(0x56, 0x00, 0x00, 0x00, clamp(value, 0, 255), 0x0F, 0xAA)
 
 
-def build_effect_command(code: int) -> bytes:
-    return packet(0x7E, 0x00, 0x03, clamp(code, 0x80, 0x9C), 0x03, 0x00, 0x00, 0x00, 0xEF)
-
-
 def build_speed_command(value: int) -> bytes:
     return packet(0x7E, 0x00, 0x02, clamp(value, 0, 100), 0x00, 0x00, 0x00, 0x00, 0xEF)
 
@@ -46,8 +42,8 @@ BLEDOM_EFFECTS: tuple[EffectPreset, ...] = (
     EffectPreset("static_color", 0),
     EffectPreset("jump_rgb", 0x87),
     EffectPreset("jump_rgb_cmyw", 0x88),
-    EffectPreset("smooth_rainbow", 0x89),
-    EffectPreset("smooth_spectrum", 0x8A),
+    EffectPreset("fade_spectrum", 0x89),
+    EffectPreset("smooth_rainbow", 0x8A),
     EffectPreset("fade_red", 0x8B),
     EffectPreset("fade_green", 0x8C),
     EffectPreset("fade_blue", 0x8D),
@@ -67,6 +63,12 @@ BLEDOM_EFFECTS: tuple[EffectPreset, ...] = (
     EffectPreset("flash_magenta", 0x9B),
     EffectPreset("flash_white", 0x9C),
 )
+
+BLEDOM_EFFECT_CODES = frozenset(effect.code for effect in BLEDOM_EFFECTS if effect.code != 0)
+
+
+def build_effect_command(code: int) -> bytes:
+    return packet(0x7E, 0x00, 0x03, int(code), 0x03, 0x00, 0x00, 0x00, 0xEF)
 
 BLEDOM_DETECTION_SERVICE_UUIDS = frozenset(
     {
@@ -110,6 +112,51 @@ class BledomDriver(LedBleDriver):
     )
     effects = BLEDOM_EFFECTS
 
+    def __init__(self) -> None:
+        self._working_variants: dict[str, str] = {}
+
+    def reset_runtime_state(self) -> None:
+        self._working_variants = {}
+
+    def remember_working_payload(self, payload: bytes) -> None:
+        if not payload:
+            return
+        kind = self._payload_kind(payload)
+        if kind is None:
+            return
+        if payload[0] == 0x7E:
+            self._working_variants[kind] = "primary"
+        elif payload[0] in {0xCC, 0x56}:
+            self._working_variants[kind] = "alt"
+
+    def _variant_payloads(self, kind: str, primary: bytes, alternate: bytes, *, prefer_alt_first: bool = False) -> list[bytes]:
+        variant = self._working_variants.get(kind)
+        if variant == "primary":
+            return [primary]
+        if variant == "alt":
+            return [alternate]
+        if prefer_alt_first:
+            return [alternate, primary]
+        return [primary, alternate]
+
+    @staticmethod
+    def _payload_kind(payload: bytes) -> str | None:
+        if len(payload) >= 9 and payload[0] == 0x7E:
+            command = payload[2]
+            if command == 0x04:
+                return "power"
+            if command == 0x05:
+                return "color"
+            if command == 0x01:
+                return "brightness"
+        if len(payload) == 3 and payload[0] == 0xCC:
+            return "power"
+        if len(payload) == 7 and payload[0] == 0x56:
+            if payload[1:4] == b"\x00\x00\x00" and payload[5:] == b"\x0f\xaa":
+                return "brightness"
+            return "color"
+        return None
+
     def matches_scan(self, name: str, service_uuids: Iterable[str]) -> bool:
         lowered_name = (name or "").lower()
         normalized_service_uuids = {normalize_uuid(uuid) for uuid in service_uuids}
@@ -135,18 +182,21 @@ class BledomDriver(LedBleDriver):
         )
 
     def power_payloads(self, enabled: bool) -> list[bytes]:
-        return [build_power_command(enabled), build_alt_power_command(enabled)]
+        return self._variant_payloads("power", build_power_command(enabled), build_alt_power_command(enabled))
 
     def color_payloads(self, red: int, green: int, blue: int) -> list[bytes]:
-        return [build_color_command(red, green, blue), build_alt_color_command(red, green, blue)]
+        return self._variant_payloads("color", build_color_command(red, green, blue), build_alt_color_command(red, green, blue))
 
     def brightness_payloads(self, value_percent: int) -> list[bytes]:
-        return [
+        return self._variant_payloads(
+            "brightness",
             build_brightness_command(value_percent),
             build_alt_brightness_command(scale_percent_to_byte(value_percent)),
-        ]
+        )
 
     def effect_payload(self, code: int) -> bytes | None:
+        if int(code) not in BLEDOM_EFFECT_CODES:
+            return None
         return build_effect_command(code)
 
     def speed_payload(self, value_percent: int) -> bytes | None:

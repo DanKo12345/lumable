@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from bleak.backends.characteristic import BleakGATTCharacteristic
 
@@ -32,6 +33,8 @@ class EffectPreset:
 class LedBleDriver:
     id = "generic"
     display_name = "Generic BLE LED"
+    transport = "BLE"
+    protocol_notes = ""
     name_tokens: tuple[str, ...] = ()
     scan_service_uuids: frozenset[str] = frozenset()
     known_write_uuids: frozenset[str] = frozenset()
@@ -81,14 +84,10 @@ class LedBleDriver:
                 char_uuid = normalize_uuid(characteristic.uuid)
                 looks_writable = bool({"write", "write-without-response"} & properties)
 
-                if char_uuid in self.known_write_uuids and known_uuid_match is None:
+                if looks_writable and char_uuid in self.known_write_uuids and known_uuid_match is None:
                     known_uuid_match = characteristic
 
                 if not looks_writable:
-                    if char_uuid in self.known_write_uuids:
-                        exact_match = exact_match or characteristic
-                    elif service_uuid in self.interesting_service_uuids and service_match is None:
-                        service_match = characteristic
                     continue
 
                 if char_uuid in self.known_write_uuids:
@@ -105,13 +104,11 @@ class LedBleDriver:
         seen: set[str] = set()
 
         for service in services:
-            service_uuid = normalize_uuid(service.uuid)
             for characteristic in service.characteristics:
                 char_uuid = normalize_uuid(characteristic.uuid)
                 properties = {prop.lower() for prop in characteristic.properties}
                 looks_writable = bool({"write", "write-without-response"} & properties)
-                looks_relevant = char_uuid in self.known_write_uuids or service_uuid in self.interesting_service_uuids
-                if not looks_writable and not looks_relevant:
+                if not looks_writable:
                     continue
                 if char_uuid in seen:
                     continue
@@ -132,5 +129,11 @@ class LedBleDriver:
     def effect_payload(self, code: int) -> bytes | None:
         return None
 
+    def effect_payload_with_speed(self, code: int, value_percent: int) -> bytes | None:
+        return self.effect_payload(code)
+
     def speed_payload(self, value_percent: int) -> bytes | None:
         return None
+
+    def supports_effect_speed(self) -> bool:
+        return self.speed_payload(50) is not None

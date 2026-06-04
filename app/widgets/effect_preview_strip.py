@@ -2,11 +2,68 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QEasingCurve, QElapsedTimer, QPropertyAnimation, QRectF, Qt, QTimer, Property
+from PySide6.QtCore import Property, QEasingCurve, QElapsedTimer, QPropertyAnimation, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
+
+
+def effect_semantic_key(effect_key: str, effect_code: int) -> str:
+    key = effect_key or "static_color"
+    code = int(effect_code)
+    if key.startswith("banlanx_effect_"):
+        banlanx_effects = {
+            0x01: "smooth_rainbow",
+            0x02: "jump_rgb",
+            0x03: "jump_rgb_cmyw",
+            0x04: "fade_spectrum",
+            0x05: "flash_spectrum",
+            0x06: "fade_red",
+            0x07: "fade_green",
+            0x08: "fade_blue",
+            0x09: "fade_yellow",
+            0x0A: "fade_cyan",
+            0x0B: "fade_magenta",
+            0x0C: "fade_white",
+            0x0D: "flash_red",
+            0x0E: "flash_green",
+            0x0F: "flash_blue",
+            0x10: "flash_yellow",
+            0x11: "flash_cyan",
+            0x12: "flash_magenta",
+            0x13: "flash_white",
+            0x14: "fade_red_green",
+            0x15: "fade_red_blue",
+            0x16: "fade_green_blue",
+            0x17: "smooth_spectrum",
+        }
+        return banlanx_effects.get(code, "smooth_spectrum")
+    if key.startswith(("triones_", "magic_home_")):
+        shared_effects = {
+            0x25: "smooth_rainbow",
+            0x26: "fade_red",
+            0x27: "fade_green",
+            0x28: "fade_blue",
+            0x29: "fade_yellow",
+            0x2A: "fade_cyan",
+            0x2B: "fade_magenta",
+            0x2C: "fade_white",
+            0x2D: "fade_red_green",
+            0x2E: "fade_red_blue",
+            0x2F: "fade_green_blue",
+            0x30: "flash_spectrum",
+            0x31: "flash_red",
+            0x32: "flash_green",
+            0x33: "flash_blue",
+            0x34: "flash_yellow",
+            0x35: "flash_cyan",
+            0x36: "flash_magenta",
+            0x37: "flash_white",
+            0x38: "jump_rgb_cmyw",
+        }
+        return shared_effects.get(code, key)
+    return key
 
 
 class EffectPreviewStrip(QWidget):
@@ -21,6 +78,7 @@ class EffectPreviewStrip(QWidget):
         self._effect_code = 0
         self._elapsed = QElapsedTimer()
         self._elapsed.start()
+        self._last_tick_ms = 0
         self.setMinimumHeight(54)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -38,6 +96,10 @@ class EffectPreviewStrip(QWidget):
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
+    @staticmethod
+    def _phase_from_elapsed(elapsed_ms: int, cycle_ms: float) -> float:
+        return ((elapsed_ms % max(1.0, cycle_ms)) / max(1.0, cycle_ms)) * (math.pi * 2.0)
+
     def get_intensity(self) -> float:
         return self._intensity
 
@@ -49,13 +111,25 @@ class EffectPreviewStrip(QWidget):
 
     def _tick(self) -> None:
         elapsed_ms = max(0, self._elapsed.elapsed())
-        if self._effect_key.startswith("jump"):
+        delta_ms = max(0, elapsed_ms - self._last_tick_ms)
+        self._last_tick_ms = elapsed_ms
+        semantic_key = effect_semantic_key(self._effect_key, self._effect_code)
+        if semantic_key.startswith("jump"):
             palette_size = len(self._effect_palette())
             step_ms = self._jump_step_duration_ms()
             cycle_ms = max(1.0, step_ms * palette_size)
+            self._phase = self._phase_from_elapsed(elapsed_ms, cycle_ms)
+            self.update()
+            return
+        if semantic_key.startswith("flash"):
+            self._phase = self._phase_from_elapsed(elapsed_ms, self._flash_cycle_duration_ms())
+            self.update()
+            return
+        if "rainbow" in semantic_key or "spectrum" in semantic_key:
+            cycle_ms = self._rainbow_cycle_duration_ms()
         else:
             cycle_ms = self._cycle_duration_ms()
-        self._phase = ((elapsed_ms % cycle_ms) / cycle_ms) * (math.pi * 2.0)
+        self._phase = (self._phase + (delta_ms / cycle_ms) * (math.pi * 2.0)) % (math.pi * 2.0)
         self.update()
 
     def _cycle_duration_ms(self) -> float:
@@ -66,11 +140,18 @@ class EffectPreviewStrip(QWidget):
         # BLEDOM jump effects switch in discrete color steps; use absolute
         # elapsed time so skipped UI frames never accumulate visible drift.
         speed_ratio = self._speed / 100.0
-        return 3200.0 - speed_ratio * 2000.0
+        return 1800.0 - speed_ratio * 1100.0
+
+    def _flash_cycle_duration_ms(self) -> float:
+        speed_ratio = self._speed / 100.0
+        return 3600.0 - speed_ratio * 2300.0
+
+    def _rainbow_cycle_duration_ms(self) -> float:
+        speed_ratio = self._speed / 100.0
+        return 8600.0 - speed_ratio * 6400.0
 
     def set_speed(self, value: int) -> None:
         self._speed = max(0, min(100, int(value)))
-        self._timer.setInterval(max(18, min(60, 72 - self._speed // 2)))
         self.update()
 
     def set_effect(self, effect_key: str, effect_code: int, *, reset_phase: bool = False) -> None:
@@ -83,6 +164,7 @@ class EffectPreviewStrip(QWidget):
     def restart(self) -> None:
         self._phase = 0.0
         self._elapsed.restart()
+        self._last_tick_ms = 0
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -134,15 +216,15 @@ class EffectPreviewStrip(QWidget):
         painter.drawRoundedRect(rect.adjusted(1.0, 1.0, -1.0, -1.0), radius - 1.0, radius - 1.0)
 
     def _paint_effect_material(self, painter: QPainter, path: QPainterPath, rect: QRectF, is_dark: bool) -> None:
-        key = self._effect_key
+        key = effect_semantic_key(self._effect_key, self._effect_code)
         if key.startswith("flash"):
             self._paint_flash(painter, path, rect, is_dark)
         elif key.startswith("jump"):
             self._paint_jump(painter, path, rect, is_dark)
-        elif "rainbow" in key or "spectrum" in key:
-            self._paint_rainbow(painter, path, rect, is_dark)
         elif key.startswith("fade"):
             self._paint_fade(painter, path, rect, is_dark)
+        elif "rainbow" in key or "spectrum" in key:
+            self._paint_rainbow(painter, path, rect, is_dark)
         else:
             self._paint_static(painter, path, rect, is_dark)
 
@@ -197,9 +279,10 @@ class EffectPreviewStrip(QWidget):
         painter.fillPath(path, breathing)
 
     def _paint_flash(self, painter: QPainter, path: QPainterPath, rect: QRectF, is_dark: bool) -> None:
-        color = self._cycle_color(self._effect_palette()) if "spectrum" in self._effect_key else self._single_effect_color()
-        raw = (math.sin(self._phase * 3.2) + 1.0) * 0.5
-        pulse = 1.0 if raw > 0.78 else 0.16
+        semantic_key = effect_semantic_key(self._effect_key, self._effect_code)
+        color = self._cycle_color(self._effect_palette()) if "spectrum" in semantic_key else self._single_effect_color()
+        progress = self._phase / (math.pi * 2.0)
+        pulse = 1.0 if progress < 0.42 else 0.12
         color.setAlpha(int((138 if is_dark else 112) * pulse))
         painter.fillPath(path, color)
 
@@ -214,41 +297,41 @@ class EffectPreviewStrip(QWidget):
     def _paint_rainbow(self, painter: QPainter, path: QPainterPath, rect: QRectF, is_dark: bool) -> None:
         width = max(1.0, rect.width())
         phase_progress = self._phase / (math.pi * 2.0)
-        offset = (phase_progress * 0.46 + math.sin(self._phase) * 0.06) * width
-        wave = QLinearGradient(rect.left() - width * 0.38 + offset, rect.center().y(), rect.right() + offset, rect.center().y())
-        alpha = int(92 * self._intensity) if is_dark else int(76 * self._intensity)
-        wave.setColorAt(0.00, QColor(95, 230, 218, alpha))
-        wave.setColorAt(0.20, QColor(88, 170, 255, alpha + 8))
-        wave.setColorAt(0.42, QColor(183, 130, 255, alpha))
-        wave.setColorAt(0.66, QColor(255, 141, 150, max(42, alpha - 12)))
-        wave.setColorAt(0.84, QColor(255, 216, 102, max(38, alpha - 18)))
-        wave.setColorAt(1.00, QColor(114, 234, 201, alpha))
-        painter.fillPath(path, wave)
+        alpha = 138 if is_dark else 118
+        rainbow = QLinearGradient(rect.left(), rect.center().y(), rect.right(), rect.center().y())
+        stops = 14
+        for index in range(stops + 1):
+            position = index / stops
+            hue = (position + phase_progress) % 1.0
+            rainbow.setColorAt(position, QColor.fromHsvF(hue, 0.64, 1.0, alpha / 255.0))
+        painter.fillPath(path, rainbow)
 
-        crest_y = rect.center().y() + math.sin(self._phase * 1.35) * rect.height() * 0.16
-        crest = QRadialGradient(rect.left() + width * (0.46 + math.sin(self._phase * 0.85) * 0.18), crest_y, width * 0.52)
-        crest.setColorAt(0.0, QColor(255, 255, 255, 30 if is_dark else 42))
-        crest.setColorAt(0.45, QColor(145, 225, 255, 18 if is_dark else 26))
-        crest.setColorAt(1.0, QColor(255, 255, 255, 0))
-        painter.fillPath(path, crest)
-
-        ribbon = QPainterPath()
+        wave_path = QPainterPath()
         y_mid = rect.center().y()
-        amp = rect.height() * 0.18
-        ribbon.moveTo(rect.left() - 8.0, y_mid + math.sin(self._phase) * amp)
-        ribbon.cubicTo(
-            rect.left() + width * 0.28,
-            y_mid - amp * 1.4,
-            rect.left() + width * 0.58,
-            y_mid + amp * 1.5,
-            rect.right() + 8.0,
-            y_mid + math.sin(self._phase + 1.2) * amp,
-        )
-        painter.setPen(QPen(QColor(255, 255, 255, 42 if is_dark else 58), 2.0, Qt.SolidLine, Qt.RoundCap))
-        painter.drawPath(ribbon)
+        amp = rect.height() * 0.34
+        samples = 72
+        cycles = 1.65
+        phase = self._phase * 1.18
+        for index in range(samples + 1):
+            progress = index / samples
+            x = rect.left() - 18.0 + (width + 36.0) * progress
+            envelope = math.sin(math.pi * progress)
+            y = y_mid + math.sin(progress * math.pi * 2.0 * cycles + phase) * amp * envelope
+            if index == 0:
+                wave_path.moveTo(x, y)
+            else:
+                wave_path.lineTo(x, y)
+
+        glow = QColor(255, 255, 255, 26 if is_dark else 36)
+        painter.setPen(QPen(glow, 12.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawPath(wave_path)
+        painter.setPen(QPen(QColor(174, 224, 255, 42 if is_dark else 54), 7.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawPath(wave_path)
+        painter.setPen(QPen(QColor(255, 255, 255, 82 if is_dark else 104), 2.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawPath(wave_path)
 
     def _single_effect_color(self) -> QColor:
-        key = self._effect_key
+        key = effect_semantic_key(self._effect_key, self._effect_code)
         colors = {
             "red": QColor(255, 92, 112),
             "green": QColor(94, 226, 178),
@@ -264,11 +347,14 @@ class EffectPreviewStrip(QWidget):
         return QColor(118, 174, 255)
 
     def _gradient_effect_colors(self) -> list[QColor]:
-        if self._effect_key == "fade_red_green":
+        key = effect_semantic_key(self._effect_key, self._effect_code)
+        if key == "fade_spectrum":
+            return self._effect_palette()
+        if key == "fade_red_green":
             return [QColor(255, 92, 112), QColor(94, 226, 178)]
-        if self._effect_key == "fade_red_blue":
+        if key == "fade_red_blue":
             return [QColor(255, 92, 112), QColor(118, 174, 255)]
-        if self._effect_key == "fade_green_blue":
+        if key == "fade_green_blue":
             return [QColor(94, 226, 178), QColor(118, 174, 255)]
         return [self._single_effect_color()]
 
@@ -290,7 +376,8 @@ class EffectPreviewStrip(QWidget):
         )
 
     def _effect_palette(self) -> list[QColor]:
-        if self._effect_key == "jump_rgb":
+        key = effect_semantic_key(self._effect_key, self._effect_code)
+        if key == "jump_rgb":
             return [QColor(255, 92, 112), QColor(94, 226, 178), QColor(118, 174, 255)]
         return [
             QColor(255, 92, 112),

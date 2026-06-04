@@ -2,14 +2,37 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from PySide6.QtCore import QObject, Signal
+from concurrent.futures import CancelledError
+
 from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
+from PySide6.QtCore import QObject, Signal
 
 from app.ble_drivers import EFFECTS, detect_connected_driver, detect_scan_driver
 from app.ble_drivers.base import LedBleDriver, clamp
 from app.localization import localization_manager
+
+CONNECT_TIMEOUT_SECONDS = 10.0
+FIND_DEVICE_TIMEOUT_SECONDS = 8.0
+WRITE_TIMEOUT_SECONDS = 3.0
+WRITE_RETRY_ATTEMPTS = 2
+WRITE_RETRY_DELAY_SECONDS = 0.12
+RECONNECT_ATTEMPTS = 3
+RECONNECT_DELAY_SECONDS = 2.0
+
+
+class ProtocolCompatibilityError(RuntimeError):
+    pass
+
+
+class ConnectionLostError(RuntimeError):
+    pass
+
+
+BLE_OPERATION_ERRORS = (asyncio.TimeoutError, BleakError, ConnectionLostError, OSError, ProtocolCompatibilityError, RuntimeError)
+DRIVER_CAPABILITY_ERRORS = (AttributeError, LookupError, NotImplementedError, TypeError, ValueError)
 
 
 class BleController(QObject):
@@ -17,6 +40,7 @@ class BleController(QObject):
     devices_discovered = Signal(list)
     connected_changed = Signal(bool, str)
     error_occurred = Signal(str)
+    shutdown_finished = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -33,27 +57,112 @@ class BleController(QObject):
         self._last_green = 182
         self._last_blue = 255
         self._last_brightness = 100
+        self._current_effect_code = 0
+        self._shutdown_started = False
+        self._manual_disconnect_requested = False
+        self._operation_lock = asyncio.Lock()
+        self._preferred_payload_indices: dict[tuple[str, tuple[tuple[int, ...], ...]], int] = {}
+        self._reconnect_task: asyncio.Task | None = None
+        self._reconnect_address = ""
+        self._ble_history: list[dict[str, str]] = []
+        self._last_ble_error = ""
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
-        self._loop.run_forever()
+        try:
+            self._loop.run_forever()
+        finally:
+            self._drain_pending_tasks()
+            self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+            self._loop.close()
 
     def shutdown(self) -> None:
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
         if self._client is not None:
             future = asyncio.run_coroutine_threadsafe(self._disconnect(), self._loop)
             future.result(timeout=5)
         self._loop.call_soon_threadsafe(self._loop.stop)
+        if threading.current_thread() is not self._thread:
+            self._thread.join(timeout=5)
+
+    def shutdown_async(self) -> None:
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
+
+        if not self._loop.is_running():
+            self.shutdown_finished.emit()
+            return
+
+        if self._client is None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self.shutdown_finished.emit()
+            return
+
+        future = asyncio.run_coroutine_threadsafe(self._disconnect(), self._loop)
+
+        def _finish(_future) -> None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self.shutdown_finished.emit()
+
+        future.add_done_callback(_finish)
 
     def _submit(self, coroutine) -> None:
-        future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        if self._shutdown_started or not self._loop.is_running():
+            coroutine.close()
+            return
+
+        wrapper = self._run_serialized(coroutine)
+        try:
+            future = asyncio.run_coroutine_threadsafe(wrapper, self._loop)
+        except RuntimeError:
+            wrapper.close()
+            coroutine.close()
+            return
         future.add_done_callback(self._handle_future)
+
+    async def _run_serialized(self, coroutine):
+        coroutine_started = False
+        try:
+            async with self._operation_lock:
+                coroutine_started = True
+                return await coroutine
+        finally:
+            if not coroutine_started:
+                coroutine.close()
 
     def _handle_future(self, future) -> None:
         try:
             future.result()
+        except CancelledError:
+            return
+        except BLE_OPERATION_ERRORS as exc:  # pragma: no cover
+            message = self._exception_message(exc)
+            self._set_last_ble_exception(exc)
+            self.error_occurred.emit(message)
+            self.status_changed.emit(f"BLE error: {message}")
         except Exception as exc:  # pragma: no cover
-            self.error_occurred.emit(str(exc))
-            self.status_changed.emit(f"BLE error: {exc}")
+            message = self._exception_message(exc)
+            self._set_last_ble_exception(exc)
+            self.error_occurred.emit(message)
+            self.status_changed.emit(f"BLE error: {message}")
+
+    @staticmethod
+    def _exception_message(exc: Exception) -> str:
+        message = str(exc).strip()
+        if message:
+            return message
+        return localization_manager.t("error.ble_unknown_detail", error_type=exc.__class__.__name__)
+
+    def _drain_pending_tasks(self) -> None:
+        pending = [task for task in asyncio.all_tasks(self._loop) if not task.done()]
+        if not pending:
+            return
+        for task in pending:
+            task.cancel()
+        self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
 
     def scan(self) -> None:
         self.status_changed.emit(localization_manager.status_ble_event("scan_start"))
@@ -64,10 +173,14 @@ class BleController(QObject):
             self.status_changed.emit(localization_manager.status_ble_event("already_connected", address=address))
             self.connected_changed.emit(True, address)
             return
+        self._manual_disconnect_requested = False
+        self._cancel_reconnect()
         self.status_changed.emit(localization_manager.status_ble_event("connecting", address=address))
         self._submit(self._connect(address))
 
     def disconnect(self) -> None:
+        self._manual_disconnect_requested = True
+        self._cancel_reconnect()
         self._submit(self._disconnect())
 
     def set_power(self, enabled: bool, *, restore_state: bool = True) -> None:
@@ -85,6 +198,22 @@ class BleController(QObject):
             self._driver.remember_brightness(self._last_brightness)
         self._submit(self._set_brightness(value))
 
+    def set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
+        self._last_red = clamp(red, 0, 255)
+        self._last_green = clamp(green, 0, 255)
+        self._last_blue = clamp(blue, 0, 255)
+        self._last_brightness = clamp(brightness, 0, 100)
+        if self._driver is not None:
+            self._driver.remember_brightness(self._last_brightness)
+        self._submit(
+            self._set_static_color(
+                self._last_red,
+                self._last_green,
+                self._last_blue,
+                self._last_brightness,
+            )
+        )
+
     def set_effect(self, code: int) -> None:
         self._submit(self._set_effect(code))
 
@@ -100,6 +229,111 @@ class BleController(QObject):
         if self._driver is None:
             return True
         return self._driver.effect_payload(int(code)) is not None
+
+    def supports_effect_speed(self) -> bool:
+        if self._driver is None:
+            return True
+        return self._driver.supports_effect_speed()
+
+    def effect_presets(self):
+        if self._driver is not None and self._driver.effects:
+            return self._driver.effects
+        return EFFECTS
+
+    def diagnostics_snapshot(self) -> dict:
+        driver = self._driver
+        device = self._device
+        selected = self._write_characteristic
+        candidates = self._write_characteristics or ([selected] if selected is not None else [])
+        return {
+            "connected": bool(self._client is not None and self._client.is_connected),
+            "device": {
+                "name": (device.name or "").strip() if device is not None else "",
+                "address": device.address if device is not None else "",
+                "rssi": getattr(device, "rssi", "") if device is not None else "",
+            },
+            "driver": {
+                "id": driver.id if driver is not None else "",
+                "name": driver.display_name if driver is not None else "",
+                "transport": getattr(driver, "transport", "") if driver is not None else "",
+                "notes": getattr(driver, "protocol_notes", "") if driver is not None else "",
+            },
+            "write": {
+                "selected_uuid": str(selected.uuid) if selected is not None else "",
+                "selected_properties": list(selected.properties) if selected is not None else [],
+                "candidates": [
+                    {
+                        "uuid": str(characteristic.uuid),
+                        "properties": list(characteristic.properties),
+                    }
+                    for characteristic in candidates
+                    if characteristic is not None
+                ],
+            },
+            "commands": self._driver_command_support(),
+            "history": {
+                "last_error": getattr(self, "_last_ble_error", ""),
+                "last_command": self._last_history_item("command"),
+                "events": list(getattr(self, "_ble_history", [])),
+            },
+        }
+
+    def _record_ble_history(self, event: str, **details: object) -> None:
+        history = getattr(self, "_ble_history", None)
+        if history is None:
+            self._ble_history = []
+            history = self._ble_history
+        clean_item = {"event": str(event)}
+        for key, value in details.items():
+            clean_item[str(key)] = str(value).strip()
+        history.append(clean_item)
+        del history[:-40]
+
+    def _last_history_item(self, event: str) -> dict[str, str]:
+        for item in reversed(getattr(self, "_ble_history", [])):
+            if item.get("event") == event:
+                return dict(item)
+        return {}
+
+    def _set_last_ble_error(self, message: str) -> None:
+        clean_message = self._exception_message(RuntimeError(message)) if message else ""
+        self._last_ble_error = clean_message
+        if clean_message:
+            self._record_ble_history("error", message=clean_message)
+
+    def _set_last_ble_exception(self, exc: Exception) -> None:
+        clean_message = self._exception_message(exc)
+        self._last_ble_error = clean_message
+        if clean_message:
+            self._record_ble_history("error", message=clean_message, error_type=exc.__class__.__name__)
+
+    def _driver_command_support(self) -> dict:
+        driver = self._driver
+        if driver is None:
+            return {
+                "power": False,
+                "color": False,
+                "brightness": False,
+                "effects": 0,
+                "speed": False,
+            }
+        brightness = False
+        speed = False
+        try:
+            brightness = bool(driver.brightness_payloads(50))
+        except DRIVER_CAPABILITY_ERRORS:
+            brightness = False
+        try:
+            speed = driver.supports_effect_speed()
+        except DRIVER_CAPABILITY_ERRORS:
+            speed = False
+        return {
+            "power": True,
+            "color": True,
+            "brightness": brightness,
+            "effects": len([effect for effect in driver.effects if effect.code != 0]),
+            "speed": speed,
+        }
 
     async def _scan(self) -> None:
         devices = await BleakScanner.discover(timeout=5.0, return_adv=True)
@@ -158,45 +392,95 @@ class BleController(QObject):
 
     async def _set_brightness(self, value: int) -> None:
         driver = self._require_driver()
+        payloads = driver.brightness_payloads(value)
+        if payloads:
+            await self._write_many(
+                payloads,
+                localization_manager.status_ble_event("brightness_set", value=value),
+            )
+            return
         await self._write_many(
-            driver.brightness_payloads(value),
-            localization_manager.status_ble_event("brightness_set", value=value),
+            driver.color_payloads(self._last_red, self._last_green, self._last_blue),
+            localization_manager.status_ble_event(
+                "color_set",
+                red=self._last_red,
+                green=self._last_green,
+                blue=self._last_blue,
+            ),
         )
+
+    async def _set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
+        self._current_effect_code = 0
+        try:
+            await self._set_brightness(brightness)
+            await asyncio.sleep(0.05)
+        except RuntimeError:
+            # Some BLEDOM-compatible clones reject standalone brightness writes.
+            # Applying RGB should still work, so do not block the color command.
+            pass
+        await self._set_color(red, green, blue)
 
     async def _set_effect(self, code: int) -> None:
         if code == 0:
+            self._current_effect_code = 0
             self.status_changed.emit(localization_manager.status_ble_event("static_color_mode"))
             return
         payload = self._require_driver().effect_payload(code)
         if payload is None:
             raise RuntimeError("Built-in effects are not supported by this controller yet.")
         await self._write(payload, localization_manager.status_ble_event("effect_applied", code=f"{code:02X}"))
+        self._current_effect_code = int(code)
 
     async def _set_effect_with_speed(self, code: int, speed: int) -> None:
+        driver = self._require_driver()
+        if code == 0:
+            await self._set_effect(code)
+            return
+        combined_builder = getattr(driver, "effect_payload_with_speed", None)
+        combined_payload = combined_builder(code, speed) if combined_builder is not None else driver.effect_payload(code)
+        default_payload = driver.effect_payload(code)
+        if combined_payload is not None and combined_payload != default_payload:
+            await self._write(combined_payload, localization_manager.status_ble_event("effect_applied", code=f"{code:02X}"))
+            self._current_effect_code = int(code)
+            return
         await self._set_effect(code)
-        if code != 0:
-            await asyncio.sleep(0.04)
-            await self._set_effect_speed(speed)
+        await asyncio.sleep(0.04)
+        payload = driver.speed_payload(speed)
+        if payload is not None:
+            await self._write(payload, localization_manager.status_ble_event("effect_speed_set", value=speed))
 
     async def _set_effect_speed(self, value: int) -> None:
-        payload = self._require_driver().speed_payload(value)
+        driver = self._require_driver()
+        current_effect_code = getattr(self, "_current_effect_code", 0)
+        if current_effect_code:
+            combined_builder = getattr(driver, "effect_payload_with_speed", None)
+            combined_payload = combined_builder(current_effect_code, value) if combined_builder is not None else driver.effect_payload(current_effect_code)
+            default_payload = driver.effect_payload(current_effect_code)
+            if combined_payload is not None and combined_payload != default_payload:
+                await self._write(combined_payload, localization_manager.status_ble_event("effect_speed_set", value=value))
+                return
+        payload = driver.speed_payload(value)
         if payload is None:
             raise RuntimeError("Built-in effects are not supported by this controller yet.")
         await self._write(payload, localization_manager.status_ble_event("effect_speed_set", value=value))
 
-    async def _connect(self, address: str) -> None:
-        await self._disconnect()
-        device = await BleakScanner.find_device_by_address(address, timeout=8.0)
+    async def _connect(self, address: str, *, from_reconnect: bool = False) -> None:
+        await self._disconnect(cancel_reconnect=not from_reconnect)
+        preferred_driver_id = self._scan_driver_hints.get(address)
+        device = await asyncio.wait_for(
+            BleakScanner.find_device_by_address(address, timeout=FIND_DEVICE_TIMEOUT_SECONDS),
+            timeout=FIND_DEVICE_TIMEOUT_SECONDS + 2.0,
+        )
         if device is None:
             raise RuntimeError("Device not found. Make sure it is powered on and nearby.")
 
-        client = BleakClient(device)
-        await client.connect()
+        client = BleakClient(device, disconnected_callback=self._handle_unexpected_disconnect)
+        await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
         services = client.services
-        driver = detect_connected_driver(device.name or "", services, preferred_id=self._scan_driver_hints.get(address))
+        driver = detect_connected_driver(device.name or "", services, preferred_id=preferred_driver_id)
         if driver is None:
             await client.disconnect()
-            raise RuntimeError("No supported controller protocol was detected on this device.")
+            raise ProtocolCompatibilityError(self._protocol_detection_diagnostic(device, services, preferred_driver_id))
         driver.reset_runtime_state()
         if hasattr(driver, "configure_for_device"):
             driver.configure_for_device(device.name or "")
@@ -211,6 +495,8 @@ class BleController(QObject):
         self._driver = driver
         self._write_characteristic = characteristic
         self._write_characteristics = driver.collect_write_characteristics(services)
+        self._reconnect_address = address
+        self._manual_disconnect_requested = False
         self.connected_changed.emit(True, address)
         self.status_changed.emit(
             localization_manager.status_ble_event(
@@ -221,7 +507,7 @@ class BleController(QObject):
         self.status_changed.emit(
             localization_manager.status_ble_event(
                 "connected_via",
-                name=device.name or address,
+                    name=(device.name or "").strip() or address,
                 uuid=str(characteristic.uuid),
             )
         )
@@ -229,18 +515,93 @@ class BleController(QObject):
             uuids = ", ".join(str(item.uuid) for item in self._write_characteristics)
             self.status_changed.emit(localization_manager.status_ble_event("candidate_characteristics", uuids=uuids))
 
-    async def _disconnect(self) -> None:
+    async def _disconnect(self, *, cancel_reconnect: bool = True) -> None:
+        if cancel_reconnect:
+            self._cancel_reconnect()
         if self._client is not None:
             try:
                 await self._client.disconnect()
             finally:
-                self._client = None
-                self._device = None
-                self._driver = None
-                self._write_characteristic = None
-                self._write_characteristics = []
+                self._clear_connection_state()
                 self.connected_changed.emit(False, "")
                 self.status_changed.emit(localization_manager.status_ble_event("disconnected"))
+
+    def _clear_connection_state(self) -> None:
+        self._client = None
+        self._device = None
+        self._driver = None
+        self._write_characteristic = None
+        self._write_characteristics = []
+        self._preferred_payload_indices = {}
+
+    def _cancel_reconnect(self) -> None:
+        task = self._reconnect_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._reconnect_task = None
+
+    def _handle_unexpected_disconnect(self, client) -> None:
+        if self._shutdown_started or self._manual_disconnect_requested:
+            return
+        if not self._loop.is_running():
+            return
+        self._loop.call_soon_threadsafe(self._on_unexpected_disconnect, client)
+
+    def _on_unexpected_disconnect(self, client) -> None:
+        if self._shutdown_started or self._manual_disconnect_requested or client is not self._client:
+            return
+        self._start_reconnect_after_connection_loss()
+
+    def _start_reconnect_after_connection_loss(self) -> None:
+        if self._shutdown_started or self._manual_disconnect_requested:
+            return
+        device = self._device
+        address = device.address if device is not None else self._reconnect_address
+        name = (device.name or "").strip() if device is not None else ""
+        if self._client is not None:
+            self._clear_connection_state()
+            self.connected_changed.emit(False, "")
+            self._set_last_ble_error("BLE connection was lost. Reconnecting to the last controller...")
+            self.status_changed.emit(
+                localization_manager.status_ble_event("unexpected_disconnect", name=name or address, address=address)
+            )
+        if address and (self._reconnect_task is None or self._reconnect_task.done()):
+            self._reconnect_address = address
+            self._reconnect_task = self._loop.create_task(self._reconnect(address))
+
+    async def _reconnect(self, address: str) -> None:
+        for attempt in range(1, RECONNECT_ATTEMPTS + 1):
+            if self._shutdown_started or self._manual_disconnect_requested:
+                return
+            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+            if self._shutdown_started or self._manual_disconnect_requested:
+                return
+            self.status_changed.emit(
+                localization_manager.status_ble_event(
+                    "reconnect_attempt",
+                    address=address,
+                    attempt=attempt,
+                    total=RECONNECT_ATTEMPTS,
+                )
+            )
+            try:
+                await self._connect(address, from_reconnect=True)
+            except BLE_OPERATION_ERRORS as exc:
+                message = self._exception_message(exc)
+                self._set_last_ble_exception(exc)
+                self.status_changed.emit(
+                    localization_manager.status_ble_event(
+                        "reconnect_failed_attempt",
+                        address=address,
+                        attempt=attempt,
+                        total=RECONNECT_ATTEMPTS,
+                        error=message,
+                    )
+                )
+                continue
+            self.status_changed.emit(localization_manager.status_ble_event("reconnect_success", address=address))
+            return
+        self.status_changed.emit(localization_manager.status_ble_event("reconnect_give_up", address=address))
 
     def _require_driver(self) -> LedBleDriver:
         if self._driver is None:
@@ -250,40 +611,194 @@ class BleController(QObject):
     async def _write(self, payload: bytes, description: str) -> None:
         if self._client is None or self._write_characteristic is None:
             raise RuntimeError("Connect to the LED strip first.")
+        if not bool(getattr(self._client, "is_connected", True)):
+            self._start_reconnect_after_connection_loss()
+            self._set_last_ble_error("BLE connection was lost. Reconnecting to the last controller...")
+            raise ConnectionLostError("BLE connection was lost. Reconnecting to the last controller...")
 
-        candidates = self._write_characteristics or [self._write_characteristic]
         written_to: list[str] = []
+        last_error: Exception | None = None
 
-        for characteristic in candidates:
-            properties = {prop.lower() for prop in characteristic.properties}
-            prefer_response = "write" in properties and "write-without-response" not in properties
-            try:
-                await self._client.write_gatt_char(characteristic, payload, response=prefer_response)
+        for characteristic in self._ordered_write_candidates():
+            error = await self._write_to_characteristic(characteristic, payload)
+            if error is None:
                 written_to.append(str(characteristic.uuid))
-                continue
-            except Exception:
-                try:
-                    await self._client.write_gatt_char(characteristic, payload, response=not prefer_response)
-                    written_to.append(str(characteristic.uuid))
-                except Exception:
-                    continue
+            else:
+                last_error = error
 
         if not written_to:
-            raise RuntimeError("Command could not be written to any compatible GATT characteristic.")
+            if last_error is not None:
+                self._set_last_ble_exception(last_error)
+                self.status_changed.emit(
+                    localization_manager.status_ble_event("write_failed", error=self._exception_message(last_error))
+                )
+            raise ProtocolCompatibilityError("Command could not be written to any compatible GATT characteristic.")
 
+        self._record_ble_history(
+            "command",
+            description=description,
+            payload=payload.hex(" "),
+            targets=", ".join(written_to),
+        )
         self.status_changed.emit(f"{description} ({payload.hex(' ')}) -> {', '.join(written_to)}")
+
+    async def _write_to_characteristic(self, characteristic, payload: bytes) -> Exception | None:
+        """Try writing payload to one characteristic with retry + response-mode fallback.
+        Returns None on success, or the last exception on failure."""
+        properties = {prop.lower() for prop in characteristic.properties}
+        prefer_response = "write" in properties and "write-without-response" not in properties
+        last_error: Exception | None = None
+
+        for attempt in range(WRITE_RETRY_ATTEMPTS + 1):
+            error = await self._write_attempt(characteristic, payload, prefer_response)
+            if error is None:
+                return None
+            # Retry with flipped response mode before giving up on this attempt
+            error = await self._write_attempt(characteristic, payload, not prefer_response)
+            if error is None:
+                return None
+            last_error = error
+            if attempt < WRITE_RETRY_ATTEMPTS:
+                self._emit_write_retry(characteristic, payload, attempt + 1, last_error)
+                await asyncio.sleep(WRITE_RETRY_DELAY_SECONDS)
+
+        return last_error
+
+    async def _write_attempt(self, characteristic, payload: bytes, response: bool) -> Exception | None:
+        """Single GATT write attempt. Returns None on success, exception on failure."""
+        try:
+            await asyncio.wait_for(
+                self._client.write_gatt_char(characteristic, payload, response=response),
+                timeout=WRITE_TIMEOUT_SECONDS,
+            )
+            return None
+        except BLE_OPERATION_ERRORS as exc:
+            return exc
+
+    def _emit_write_retry(self, characteristic, payload: bytes, attempt: int, exc: Exception) -> None:
+        self._record_ble_history(
+            "retry",
+            uuid=str(characteristic.uuid),
+            attempt=attempt,
+            total=WRITE_RETRY_ATTEMPTS,
+            error=self._exception_message(exc),
+            error_type=exc.__class__.__name__,
+            payload=payload.hex(" "),
+        )
+        self.status_changed.emit(
+            localization_manager.status_ble_event(
+                "write_retry",
+                uuid=str(characteristic.uuid),
+                attempt=attempt,
+                total=WRITE_RETRY_ATTEMPTS,
+                error=self._exception_message(exc),
+            )
+        )
+
+    def _protocol_detection_diagnostic(self, device: BLEDevice, services, preferred_driver_id: str | None = None) -> str:
+        service_uuids = [str(service.uuid).lower() for service in services]
+        characteristic_uuids = [
+            str(characteristic.uuid).lower()
+            for service in services
+            for characteristic in service.characteristics
+        ]
+        return (
+            "Device was found and matched a known controller family, but the command protocol differs. "
+            f"Device: {(device.name or '').strip() or '-'} ({device.address or '-'}). "
+            f"Expected driver: {preferred_driver_id or '-'}. "
+            f"Services: {', '.join(service_uuids) or '-'}. "
+            f"Characteristics: {', '.join(characteristic_uuids) or '-'}."
+        )
+
+    def _ordered_write_candidates(self) -> list[BleakGATTCharacteristic]:
+        selected = self._write_characteristic
+        raw_candidates = self._write_characteristics or ([selected] if selected is not None else [])
+        ordered: list[BleakGATTCharacteristic] = []
+        seen: set[str] = set()
+        if selected is not None:
+            raw_candidates = [selected, *raw_candidates]
+        for characteristic in raw_candidates:
+            if characteristic is None:
+                continue
+            properties = {prop.lower() for prop in characteristic.properties}
+            if not {"write", "write-without-response"} & properties:
+                continue
+            uuid = str(characteristic.uuid)
+            if uuid in seen:
+                continue
+            ordered.append(characteristic)
+            seen.add(uuid)
+        return ordered
 
     async def _write_many(self, payloads: list[bytes], description: str) -> None:
         if self._client is None or self._write_characteristic is None:
             raise RuntimeError("Connect to the LED strip first.")
 
-        sent_any = False
-        for payload in payloads:
+        if not payloads:
+            raise RuntimeError("Command could not be sent with any known protocol.")
+
+        cache_key = (
+            self._driver.id if self._driver is not None else "unknown",
+            tuple(self._payload_signature(payload) for payload in payloads),
+        )
+        preferred_index = self._preferred_payload_indices.get(cache_key)
+        ordered_payloads = list(enumerate(payloads))
+        if preferred_index is not None and 0 <= preferred_index < len(payloads):
+            ordered_payloads = [(preferred_index, payloads[preferred_index])] + [
+                item for item in ordered_payloads if item[0] != preferred_index
+            ]
+
+        last_error: Exception | None = None
+        for payload_index, payload in ordered_payloads:
             try:
                 await self._write(payload, description)
-                sent_any = True
-            except Exception:
+                self._preferred_payload_indices[cache_key] = payload_index
+                if self._driver is not None and hasattr(self._driver, "remember_working_payload"):
+                    self._driver.remember_working_payload(payload)
+                return
+            except BLE_OPERATION_ERRORS as exc:
+                if isinstance(exc, ConnectionLostError):
+                    raise
+                last_error = exc
                 continue
 
-        if not sent_any:
-            raise RuntimeError("Command could not be sent with any known protocol.")
+        if last_error is not None:
+            if isinstance(last_error, ConnectionLostError):
+                raise last_error
+            if isinstance(last_error, ProtocolCompatibilityError):
+                diagnostic = self._protocol_mismatch_diagnostic(payloads)
+                self._set_last_ble_error(diagnostic)
+                self._record_ble_history("protocol_mismatch", details=diagnostic)
+                self.status_changed.emit(diagnostic)
+                raise ProtocolCompatibilityError(diagnostic) from last_error
+            raise RuntimeError("Command could not be sent with any known protocol.") from last_error
+        raise RuntimeError("Command could not be sent with any known protocol.")
+
+    def _protocol_mismatch_diagnostic(self, payloads: list[bytes]) -> str:
+        snapshot = self.diagnostics_snapshot()
+        device = snapshot.get("device", {})
+        driver = snapshot.get("driver", {})
+        write = snapshot.get("write", {})
+        candidates = write.get("candidates", [])
+        candidate_text = ", ".join(str(item.get("uuid", "")) for item in candidates) or "-"
+        payload_text = " | ".join(payload.hex(" ") for payload in payloads) or "-"
+        return (
+            "Device was found and matched a known controller family, but the command protocol differs. "
+            f"Device: {device.get('name') or '-'} ({device.get('address') or '-'}). "
+            f"Driver: {driver.get('name') or driver.get('id') or '-'}. "
+            f"Selected write characteristic: {write.get('selected_uuid') or '-'}. "
+            f"Candidate write characteristics: {candidate_text}. "
+            f"Tried payloads: {payload_text}."
+        )
+
+    @staticmethod
+    def _payload_signature(payload: bytes) -> tuple[int, ...]:
+        if len(payload) >= 9 and payload[0] == 0x7E:
+            return (len(payload), payload[0], payload[2])
+        if len(payload) == 7 and payload[0] == 0x56:
+            return (len(payload), payload[0], payload[-2], payload[-1])
+        if len(payload) == 3 and payload[0] == 0xCC:
+            return (len(payload), payload[0], payload[2])
+        if len(payload) >= 2:
+            return (len(payload), payload[0], payload[1])
+        return (len(payload), *payload)

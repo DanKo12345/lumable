@@ -2,11 +2,14 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 .venv/
+.venv311/
 venv/
 env/
 
 # Runtime data
+data/
 data/crash_logs/
 *.log
 
@@ -18,7 +21,8 @@ data/crash_logs/
 *.bak
 
 # Build outputs
-build/
+build/*
+!build/version_info.txt
 dist/
 *.spec
 aoh2_launcher_build/bin/

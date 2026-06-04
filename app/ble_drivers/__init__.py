@@ -3,15 +3,16 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from app.ble_drivers.base import EffectPreset, LedBleDriver, normalize_uuid
 from app.ble_drivers.banlanx import BanlanxDriver
+from app.ble_drivers.base import EffectPreset, LedBleDriver, normalize_uuid
 from app.ble_drivers.bledom import BLEDOM_EFFECTS, BledomDriver
+from app.ble_drivers.magic_home import MagicHomeDriver
 from app.ble_drivers.triones import TrionesDriver
-
 
 _DRIVER_INSTANCES: tuple[LedBleDriver, ...] = (
     BledomDriver(),
     BanlanxDriver(),
+    MagicHomeDriver(),
     TrionesDriver(),
 )
 

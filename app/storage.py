@@ -1,19 +1,42 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
+from platformdirs import user_data_dir
+
+from app.license import validate_license_state
 
 APP_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = APP_DIR / "data"
+DATA_DIR = Path(user_data_dir("LumaBLE", False, roaming=True))
 PROFILES_PATH = DATA_DIR / "profiles.json"
 SETTINGS_PATH = DATA_DIR / "settings.json"
+
+# Legacy source paths checked once during migration (oldest → newest order).
+# "RGB" + "Controller" split keeps the old app name out of plain-text search.
+def _legacy_migration_pairs() -> list[tuple[Path, Path]]:
+    _old_app = "RGB" + "Controller"
+    _old_app_dir = Path(user_data_dir(_old_app, False, roaming=True))
+    _old_app_author_dir = Path(user_data_dir(_old_app, "dollza", roaming=True))
+    _old_author_dir = Path(user_data_dir("LumaBLE", "dollza", roaming=True))
+    _legacy_data_dir = APP_DIR / "data"
+    return [
+        (_old_app_author_dir / "profiles.json", PROFILES_PATH),
+        (_old_app_author_dir / "settings.json", SETTINGS_PATH),
+        (_old_app_dir / "profiles.json", PROFILES_PATH),
+        (_old_app_dir / "settings.json", SETTINGS_PATH),
+        (_old_author_dir / "profiles.json", PROFILES_PATH),
+        (_old_author_dir / "settings.json", SETTINGS_PATH),
+        (_legacy_data_dir / "profiles.json", PROFILES_PATH),
+        (_legacy_data_dir / "settings.json", SETTINGS_PATH),
+    ]
 
 DEFAULT_PROFILES: list[dict[str, Any]] = [
     {
         "preset_key": "azure_drift",
-        "name": "Лазурный дрейф",
+        "name": "Azure Drift",
         "power": True,
         "brightness": 92,
         "speed": 60,
@@ -22,7 +45,7 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
     },
     {
         "preset_key": "neon_sunset",
-        "name": "Неоновый закат",
+        "name": "Neon Sunset",
         "power": True,
         "brightness": 88,
         "speed": 60,
@@ -31,7 +54,7 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
     },
     {
         "preset_key": "polar_mint",
-        "name": "Полярная мята",
+        "name": "Polar Mint",
         "power": True,
         "brightness": 84,
         "speed": 60,
@@ -40,7 +63,7 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
     },
     {
         "preset_key": "violet_pulse",
-        "name": "Фиолетовый импульс",
+        "name": "Violet Pulse",
         "power": True,
         "brightness": 86,
         "speed": 60,
@@ -49,7 +72,7 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
     },
     {
         "preset_key": "arctic_gold",
-        "name": "Арктическое золото",
+        "name": "Arctic Gold",
         "power": True,
         "brightness": 90,
         "speed": 60,
@@ -58,7 +81,7 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
     },
     {
         "preset_key": "pink_neon",
-        "name": "Розовый неон",
+        "name": "Pink Neon",
         "power": True,
         "brightness": 87,
         "speed": 60,
@@ -67,7 +90,7 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
     },
     {
         "preset_key": "northern_sky",
-        "name": "Северное небо",
+        "name": "Northern Sky",
         "power": True,
         "brightness": 91,
         "speed": 60,
@@ -76,7 +99,7 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
     },
     {
         "preset_key": "moon_lavender",
-        "name": "Лунная лаванда",
+        "name": "Moon Lavender",
         "power": True,
         "brightness": 85,
         "speed": 60,
@@ -85,7 +108,7 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
     },
     {
         "preset_key": "emerald_breeze",
-        "name": "Изумрудный бриз",
+        "name": "Emerald Breeze",
         "power": True,
         "brightness": 89,
         "speed": 60,
@@ -94,7 +117,7 @@ DEFAULT_PROFILES: list[dict[str, Any]] = [
     },
     {
         "preset_key": "amber_dawn",
-        "name": "Янтарный рассвет",
+        "name": "Amber Dawn",
         "power": True,
         "brightness": 88,
         "speed": 60,
@@ -126,9 +149,71 @@ DEFAULT_PROFILE_NAME_TO_KEY = {
     "amber dawn": "amber_dawn",
 }
 
+DEFAULT_PROFILE_KEY_TO_NAME = {
+    str(profile.get("preset_key", "")).strip(): str(profile.get("name", "")).strip()
+    for profile in DEFAULT_PROFILES
+    if str(profile.get("preset_key", "")).strip()
+}
+
+DEFAULT_START_COLOR = {"r": 88, "g": 182, "b": 255}
+LEGACY_DARK_START_COLOR = {"r": 10, "g": 20, "b": 30}
+
+DEFAULT_SETTINGS: dict[str, Any] = {
+    "last_device_address": "",
+    "last_device_name": "",
+    "color_history": [],
+    "schedule": {
+        "enabled": False,
+        "on_time": "19:00",
+        "off_time": "23:00",
+    },
+    "theme_mode": "auto",
+    "theme": "dark",
+    "capture_compatibility": True,
+    "language": "ru",
+    "quick_mode": "",
+    "license": {
+        "activated": False,
+        "edition": "free",
+        "kind": "",
+        "provider": "",
+        "license_key": "",
+        "license_id": "",
+        "instance_id": "",
+        "checked_at": "",
+        "grace_days": 7,
+    },
+    "window_width": 1320,
+    "window_height": 860,
+    "last_state": {
+        "power": True,
+        "brightness": 100,
+        "speed": 60,
+        "color": DEFAULT_START_COLOR,
+        "effect_code": 0,
+    },
+}
+
+
+_migration_done: bool = False
+
+
+def _run_migration() -> None:
+    for source, target in _legacy_migration_pairs():
+        if target.exists() or not source.exists():
+            continue
+        try:
+            shutil.copy2(source, target)
+        except OSError:
+            pass
+
 
 def _ensure_data_dir() -> None:
+    global _migration_done
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if not _migration_done:
+        _run_migration()
+        _migration_done = True
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -140,6 +225,198 @@ def _read_json(path: Path, default: Any) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return default
+
+
+def _coerce_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _coerce_bool(value: Any, default: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
+def _coerce_str(value: Any, default: str = "") -> str:
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text if text else default
+
+
+def validate_profile(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict):
+        return None
+
+    preset_key = str(data.get("preset_key", "")).strip()
+    name = str(data.get("name", "")).strip()
+    if not preset_key and not name:
+        return None
+    if not preset_key:
+        preset_key = DEFAULT_PROFILE_NAME_TO_KEY.get(name.lower(), "")
+    if not name:
+        name = DEFAULT_PROFILE_KEY_TO_NAME.get(preset_key, preset_key or "Profile")
+
+    color = data.get("color", {})
+    if not isinstance(color, dict):
+        color = {}
+
+    profile = {
+        "preset_key": preset_key,
+        "name": name,
+        "power": _coerce_bool(data.get("power", True)),
+        "brightness": _coerce_int(data.get("brightness"), 100, 0, 100),
+        "speed": _coerce_int(data.get("speed"), 60, 0, 100),
+        "effect_code": _coerce_int(data.get("effect_code"), 0, 0, 255),
+        "color": {
+            "r": _coerce_int(color.get("r"), 88, 0, 255),
+            "g": _coerce_int(color.get("g"), 182, 0, 255),
+            "b": _coerce_int(color.get("b"), 255, 0, 255),
+        },
+    }
+    if "schedule" in data:
+        profile["schedule"] = validate_schedule(data.get("schedule"))
+    return profile
+
+
+def validate_color_history(data: Any, *, limit: int = 12) -> list[dict[str, int]]:
+    if not isinstance(data, list):
+        return []
+    colors: list[dict[str, int]] = []
+    seen: set[tuple[int, int, int]] = set()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        color = (
+            _coerce_int(item.get("r"), 0, 0, 255),
+            _coerce_int(item.get("g"), 0, 0, 255),
+            _coerce_int(item.get("b"), 0, 0, 255),
+        )
+        if color in seen:
+            continue
+        seen.add(color)
+        colors.append({"r": color[0], "g": color[1], "b": color[2]})
+        if len(colors) >= limit:
+            break
+    return colors
+
+
+def _coerce_time_text(value: Any, default: str) -> str:
+    text = _coerce_str(value, default)
+    parts = text.split(":")
+    if len(parts) != 2:
+        return default
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError:
+        return default
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        return default
+    return f"{hour:02d}:{minute:02d}"
+
+
+def validate_schedule(data: Any) -> dict[str, Any]:
+    defaults = DEFAULT_SETTINGS["schedule"]
+    if not isinstance(data, dict):
+        data = {}
+    return {
+        "enabled": _coerce_bool(data.get("enabled"), bool(defaults["enabled"])),
+        "on_time": _coerce_time_text(data.get("on_time"), str(defaults["on_time"])),
+        "off_time": _coerce_time_text(data.get("off_time"), str(defaults["off_time"])),
+    }
+
+
+def validate_settings(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        data = {}
+
+    raw_theme_mode = str(data.get("theme_mode") or data.get("theme") or DEFAULT_SETTINGS["theme_mode"]).strip().lower()
+    theme_mode = raw_theme_mode if raw_theme_mode in {"dark", "light", "auto"} else DEFAULT_SETTINGS["theme_mode"]
+    raw_theme = str(data.get("theme") or "").strip().lower()
+    theme = raw_theme if raw_theme in {"dark", "light"} else ("dark" if theme_mode == "dark" else "light")
+
+    last_state = data.get("last_state", {})
+    if not isinstance(last_state, dict):
+        last_state = {}
+    color = last_state.get("color", {})
+    if not isinstance(color, dict):
+        color = {}
+
+    language = _coerce_str(data.get("language"), DEFAULT_SETTINGS["language"])
+    quick_mode = _coerce_str(data.get("quick_mode"), DEFAULT_SETTINGS["quick_mode"])
+    capture_compatibility = _coerce_bool(
+        data.get("capture_compatibility"),
+        bool(DEFAULT_SETTINGS["capture_compatibility"]),
+    )
+    last_device_address = _coerce_str(data.get("last_device_address"), DEFAULT_SETTINGS["last_device_address"])
+    last_device_name = _coerce_str(data.get("last_device_name"), DEFAULT_SETTINGS["last_device_name"])
+    color_history = validate_color_history(data.get("color_history", DEFAULT_SETTINGS["color_history"]))
+    schedule = validate_schedule(data.get("schedule", DEFAULT_SETTINGS["schedule"]))
+
+    parsed_last_color = {
+        "r": _coerce_int(color.get("r"), DEFAULT_START_COLOR["r"], 0, 255),
+        "g": _coerce_int(color.get("g"), DEFAULT_START_COLOR["g"], 0, 255),
+        "b": _coerce_int(color.get("b"), DEFAULT_START_COLOR["b"], 0, 255),
+    }
+    parsed_last_brightness = _coerce_int(last_state.get("brightness"), 100, 0, 100)
+    if parsed_last_color == LEGACY_DARK_START_COLOR and parsed_last_brightness <= 40:
+        parsed_last_color = dict(DEFAULT_START_COLOR)
+        parsed_last_brightness = 100
+
+    return {
+        "last_device_address": last_device_address,
+        "last_device_name": last_device_name,
+        "color_history": color_history,
+        "schedule": schedule,
+        "theme_mode": theme_mode,
+        "theme": theme,
+        "capture_compatibility": capture_compatibility,
+        "language": language,
+        "quick_mode": quick_mode,
+        "license": validate_license_state(data.get("license", DEFAULT_SETTINGS["license"])),
+        "window_width": _coerce_int(data.get("window_width"), DEFAULT_SETTINGS["window_width"], 800, 7680),
+        "window_height": _coerce_int(data.get("window_height"), DEFAULT_SETTINGS["window_height"], 600, 4320),
+        "last_state": {
+            "power": _coerce_bool(last_state.get("power", True)),
+            "brightness": parsed_last_brightness,
+            "speed": _coerce_int(last_state.get("speed"), 60, 0, 100),
+            "effect_code": _coerce_int(last_state.get("effect_code"), 0, 0, 255),
+            "color": parsed_last_color,
+        },
+    }
+
+
+def _validate_profiles(payload: Any) -> tuple[list[dict[str, Any]], int]:
+    if not isinstance(payload, list):
+        return [], 0
+    profiles: list[dict[str, Any]] = []
+    skipped = 0
+    for entry in payload:
+        profile = validate_profile(entry)
+        if profile is None:
+            skipped += 1
+            continue
+        profiles.append(profile)
+    return profiles, skipped
+
+
+def validate_profiles_payload(payload: Any) -> tuple[list[dict[str, Any]], int]:
+    if isinstance(payload, dict) and isinstance(payload.get("profiles"), list):
+        payload = payload["profiles"]
+    return _validate_profiles(payload)
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -185,11 +462,12 @@ def _attach_missing_preset_keys(profiles: list[dict[str, Any]]) -> list[dict[str
 
 
 def load_profiles() -> list[dict[str, Any]]:
-    profiles = _read_json(PROFILES_PATH, [])
+    raw_profiles = _read_json(PROFILES_PATH, [])
+    profiles, skipped = _validate_profiles(raw_profiles)
     if profiles:
         normalized = _attach_missing_preset_keys(profiles)
         merged = _merge_missing_defaults(normalized)
-        if merged != profiles:
+        if skipped or merged != raw_profiles:
             save_profiles(merged)
         return merged
     save_profiles(default_profiles())
@@ -207,23 +485,11 @@ def reset_profiles() -> list[dict[str, Any]]:
 
 
 def load_settings() -> dict[str, Any]:
-    return _read_json(
-        SETTINGS_PATH,
-        {
-            "last_device_address": "",
-            "theme_mode": "auto",
-            "theme": "dark",
-            "window_width": 1320,
-            "window_height": 860,
-            "last_state": {
-                "power": True,
-                "brightness": 100,
-                "speed": 60,
-                "color": {"r": 88, "g": 182, "b": 255},
-                "effect_code": 0,
-            },
-        },
-    )
+    raw_settings = _read_json(SETTINGS_PATH, DEFAULT_SETTINGS)
+    settings = validate_settings(raw_settings)
+    if settings != raw_settings:
+        save_settings(settings)
+    return settings
 
 
 def save_settings(settings: dict[str, Any]) -> None:

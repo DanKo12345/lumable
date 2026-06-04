@@ -56,7 +56,7 @@ class AccentPreview(QFrame):
         else:
             top = display.lighter(112)
             bottom = display.darker(102)
-        border = "rgba(255,255,255,0.16)" if theme_manager.is_dark else "rgba(91,113,160,0.12)"
+        border = "rgba(255,255,255,0.22)" if theme_manager.is_dark else "rgba(80,110,180,0.35)"
         self.swatch.setStyleSheet(
             f"QFrame#previewSwatch {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {top.name()}, stop:1 {bottom.name()}); border: 1px solid {border}; border-radius: 20px; }}"
         )
