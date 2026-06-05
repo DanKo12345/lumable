@@ -2,6 +2,21 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.1.2] - 2026-06-05
+
+### Fixed
+- Fixed a background update-check signal crash that could appear during tests.
+- Improved BLE disconnect handling so color commands do not hit a missing BLE client after connection loss.
+- Cleared stale BLE error state after successful reconnect.
+- Reduced GitHub update-check rate limit noise by throttling automatic checks to once per day.
+- Localized diagnostics report labels and BLE history entries according to the selected app language.
+
+### Improved
+- Smoothed RGB slider interaction and kept the color preview responsive while dragging.
+- Added clearer BLE error text when a controller is not selected, not found, or Windows still shows it as connected.
+- Polished About, diagnostics, schedule and update-check microcopy.
+- Added issue templates and diagnostics instructions for beta testers.
+
 ## [0.1.1] - 2026-06-02
 
 ### Changed
