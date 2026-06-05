@@ -296,6 +296,58 @@ def test_connection_status_animates_while_connecting() -> None:
         app.processEvents()
 
 
+def test_rgb_slider_preview_updates_are_debounced() -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        calls = []
+        window.preview.set_color = lambda color: calls.append(color)
+
+        new_value = 124 if window.red_slider.value() == 123 else 123
+        window.red_slider.setValue(new_value)
+
+        assert calls == []
+        assert window._color_preview_debounce.isActive()
+
+        window._update_preview()
+        assert calls[-1].red() == new_value
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_rgb_slider_does_not_send_ble_when_disconnected() -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    calls = []
+
+    class DummyBle:
+        def set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
+            calls.append((red, green, blue, brightness))
+
+        def shutdown(self) -> None:
+            pass
+
+        def shutdown_async(self) -> None:
+            pass
+
+    try:
+        window._ble.shutdown()
+        window._ble = DummyBle()
+        window._is_connected = False
+
+        new_value = 124 if window.red_slider.value() == 123 else 123
+        window.red_slider.setValue(new_value)
+
+        assert calls == []
+        assert window._local_color_debounce.isActive()
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def test_connection_refreshes_power_button_action_text(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr("app.main_window.save_settings", lambda _settings: None)

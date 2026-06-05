@@ -163,6 +163,16 @@ class MainWindow(QMainWindow):
         self._color_apply_debounce.setInterval(120)
         self._color_apply_debounce.timeout.connect(self._apply_current_color)
 
+        self._color_preview_debounce = QTimer(self)
+        self._color_preview_debounce.setSingleShot(True)
+        self._color_preview_debounce.setInterval(16)
+        self._color_preview_debounce.timeout.connect(self._update_preview)
+
+        self._local_color_debounce = QTimer(self)
+        self._local_color_debounce.setSingleShot(True)
+        self._local_color_debounce.setInterval(120)
+        self._local_color_debounce.timeout.connect(self._apply_local_current_color)
+
         self._connection_status_timer = QTimer(self)
         self._connection_status_timer.setInterval(450)
         self._connection_status_timer.timeout.connect(self._tick_connection_status_animation)
@@ -338,7 +348,7 @@ class MainWindow(QMainWindow):
         ):
             slider.valueChanged.connect(lambda v, t=label: t.setText(str(v)))
             label.activated.connect(lambda s=slider, value_chip=label: self._edit_slider_value(s, value_chip))
-            slider.valueChanged.connect(self._update_preview)
+            slider.valueChanged.connect(self._queue_preview_update)
             slider.valueChanged.connect(self._queue_current_color_update)
 
     def _edit_slider_value(self, slider: LiquidSlider, value_label: ValueChip, *, suffix: str = ""):
@@ -436,6 +446,11 @@ class MainWindow(QMainWindow):
 
     def _update_preview(self):
         self.preview.set_color(self._current_color())
+
+    def _queue_preview_update(self):
+        if self._initializing:
+            return
+        self._color_preview_debounce.start()
 
     def _sync_aurora_accent(self, *, enabled: bool | None = None) -> None:
         color = self._current_color()
@@ -536,10 +551,23 @@ class MainWindow(QMainWindow):
     def _apply_current_color(self):
         if self._initializing:
             return
+        self._color_preview_debounce.stop()
+        self._update_preview()
         self._color_apply_debounce.stop()
+        self._local_color_debounce.stop()
         self._effect_debounce.stop()
         color = self._current_color()
         self._ble.set_static_color(color.red(), color.green(), color.blue(), self.brightness_slider.value())
+        self._apply_local_color_state(color)
+
+    def _apply_local_current_color(self):
+        if self._initializing:
+            return
+        self._color_preview_debounce.stop()
+        self._update_preview()
+        self._apply_local_color_state(self._current_color())
+
+    def _apply_local_color_state(self, color: QColor):
         self._aurora.set_accent_color(color.red(), color.green(), color.blue(), enabled=self.power_button.isChecked())
         self._remember_current_color()
         if self.effect_combo.currentData() != 0:
@@ -551,10 +579,8 @@ class MainWindow(QMainWindow):
     def _queue_current_color_update(self):
         if self._initializing:
             return
-        color = self._current_color()
-        self._aurora.set_accent_color(color.red(), color.green(), color.blue(), enabled=self.power_button.isChecked())
         if not self._is_connected:
-            self._sync_quick_mode_from_state()
+            self._local_color_debounce.start()
             return
         self._color_apply_debounce.start()
 
