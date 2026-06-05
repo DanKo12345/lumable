@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.feature_gate import is_pro
 from app.localization import localization_manager
+from app.panels.diagnostics_panel import resize_diagnostics_action_buttons
 from app.storage import save_settings
 
 
@@ -143,3 +144,4 @@ class UiLocalizationController:
             if host._update_result is not None and host._update_result.state == "available"
             else host._tr("updates.check")
         )
+        resize_diagnostics_action_buttons(host)

@@ -177,6 +177,27 @@ def test_handle_connect_blocks_while_connection_is_running() -> None:
     assert host._ble.connected_to == []
 
 
+def test_handle_connect_requires_found_devices() -> None:
+    host = FakeHost()
+    handler = BleEventHandler(host)
+
+    handler.handle_connect()
+
+    assert host._ui_feedback.errors == ["error.find_first"]
+    assert host._ble.connected_to == []
+
+
+def test_handle_connect_requires_selected_device() -> None:
+    host = FakeHost(_devices=[{"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF", "rssi": -50}])
+    host.device_combo.setCurrentIndex(-1)
+    handler = BleEventHandler(host)
+
+    handler.handle_connect()
+
+    assert host._ui_feedback.errors == ["error.select_controller_first"]
+    assert host._ble.connected_to == []
+
+
 def test_handle_connect_marks_connection_in_progress() -> None:
     host = FakeHost(_devices=[{"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF", "rssi": -50}])
     host.device_combo.addItem("ELK-BLEDOM", "AA:BB:CC:DD:EE:FF")

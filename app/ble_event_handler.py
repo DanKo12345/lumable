@@ -47,8 +47,11 @@ class BleEventHandler:
             self.show_error(host._tr("error.wait_connect"))
             return
         index = host.device_combo.currentIndex()
-        if index < 0 or index >= len(host._devices):
+        if not host._devices:
             self.show_error(host._tr("error.find_first"))
+            return
+        if index < 0 or index >= len(host._devices):
+            self.show_error(host._tr("error.select_controller_first"))
             return
         host._connect_in_progress = True
         host.device_status.setText(host._tr("device.status.connecting"))

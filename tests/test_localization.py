@@ -171,9 +171,11 @@ def test_update_labels_are_translated() -> None:
         "updates.check",
         "updates.checking",
         "updates.open",
+        "updates.open_releases",
         "updates.available",
         "updates.current",
         "updates.error",
+        "updates.rate_limited",
         "updates.disabled",
         "updates.no_download_url",
         "app.version_stage.beta",
@@ -220,6 +222,7 @@ def test_update_labels_are_translated() -> None:
         "about.privacy_text",
         "about.components_title",
         "about.components_text",
+        "about.meta_text",
     ]
 
     for language in ("ru", "en", "zh"):

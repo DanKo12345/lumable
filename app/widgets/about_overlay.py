@@ -6,7 +6,6 @@ from PySide6.QtCore import QEasingCurve, QEvent, QEventLoop, QPoint, QPropertyAn
 from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from app.app_info import APP_VERSION
 from app.theme import qcolor_from_token, theme_manager
 from app.widgets.liquid_button import LiquidButton
 
@@ -93,14 +92,11 @@ class AboutOverlay(QWidget):
         title_stack.setSpacing(3)
         title = QLabel(labels["title"], self._panel)
         title.setObjectName("aboutTitle")
-        version = QLabel(f"v{APP_VERSION} {labels['beta']}", self._panel)
-        version.setObjectName("aboutMuted")
-        edition = QLabel(labels["edition"], self._panel)
-        edition.setObjectName("aboutMuted")
+        meta = QLabel(labels["meta"], self._panel)
+        meta.setObjectName("aboutMuted")
         title_stack.addWidget(title)
-        title_stack.addWidget(version)
-        title_stack.addWidget(edition)
-        edition.setObjectName("aboutEditionPro" if "Pro" in labels["edition"] else "aboutMuted")
+        title_stack.addWidget(meta)
+        meta.setObjectName("aboutEditionPro" if "Pro" in labels["meta"] else "aboutMuted")
         header.addLayout(title_stack)
         header.addStretch(1)
         panel_layout.addLayout(header)
@@ -140,16 +136,17 @@ class AboutOverlay(QWidget):
             section.setMinimumHeight(min_height)
         layout = QVBoxLayout(section)
         layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(8)
+        layout.setSpacing(7)
         title = QLabel(title_text, section)
         title.setObjectName("aboutSectionTitle")
+        title.setMinimumHeight(20)
         body = QLabel(body_text, section)
         body.setObjectName("aboutBody")
         body.setWordWrap(True)
         body.setTextFormat(Qt.RichText)
         lines = body_text.replace("&", "&amp;").replace("<", "&lt;").split("\n")
         html = "<br>".join(lines)
-        body.setText(f"<div style='line-height: 150%;'>{html}</div>")
+        body.setText(f"<div style='line-height: 145%;'>{html}</div>")
         body.setContentsMargins(0, 2, 0, 0)
         layout.addWidget(title)
         layout.addWidget(body)

@@ -114,7 +114,7 @@ class MainWindow(QMainWindow):
         self._force_quit_requested = False
         self._scan_in_progress = False
         self._connect_in_progress = False
-        self._connect_button_phase = 0
+        self._connection_status_phase = 0
         self._active_mode_key: str | None = None
         self._theme_transition = None
         self._theme_transition_overlay = None
@@ -163,9 +163,9 @@ class MainWindow(QMainWindow):
         self._color_apply_debounce.setInterval(120)
         self._color_apply_debounce.timeout.connect(self._apply_current_color)
 
-        self._connect_button_timer = QTimer(self)
-        self._connect_button_timer.setInterval(450)
-        self._connect_button_timer.timeout.connect(self._tick_connect_button_animation)
+        self._connection_status_timer = QTimer(self)
+        self._connection_status_timer.setInterval(450)
+        self._connection_status_timer.timeout.connect(self._tick_connection_status_animation)
 
     def _tr(self, key: str, **kwargs) -> str:
         return localization_manager.t(key, **kwargs)
@@ -577,31 +577,32 @@ class MainWindow(QMainWindow):
         connecting = bool(self._connect_in_progress)
         has_devices = bool(self._devices)
         if connecting and not connected:
-            if not self._connect_button_timer.isActive():
-                self._connect_button_phase = 0
-                self._connect_button_timer.start()
-        elif self._connect_button_timer.isActive():
-            self._connect_button_timer.stop()
+            if not self._connection_status_timer.isActive():
+                self._connection_status_phase = 0
+                self._connection_status_timer.start()
+            self.device_status.setText(self._connection_status_text())
+        elif self._connection_status_timer.isActive():
+            self._connection_status_timer.stop()
         self.scan_button.setEnabled(not connected and not connecting and not self._scan_in_progress)
         self.connect_button.setVisible(not connected)
         self.connect_button.setEnabled(not connected and not connecting and has_devices and not self._scan_in_progress)
-        self.connect_button.setText(self._connect_button_text() if connecting and not connected else self._tr("device.connect"))
+        self.connect_button.setText(self._tr("device.connect"))
         self.disconnect_button.setVisible(connected)
         self.disconnect_button.setEnabled(connected)
         self.logs_toggle_button.setVisible(connected)
         self.logs_toggle_button.setEnabled(connected)
         self.logs_toggle_button.setText(self._tr("device.show_logs"))
 
-    def _connect_button_text(self) -> str:
-        return f"{self._tr('device.connecting').rstrip('.')}{'.' * self._connect_button_phase}"
+    def _connection_status_text(self) -> str:
+        return f"{self._tr('device.status.connecting').rstrip('.')}{'.' * self._connection_status_phase}"
 
-    def _tick_connect_button_animation(self) -> None:
+    def _tick_connection_status_animation(self) -> None:
         if not self._connect_in_progress or self._is_connected:
-            self._connect_button_timer.stop()
+            self._connection_status_timer.stop()
             self._sync_connect_buttons()
             return
-        self._connect_button_phase = (self._connect_button_phase + 1) % 4
-        self.connect_button.setText(self._connect_button_text())
+        self._connection_status_phase = (self._connection_status_phase + 1) % 4
+        self.device_status.setText(self._connection_status_text())
 
     def _apply_speed(self):
         if self._initializing:

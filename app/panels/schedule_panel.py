@@ -43,8 +43,10 @@ def build_schedule_section(host: PanelHost) -> GlassCard:
     host.schedule_card.content_layout.addLayout(row)
 
     host.schedule_runtime_note = QLabel(host._tr("schedule.runtime_note"))
-    host.schedule_runtime_note.setObjectName("hintLabel")
+    host.schedule_runtime_note.setObjectName("scheduleNote")
     host.schedule_runtime_note.setWordWrap(True)
+    host.schedule_runtime_note.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    host.schedule_runtime_note.setContentsMargins(0, 2, 0, 0)
     host.schedule_card.content_layout.addWidget(host.schedule_runtime_note)
     return host.schedule_card
 

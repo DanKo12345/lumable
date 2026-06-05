@@ -49,6 +49,12 @@ def _base_styles(T: dict) -> str:
             font-weight: 600;
             padding-left: 2px;
         }}
+        #scheduleNote {{
+            color: {T["muted"]};
+            font-size: 11px;
+            font-weight: 600;
+            padding-left: 2px;
+        }}
         #previewFrame {{
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                 stop:0 rgba(255,255,255,0.08),

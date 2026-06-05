@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.app_info import APP_AUTHOR
+from app.app_info import APP_AUTHOR, APP_VERSION
 from app.feature_gate import is_pro
 from app.license import activate_license_key
 from app.storage import save_settings
@@ -15,13 +15,10 @@ class OverlayController:
 
     def show_about(self) -> None:
         host = self._host
+        plan = host._tr("app.edition.pro") if is_pro() else host._tr("app.edition.free")
         labels = {
             "title": host._tr("about.title"),
-            "beta": host._tr("app.version_stage.beta"),
-            "edition": host._tr(
-                "about.edition_text",
-                edition=host._tr("app.edition.pro") if is_pro() else host._tr("app.edition.free"),
-            ),
+            "meta": host._tr("about.meta_text", version=APP_VERSION, stage=host._tr("app.version_stage.beta"), plan=plan),
             "author_title": host._tr("about.author_title"),
             "author_text": f"{APP_AUTHOR}\ngithub.com/DanKo12345",
             "privacy_title": host._tr("about.privacy_title"),

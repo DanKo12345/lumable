@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QHBoxLayout, QTextEdit
+from PySide6.QtGui import QFontMetrics
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QTextEdit
 
 from app.panels.types import PanelHost
 from app.widgets import GlassCard
@@ -23,27 +24,46 @@ def build_diagnostics_section(host: PanelHost) -> GlassCard:
     button_row.addStretch(1)
     host.copy_diagnostics_button = host._button(host._tr("diagnostics.copy"), "ghost")
     host.copy_diagnostics_button.set_icon_kind("copy")
-    _prepare_action_button(host.copy_diagnostics_button, 164)
+    _prepare_action_button(host.copy_diagnostics_button)
     button_row.addWidget(host.copy_diagnostics_button)
     host.show_logs_button = host._button(host._tr("device.show_logs"), "ghost")
     host.show_logs_button.set_icon_kind("logs")
-    _prepare_action_button(host.show_logs_button, 164)
+    _prepare_action_button(host.show_logs_button)
     button_row.addWidget(host.show_logs_button)
     host.export_diagnostics_button = host._button(host._tr("diagnostics.export"), "ghost")
     host.export_diagnostics_button.set_icon_kind("download")
-    _prepare_action_button(host.export_diagnostics_button, 196)
+    _prepare_action_button(host.export_diagnostics_button)
     button_row.addWidget(host.export_diagnostics_button)
     host.check_update_button = host._button(host._tr("updates.check"), "ghost")
-    _prepare_action_button(host.check_update_button, 196)
+    _prepare_action_button(host.check_update_button)
     button_row.addWidget(host.check_update_button)
 
     host.diagnostics_card.content_layout.addLayout(button_row)
     return host.diagnostics_card
 
 
-def _prepare_action_button(button, width: int) -> None:
-    button.setMinimumWidth(width)
+def resize_diagnostics_action_buttons(host: PanelHost) -> None:
+    for button in (
+        host.copy_diagnostics_button,
+        host.show_logs_button,
+        host.export_diagnostics_button,
+        host.check_update_button,
+    ):
+        button.setMinimumWidth(_action_button_width(button))
+
+
+def _prepare_action_button(button) -> None:
     button.setIconSize(QSize(14, 14))
     font = button.font()
     font.setPointSize(10)
     button.setFont(font)
+    button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+    button.setMinimumWidth(_action_button_width(button))
+
+
+def _action_button_width(button) -> int:
+    metrics = QFontMetrics(button.font())
+    icon_extra = 0
+    if getattr(button, "_icon_kind", ""):
+        icon_extra = (button.iconSize().width() or 14) + 7
+    return max(156, metrics.horizontalAdvance(button.text()) + icon_extra + 52)

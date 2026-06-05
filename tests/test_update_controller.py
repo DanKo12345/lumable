@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+from app.update_checker import UpdateResult
+from app.update_controller import UpdateController
+
+
+class FakeButton:
+    def __init__(self) -> None:
+        self.enabled = True
+        self.text = ""
+
+    def setEnabled(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+    def setText(self, text: str) -> None:
+        self.text = text
+
+
+class FakeHost:
+    def __init__(self) -> None:
+        self.check_update_button = FakeButton()
+        self.logs: list[str] = []
+        self._update_result = None
+
+    def _tr(self, key: str, **kwargs: object) -> str:
+        if kwargs:
+            args = ",".join(f"{name}={value}" for name, value in kwargs.items())
+            return f"{key}:{args}"
+        return key
+
+    def _log(self, message: str) -> None:
+        self.logs.append(message)
+
+
+class RunningChecker:
+    is_running = True
+    is_configured = True
+
+    def check(self) -> bool:
+        raise AssertionError("manual click should not start another check while one is already running")
+
+
+def test_silent_update_error_does_not_log_noise() -> None:
+    host = FakeHost()
+    controller = UpdateController(host, "0.1.1", "", "")
+    controller._silent_check = True
+
+    controller.handle_result(UpdateResult("error", message="HTTP Error 403: rate limit exceeded"))
+
+    assert host.logs == []
+    assert host.check_update_button.enabled is True
+    assert host.check_update_button.text == "updates.check"
+
+
+def test_manual_rate_limit_uses_friendly_message() -> None:
+    host = FakeHost()
+    controller = UpdateController(host, "0.1.1", "", "https://example.test/releases")
+
+    controller.handle_result(UpdateResult("rate_limited", message="HTTP Error 403: rate limit exceeded"))
+
+    assert host.logs == ["updates.rate_limited"]
+    assert host.check_update_button.enabled is True
+    assert host.check_update_button.text == "updates.open_releases"
+
+
+def test_rate_limit_cooldown_opens_releases_without_new_log(monkeypatch) -> None:
+    opened_urls: list[str] = []
+    monkeypatch.setattr(
+        "app.update_controller.QDesktopServices.openUrl",
+        lambda url: opened_urls.append(url.toString()) or True,
+    )
+    host = FakeHost()
+    controller = UpdateController(host, "0.1.1", "", "https://example.test/releases")
+    controller.handle_result(UpdateResult("rate_limited", message="HTTP Error 403: rate limit exceeded"))
+
+    controller.check()
+
+    assert opened_urls == ["https://example.test/releases"]
+    assert host.logs == ["updates.rate_limited"]
+    assert host.check_update_button.text == "updates.open_releases"
+
+
+def test_manual_update_check_animates_button_text() -> None:
+    host = FakeHost()
+    controller = UpdateController(host, "0.1.1", "", "")
+
+    controller._start_check_animation()
+    assert host.check_update_button.text == "updates.checking"
+
+    controller._tick_check_animation()
+    assert host.check_update_button.text == "updates.checking."
+
+    controller._tick_check_animation()
+    assert host.check_update_button.text == "updates.checking.."
+
+
+def test_manual_click_uses_running_background_check_animation() -> None:
+    host = FakeHost()
+    controller = UpdateController(host, "0.1.1", "", "")
+    controller._checker = RunningChecker()
+    controller._silent_check = True
+
+    controller.check()
+
+    assert controller._silent_check is False
+    assert host.check_update_button.enabled is False
+    assert host.check_update_button.text == "updates.checking"
+    assert host.logs == ["updates.checking"]

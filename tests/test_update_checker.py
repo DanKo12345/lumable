@@ -27,6 +27,31 @@ def test_parse_update_payload_accepts_github_latest_release_shape() -> None:
     assert result.info.url == "https://example.test/releases/v0.2.0"
 
 
+def test_parse_update_payload_accepts_github_release_list_with_prereleases() -> None:
+    result = parse_update_payload(
+        [
+            {
+                "tag_name": "v0.1.1",
+                "name": "LumaBLE 0.1.1 beta",
+                "html_url": "https://example.test/releases/v0.1.1",
+                "prerelease": True,
+            },
+            {
+                "tag_name": "v0.1.0",
+                "name": "LumaBLE 0.1.0 beta",
+                "html_url": "https://example.test/releases/v0.1.0",
+                "prerelease": True,
+            },
+        ],
+        "0.1.0",
+    )
+
+    assert result.state == "available"
+    assert result.info is not None
+    assert result.info.latest_version == "0.1.1"
+    assert result.info.url == "https://example.test/releases/v0.1.1"
+
+
 def test_parse_update_payload_reports_current_version() -> None:
     result = parse_update_payload({"version": "0.1.0", "url": "https://example.test"}, "0.1.0")
 

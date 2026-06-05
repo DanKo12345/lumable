@@ -12,8 +12,8 @@ from app.widgets import AuthorSignatureMark
 def test_author_metadata_is_consistent() -> None:
     assert APP_AUTHOR == "dollza"
     assert APP_AUTHOR_SIGNATURE == "by dollza"
-    assert APP_UPDATE_URL == "https://api.github.com/repos/DanKo12345/lumable/releases/latest"
-    assert APP_RELEASES_URL == "https://github.com/DanKo12345/lumable/releases/latest"
+    assert APP_UPDATE_URL == "https://api.github.com/repos/DanKo12345/lumable/releases"
+    assert APP_RELEASES_URL == "https://github.com/DanKo12345/lumable/releases"
 
 
 def test_window_icon_asset_exists() -> None:

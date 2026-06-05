@@ -267,7 +267,7 @@ def test_connection_actions_show_only_relevant_buttons() -> None:
         app.processEvents()
 
 
-def test_connect_button_animates_while_connecting() -> None:
+def test_connection_status_animates_while_connecting() -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     try:
@@ -277,16 +277,18 @@ def test_connect_button_animates_while_connecting() -> None:
         window._connect_in_progress = True
         window._sync_connect_buttons()
 
-        assert window.connect_button.text() == window._tr("device.connecting").rstrip(".")
-        assert window._connect_button_timer.isActive()
+        assert window.device_status.text() == window._tr("device.status.connecting").rstrip(".")
+        assert window.connect_button.text() == window._tr("device.connect")
+        assert window._connection_status_timer.isActive()
 
-        window._tick_connect_button_animation()
-        assert window.connect_button.text() == f"{window._tr('device.connecting').rstrip('.')}."
+        window._tick_connection_status_animation()
+        assert window.device_status.text() == f"{window._tr('device.status.connecting').rstrip('.')}."
+        assert window.connect_button.text() == window._tr("device.connect")
 
         window._connect_in_progress = False
         window._sync_connect_buttons()
 
-        assert not window._connect_button_timer.isActive()
+        assert not window._connection_status_timer.isActive()
         assert window.connect_button.text() == window._tr("device.connect")
     finally:
         window._ble.shutdown()
