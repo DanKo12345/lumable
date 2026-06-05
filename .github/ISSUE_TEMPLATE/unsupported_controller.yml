@@ -1,0 +1,55 @@
+name: Unsupported controller
+description: Report a BLE LED controller that does not connect or does not respond correctly.
+title: "[Controller]: "
+labels: ["controller-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cheap BLE LED controllers often use different command protocols even when their names look similar.
+        Please include diagnostics so support can be added.
+  - type: input
+    id: controller_name
+    attributes:
+      label: Controller name shown in LumaBLE
+      placeholder: "ELK-BLEDOM, BLEDOM, LEDnetWF, Triones, SP611E..."
+    validations:
+      required: true
+  - type: input
+    id: controller_family
+    attributes:
+      label: Controller family, if known
+      placeholder: "BLEDOM / Magic Home / BanlanX / Triones / unknown"
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+  - type: dropdown
+    id: failure
+    attributes:
+      label: What fails?
+      options:
+        - Device is not found during scan
+        - Device is found but does not connect
+        - Device connects but commands do nothing
+        - Color works but brightness/effects/power do not
+        - Connection drops or reconnect fails
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report
+      description: In LumaBLE, open Device diagnostics and click Export diagnostics or Copy diagnostics.
+      placeholder: Paste the report here, or attach the exported .txt file.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Extra notes
+      description: Include product link, photo of the controller label, or app that normally controls it, if possible.

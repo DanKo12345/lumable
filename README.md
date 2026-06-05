@@ -12,6 +12,9 @@ Version: `0.1.1 beta`
 
 Download the latest Windows build from the [Releases page](https://github.com/DanKo12345/lumable/releases).
 
+If you find a bug or your controller does not work, please open an
+[Issue](https://github.com/DanKo12345/lumable/issues).
+
 Translations:
 
 - [Русский](README.ru.md)
@@ -76,3 +79,21 @@ Custom translations can be added as JSON files in:
 
 The local `data/` folder is only a legacy migration source for old development profiles/settings.
 It should not be committed or included in public archives.
+
+## Reporting Issues
+
+When reporting a bug or unsupported controller, please include:
+
+- Windows version.
+- LumaBLE version.
+- Controller name shown in the app.
+- What you tried to do.
+- What happened instead.
+- Diagnostics report, if possible.
+
+To export diagnostics:
+
+1. Open LumaBLE.
+2. Open Device diagnostics.
+3. Click Copy diagnostics or Export diagnostics.
+4. Paste the report into the GitHub issue, or attach the exported `.txt` file.

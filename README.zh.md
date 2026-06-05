@@ -11,6 +11,9 @@ LumaBLE 可以扫描附近受支持的蓝牙灯带控制器、连接设备、调
 
 可在 [Releases 页面](https://github.com/DanKo12345/lumable/releases) 下载最新的 Windows 构建。
 
+如果发现错误，或者控制器无法正常工作，请创建
+[Issue](https://github.com/DanKo12345/lumable/issues)。
+
 其他语言：
 
 - [English](README.md)
@@ -75,3 +78,21 @@ Free 模式启动：
 
 项目中的 `data/` 文件夹只用于旧版开发配置和设置的首次迁移。
 不要将它提交到仓库，也不要放进公开发布的源码压缩包。
+
+## 报告问题
+
+报告错误或不受支持的控制器时，请包含：
+
+- Windows 版本。
+- LumaBLE 版本。
+- 应用中显示的控制器名称。
+- 你尝试执行的操作。
+- 实际发生的情况。
+- 如果可以，请附上诊断报告。
+
+导出诊断：
+
+1. 打开 LumaBLE。
+2. 打开设备诊断。
+3. 点击 Copy diagnostics 或 Export diagnostics。
+4. 将报告粘贴到 GitHub issue，或附上导出的 `.txt` 文件。

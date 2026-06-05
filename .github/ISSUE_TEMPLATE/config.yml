@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Download latest beta
+    url: https://github.com/DanKo12345/lumable/releases
+    about: Download the latest Windows build from GitHub Releases.

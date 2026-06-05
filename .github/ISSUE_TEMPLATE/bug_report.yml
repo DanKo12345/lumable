@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a crash, UI issue, or broken app behavior.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing LumaBLE. This is a beta app, so detailed reports help a lot.
+  - type: input
+    id: version
+    attributes:
+      label: LumaBLE version
+      description: You can find it in the app header or release filename.
+      placeholder: "0.1.1 beta"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What did you do?
+      description: List the steps that caused the problem.
+      placeholder: |
+        1. Opened LumaBLE
+        2. Clicked Find controller
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report
+      description: In LumaBLE, open Device diagnostics and click Export diagnostics or Copy diagnostics.
+      placeholder: Paste the report here, or attach the exported .txt file.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or extra notes
+      description: Add screenshots, crash logs, or anything else that may help.
