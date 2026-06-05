@@ -48,6 +48,17 @@ def test_handle_future_emits_unexpected_exception_as_ble_error() -> None:
     assert controller._last_ble_error == "adapter exploded"
 
 
+def test_successful_connection_can_clear_stale_ble_error() -> None:
+    controller = BleController.__new__(BleController)
+    controller._ble_history = []
+    controller._set_last_ble_error("BLE connection was lost. Reconnecting to the last controller...")
+
+    controller._clear_last_ble_error()
+
+    assert controller._last_ble_error == ""
+    assert controller._ble_history[-1]["event"] == "error"
+
+
 def test_set_static_color_updates_cached_state_and_submits_one_operation() -> None:
     controller = BleController.__new__(BleController)
     controller._last_red = 0

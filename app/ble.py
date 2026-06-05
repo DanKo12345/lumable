@@ -307,6 +307,9 @@ class BleController(QObject):
         if clean_message:
             self._record_ble_history("error", message=clean_message, error_type=exc.__class__.__name__)
 
+    def _clear_last_ble_error(self) -> None:
+        self._last_ble_error = ""
+
     def _driver_command_support(self) -> dict:
         driver = self._driver
         if driver is None:
@@ -497,6 +500,7 @@ class BleController(QObject):
         self._write_characteristics = driver.collect_write_characteristics(services)
         self._reconnect_address = address
         self._manual_disconnect_requested = False
+        self._clear_last_ble_error()
         self.connected_changed.emit(True, address)
         self.status_changed.emit(
             localization_manager.status_ble_event(
