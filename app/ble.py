@@ -670,9 +670,12 @@ class BleController(QObject):
 
     async def _write_attempt(self, characteristic, payload: bytes, response: bool) -> Exception | None:
         """Single GATT write attempt. Returns None on success, exception on failure."""
+        client = self._client
+        if client is None:
+            return ConnectionLostError("BLE connection was lost. Reconnecting to the last controller...")
         try:
             await asyncio.wait_for(
-                self._client.write_gatt_char(characteristic, payload, response=response),
+                client.write_gatt_char(characteristic, payload, response=response),
                 timeout=WRITE_TIMEOUT_SECONDS,
             )
             return None

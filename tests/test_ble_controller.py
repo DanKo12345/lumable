@@ -540,6 +540,20 @@ def test_write_starts_reconnect_when_client_is_already_disconnected() -> None:
     asyncio.run(scenario())
 
 
+def test_write_attempt_handles_client_cleared_during_disconnect() -> None:
+    controller = BleController.__new__(BleController)
+    controller._client = None
+
+    class FakeCharacteristic:
+        uuid = "fff3"
+        properties = ["write-without-response"]
+
+    error = asyncio.run(controller._write_attempt(FakeCharacteristic(), b"payload", response=False))
+
+    assert isinstance(error, ConnectionLostError)
+    assert "Reconnecting" in str(error)
+
+
 def test_write_many_preserves_connection_lost_error() -> None:
     controller = BleController.__new__(BleController)
     controller._client = object()

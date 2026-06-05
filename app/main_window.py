@@ -546,6 +546,9 @@ class MainWindow(QMainWindow):
         self._local_color_debounce.stop()
         self._effect_debounce.stop()
         color = self._current_color()
+        if not self._is_connected:
+            self._apply_local_color_state(color)
+            return
         self._ble.set_static_color(color.red(), color.green(), color.blue(), self.brightness_slider.value())
         self._apply_local_color_state(color)
 

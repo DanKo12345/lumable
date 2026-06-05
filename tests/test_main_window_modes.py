@@ -120,6 +120,7 @@ def test_apply_static_color_uses_single_ble_operation() -> None:
     try:
         window._ble.shutdown()
         window._ble = DummyBle()
+        window._is_connected = True
         window.red_slider.setValue(10)
         window.green_slider.setValue(20)
         window.blue_slider.setValue(30)
@@ -128,6 +129,35 @@ def test_apply_static_color_uses_single_ble_operation() -> None:
         window._apply_current_color()
 
         assert calls == [(10, 20, 30, 40)]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_apply_static_color_stays_local_when_disconnected() -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    calls = []
+
+    class DummyBle:
+        def set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
+            calls.append((red, green, blue, brightness))
+
+        def shutdown(self) -> None:
+            pass
+
+        def shutdown_async(self) -> None:
+            pass
+
+    try:
+        window._ble.shutdown()
+        window._ble = DummyBle()
+        window._is_connected = False
+        window.red_slider.setValue(10)
+
+        window._apply_current_color()
+
+        assert calls == []
     finally:
         window.close()
         app.processEvents()
