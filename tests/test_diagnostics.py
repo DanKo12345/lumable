@@ -5,6 +5,7 @@ from app.localization import localization_manager
 
 
 def test_diagnostics_report_includes_device_driver_and_write_characteristic() -> None:
+    localization_manager.set_language("en")
     snapshot = {
         "connected": True,
         "device": {"name": "ELK-BLEDOM", "address": "AA:BB:CC", "rssi": "-54"},
@@ -113,6 +114,8 @@ def test_diagnostics_report_normalizes_localized_ble_history() -> None:
 
 
 def test_diagnostics_report_includes_ble_history_without_home_paths(monkeypatch) -> None:
+    localization_manager.set_language("en")
+
     class FakeHomePath:
         @staticmethod
         def home():
@@ -162,3 +165,43 @@ def test_diagnostics_report_includes_ble_history_without_home_paths(monkeypatch)
     assert "Recent BLE history" in report
     assert "retry 1/2" in report
     assert "protocol mismatch" in report
+
+
+def test_diagnostics_report_uses_current_language_for_report_labels() -> None:
+    localization_manager.set_language("ru")
+    report = build_diagnostics_report(
+        {
+            "connected": True,
+            "device": {"name": "ELK-BLEDOM", "address": "AA:BB"},
+            "driver": {"id": "bledom", "name": "BLEDOM", "transport": "BLE"},
+            "write": {"selected_uuid": "0000fff3", "selected_properties": ["write-without-response"]},
+            "commands": {"power": True, "color": True, "brightness": True, "effects": 22, "speed": True},
+            "history": {
+                "last_command": {
+                    "event": "command",
+                    "description": '__L10N__{"kind":"ble","event":"color_set","red":1,"green":2,"blue":3}__END__',
+                    "payload": "7e",
+                    "targets": "0000fff3",
+                },
+                "events": [
+                    {
+                        "event": "command",
+                        "description": '__L10N__{"kind":"ble","event":"color_set","red":1,"green":2,"blue":3}__END__',
+                        "payload": "7e",
+                        "targets": "0000fff3",
+                    }
+                ],
+            },
+        },
+        ["Connected"],
+        include_crashes=False,
+    )
+
+    assert "Версия: 0.1.1" in report
+    assert "Устройство" in report
+    assert "Подключено: да" in report
+    assert "Поддерживаемые команды" in report
+    assert "Последняя команда: Установлен цвет RGB(1, 2, 3)" in report
+    assert "- команда: Установлен цвет RGB(1, 2, 3)" in report
+    assert "Session logs" not in report
+    assert "Connected: yes" not in report

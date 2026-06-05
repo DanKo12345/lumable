@@ -16,6 +16,18 @@ def _line(label: str, value: object) -> str:
     return f"{label}: {text or '-'}"
 
 
+def _t(key: str, **kwargs: object) -> str:
+    return localization_manager.t(f"diagnostics.report.{key}", **kwargs)
+
+
+def _line_key(key: str, value: object) -> str:
+    return _line(_t(key), value)
+
+
+def _yes_no(value: object) -> str:
+    return _t("yes") if value else _t("no")
+
+
 def _has_value(value: object) -> bool:
     if isinstance(value, (list, tuple, set, dict)):
         return bool(value)
@@ -49,21 +61,21 @@ def _format_history_item(item: dict[str, Any]) -> str:
     event = str(item.get("event", "")).strip()
     if event == "command":
         return (
-            f"- command: {_history_status_value(item, 'description')} | "
-            f"payload {_history_value(item, 'payload')} | "
-            f"targets {_history_value(item, 'targets')}"
+            f"- {_t('history_command')}: {_history_status_value(item, 'description')} | "
+            f"{_t('payload')} {_history_value(item, 'payload')} | "
+            f"{_t('targets')} {_history_value(item, 'targets')}"
         )
     if event == "retry":
         return (
-            f"- retry {_history_value(item, 'attempt')}/{_history_value(item, 'total')}: "
+            f"- {_t('history_retry')} {_history_value(item, 'attempt')}/{_history_value(item, 'total')}: "
             f"{_history_value(item, 'uuid')} | {_history_error_value(item, 'error')} | "
-            f"payload {_history_value(item, 'payload')}"
+            f"{_t('payload')} {_history_value(item, 'payload')}"
         )
     if event == "protocol_mismatch":
-        return f"- protocol mismatch: {_history_error_value(item, 'details')}"
+        return f"- {_t('history_protocol_mismatch')}: {_history_error_value(item, 'details')}"
     if event == "error":
-        return f"- error: {_history_error_value(item, 'message')}"
-    return f"- {event or 'event'}: {sanitize_report_text(str(item))}"
+        return f"- {_t('history_error')}: {_history_error_value(item, 'message')}"
+    return f"- {event or _t('history_event')}: {sanitize_report_text(str(item))}"
 
 
 def _read_recent_crash_logs(limit: int = 3, max_chars: int = 800) -> list[str]:
@@ -115,11 +127,11 @@ def build_diagnostics_report(
     command_lines = []
     if has_commands:
         command_lines = [
-            _line("Power", "yes" if commands.get("power") else "no"),
-            _line("Color", "yes" if commands.get("color") else "no"),
-            _line("Brightness", "yes" if commands.get("brightness") else "no"),
-            _line("Effects", commands.get("effects") or "no"),
-            _line("Speed", "yes" if commands.get("speed") else "no"),
+            _line_key("power", _yes_no(commands.get("power"))),
+            _line_key("color", _yes_no(commands.get("color"))),
+            _line_key("brightness", _yes_no(commands.get("brightness"))),
+            _line_key("effects", commands.get("effects") or _t("no")),
+            _line_key("speed", _yes_no(commands.get("speed"))),
         ]
     candidate_lines = [
         f"- {item.get('uuid', '-')} ({_joined(item.get('properties', []))})"
@@ -137,58 +149,58 @@ def build_diagnostics_report(
 
     sections = [
         APP_NAME,
-        _line("Version", APP_VERSION),
-        _line("Author", APP_AUTHOR),
-        _line("Generated", datetime.now().isoformat(timespec="seconds")),
-        _line("OS", platform.platform()),
-        _line("Python", platform.python_version()),
+        _line_key("version", APP_VERSION),
+        _line_key("author", APP_AUTHOR),
+        _line_key("generated", datetime.now().isoformat(timespec="seconds")),
+        _line_key("os", platform.platform()),
+        _line_key("python", platform.python_version()),
         "",
-        "Device",
-        _line("Connected", "yes" if snapshot.get("connected") else "no"),
+        _t("device_section"),
+        _line_key("connected", _yes_no(snapshot.get("connected"))),
     ]
-    for label, key in (("Name", "name"), ("Address", "address"), ("RSSI", "rssi")):
+    for label_key, key in (("name", "name"), ("address", "address"), ("rssi", "rssi")):
         if _has_value(device.get(key)):
-            sections.append(_line(label, device.get(key)))
+            sections.append(_line_key(label_key, device.get(key)))
 
     if has_driver:
-        sections.extend(["", "Driver"])
-        for label, key in (("ID", "id"), ("Name", "name"), ("Transport", "transport"), ("Notes", "notes")):
+        sections.extend(["", _t("driver_section")])
+        for label_key, key in (("id", "id"), ("name", "name"), ("transport", "transport"), ("notes", "notes")):
             if _has_value(driver.get(key)):
-                sections.append(_line(label, driver.get(key)))
+                sections.append(_line_key(label_key, driver.get(key)))
 
     if has_write:
-        sections.extend(["", "Write characteristic"])
+        sections.extend(["", _t("write_section")])
         if _has_value(write.get("selected_uuid")):
-            sections.append(_line("Selected", write.get("selected_uuid")))
+            sections.append(_line_key("selected", write.get("selected_uuid")))
         if _has_value(write.get("selected_properties")):
-            sections.append(_line("Selected properties", _joined(write.get("selected_properties", []))))
+            sections.append(_line_key("selected_properties", _joined(write.get("selected_properties", []))))
         if candidate_lines:
-            sections.extend(["Candidates:", *candidate_lines])
+            sections.extend([f"{_t('candidates')}:", *candidate_lines])
 
     if command_lines:
-        sections.extend(["", "Supported commands", *command_lines])
+        sections.extend(["", _t("supported_commands_section"), *command_lines])
 
     last_error = sanitize_report_text(localization_manager.normalize_error_message(str(history.get("last_error", ""))))
     has_ble_summary = bool(last_command) or bool(last_error.strip())
     if has_ble_summary:
-        sections.extend(["", "BLE summary"])
+        sections.extend(["", _t("ble_summary_section")])
         if last_command:
-            sections.append(_line("Last command", _history_status_value(last_command, "description")))
+            sections.append(_line_key("last_command", _history_status_value(last_command, "description")))
             if _has_value(last_command.get("payload")):
-                sections.append(_line("Last payload", _history_value(last_command, "payload")))
+                sections.append(_line_key("last_payload", _history_value(last_command, "payload")))
             if _has_value(last_command.get("targets")):
-                sections.append(_line("Last targets", _history_value(last_command, "targets")))
+                sections.append(_line_key("last_targets", _history_value(last_command, "targets")))
         if last_error.strip():
-            sections.append(_line("Last error", last_error))
+            sections.append(_line_key("last_error", last_error))
 
     if history_lines:
-        sections.extend(["", "Recent BLE history", *history_lines])
+        sections.extend(["", _t("recent_ble_history_section"), *history_lines])
 
-    sections.extend(["", "Session logs", *(log_lines[-80:] if log_lines else ["-"])])
+    sections.extend(["", _t("session_logs_section"), *(log_lines[-80:] if log_lines else ["-"])])
 
     if include_crashes:
         crashes = _read_recent_crash_logs()
         if crashes:
-            sections.extend(["", "Recent crash logs", *crashes])
+            sections.extend(["", _t("recent_crash_logs_section"), *crashes])
 
     return "\n".join(sections).strip() + "\n"
