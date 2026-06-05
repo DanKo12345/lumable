@@ -296,7 +296,7 @@ def test_connection_status_animates_while_connecting() -> None:
         app.processEvents()
 
 
-def test_rgb_slider_preview_updates_are_debounced() -> None:
+def test_rgb_slider_preview_updates_immediately() -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     try:
@@ -306,10 +306,6 @@ def test_rgb_slider_preview_updates_are_debounced() -> None:
         new_value = 124 if window.red_slider.value() == 123 else 123
         window.red_slider.setValue(new_value)
 
-        assert calls == []
-        assert window._color_preview_debounce.isActive()
-
-        window._update_preview()
         assert calls[-1].red() == new_value
     finally:
         window._ble.shutdown()
