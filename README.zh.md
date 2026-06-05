@@ -9,6 +9,8 @@ LumaBLE 可以扫描附近受支持的蓝牙灯带控制器、连接设备、调
 
 版本：`0.1.1 beta`
 
+可在 [Releases 页面](https://github.com/DanKo12345/lumable/releases) 下载最新的 Windows 构建。
+
 其他语言：
 
 - [English](README.md)
