@@ -86,6 +86,7 @@ def test_validate_settings_normalizes_broken_payload() -> None:
     assert settings["theme"] == "light"
     assert settings["capture_compatibility"] is True
     assert settings["language"] == "ru"
+    assert settings["updates_last_auto_check_at"] == 0
     assert settings["last_device_address"] == "AA:BB"
     assert settings["last_device_name"] == "Desk strip"
     assert settings["license"] == {

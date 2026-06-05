@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from time import monotonic
+from time import monotonic, time
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 
+from app.storage import save_settings
 from app.update_checker import UpdateChecker, UpdateResult
 
 
 class UpdateController:
+    AUTO_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
     RATE_LIMIT_COOLDOWN_SECONDS = 600
 
     def __init__(self, host: Any, current_version: str, update_url: str, releases_url: str) -> None:
@@ -34,9 +36,15 @@ class UpdateController:
         self._checker.finished.connect(self.handle_result)
 
     def check_silent(self) -> None:
-        if self._checker.is_configured and not self._checker.is_running:
-            self._silent_check = True
-            self._checker.check()
+        if not self._checker.is_configured or self._checker.is_running:
+            return
+        if not self._should_run_silent_check():
+            return
+        self._silent_check = True
+        if self._checker.check():
+            self._mark_silent_check_attempted()
+        else:
+            self._silent_check = False
 
     def check(self) -> None:
         if self.result is not None and self.result.state == "available":
@@ -106,6 +114,23 @@ class UpdateController:
 
     def _is_rate_limit_active(self) -> bool:
         return monotonic() < self._rate_limited_until
+
+    def _should_run_silent_check(self) -> bool:
+        settings = getattr(self._host, "_settings", {})
+        if not isinstance(settings, dict):
+            return True
+        try:
+            last_check_at = float(settings.get("updates_last_auto_check_at", 0) or 0)
+        except (TypeError, ValueError):
+            last_check_at = 0.0
+        return time() - last_check_at >= self.AUTO_CHECK_INTERVAL_SECONDS
+
+    def _mark_silent_check_attempted(self) -> None:
+        settings = getattr(self._host, "_settings", None)
+        if not isinstance(settings, dict):
+            return
+        settings["updates_last_auto_check_at"] = int(time())
+        save_settings(settings)
 
     def _start_check_animation(self) -> None:
         self._checking_phase = 0

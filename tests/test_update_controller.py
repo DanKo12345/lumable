@@ -21,6 +21,7 @@ class FakeHost:
         self.check_update_button = FakeButton()
         self.logs: list[str] = []
         self._update_result = None
+        self._settings = {"updates_last_auto_check_at": 0}
 
     def _tr(self, key: str, **kwargs: object) -> str:
         if kwargs:
@@ -38,6 +39,18 @@ class RunningChecker:
 
     def check(self) -> bool:
         raise AssertionError("manual click should not start another check while one is already running")
+
+
+class ConfiguredChecker:
+    is_running = False
+    is_configured = True
+
+    def __init__(self) -> None:
+        self.check_calls = 0
+
+    def check(self) -> bool:
+        self.check_calls += 1
+        return True
 
 
 def test_silent_update_error_does_not_log_noise() -> None:
@@ -106,3 +119,33 @@ def test_manual_click_uses_running_background_check_animation() -> None:
     assert host.check_update_button.enabled is False
     assert host.check_update_button.text == "updates.checking"
     assert host.logs == ["updates.checking"]
+
+
+def test_silent_update_check_skips_recent_attempt(monkeypatch) -> None:
+    monkeypatch.setattr("app.update_controller.time", lambda: 2_000.0)
+    host = FakeHost()
+    host._settings["updates_last_auto_check_at"] = 1_900
+    controller = UpdateController(host, "0.1.1", "", "")
+    checker = ConfiguredChecker()
+    controller._checker = checker
+
+    controller.check_silent()
+
+    assert checker.check_calls == 0
+    assert controller._silent_check is False
+
+
+def test_silent_update_check_records_attempt(monkeypatch) -> None:
+    saved_settings: list[dict[str, object]] = []
+    monkeypatch.setattr("app.update_controller.time", lambda: 90_000.0)
+    monkeypatch.setattr("app.update_controller.save_settings", lambda settings: saved_settings.append(dict(settings)))
+    host = FakeHost()
+    controller = UpdateController(host, "0.1.1", "", "")
+    checker = ConfiguredChecker()
+    controller._checker = checker
+
+    controller.check_silent()
+
+    assert checker.check_calls == 1
+    assert host._settings["updates_last_auto_check_at"] == 90_000
+    assert saved_settings == [{"updates_last_auto_check_at": 90_000}]

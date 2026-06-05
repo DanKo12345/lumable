@@ -172,6 +172,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "capture_compatibility": True,
     "language": "ru",
     "quick_mode": "",
+    "updates_last_auto_check_at": 0,
     "license": {
         "activated": False,
         "edition": "free",
@@ -386,6 +387,12 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "capture_compatibility": capture_compatibility,
         "language": language,
         "quick_mode": quick_mode,
+        "updates_last_auto_check_at": _coerce_int(
+            data.get("updates_last_auto_check_at"),
+            DEFAULT_SETTINGS["updates_last_auto_check_at"],
+            0,
+            4_102_444_800,
+        ),
         "license": validate_license_state(data.get("license", DEFAULT_SETTINGS["license"])),
         "window_width": _coerce_int(data.get("window_width"), DEFAULT_SETTINGS["window_width"], 800, 7680),
         "window_height": _coerce_int(data.get("window_height"), DEFAULT_SETTINGS["window_height"], 600, 4320),
