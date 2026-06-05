@@ -267,6 +267,33 @@ def test_connection_actions_show_only_relevant_buttons() -> None:
         app.processEvents()
 
 
+def test_connect_button_animates_while_connecting() -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window._devices = [{"name": "Demo", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-40"}]
+        window._scan_in_progress = False
+        window._is_connected = False
+        window._connect_in_progress = True
+        window._sync_connect_buttons()
+
+        assert window.connect_button.text() == window._tr("device.connecting").rstrip(".")
+        assert window._connect_button_timer.isActive()
+
+        window._tick_connect_button_animation()
+        assert window.connect_button.text() == f"{window._tr('device.connecting').rstrip('.')}."
+
+        window._connect_in_progress = False
+        window._sync_connect_buttons()
+
+        assert not window._connect_button_timer.isActive()
+        assert window.connect_button.text() == window._tr("device.connect")
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def test_connection_refreshes_power_button_action_text(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr("app.main_window.save_settings", lambda _settings: None)
