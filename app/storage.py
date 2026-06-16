@@ -157,6 +157,7 @@ DEFAULT_PROFILE_KEY_TO_NAME = {
 
 DEFAULT_START_COLOR = {"r": 88, "g": 182, "b": 255}
 LEGACY_DARK_START_COLOR = {"r": 10, "g": 20, "b": 30}
+CUSTOM_QUICK_MODE_MAX = 4
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "last_device_address": "",
@@ -166,12 +167,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "enabled": False,
         "on_time": "19:00",
         "off_time": "23:00",
+        "startup_enabled": False,
     },
     "theme_mode": "auto",
     "theme": "dark",
     "capture_compatibility": True,
     "language": "ru",
     "quick_mode": "",
+    "custom_quick_modes": [],
     "updates_last_auto_check_at": 0,
     "license": {
         "activated": False,
@@ -314,6 +317,43 @@ def validate_color_history(data: Any, *, limit: int = 12) -> list[dict[str, int]
     return colors
 
 
+def _coerce_hex_color(value: Any, fallback: str) -> str:
+    text = _coerce_str(value, fallback).lstrip("#")
+    if len(text) != 6:
+        return fallback
+    try:
+        int(text, 16)
+    except ValueError:
+        return fallback
+    return f"#{text.lower()}"
+
+
+def validate_custom_quick_modes(data: Any, *, limit: int = CUSTOM_QUICK_MODE_MAX) -> list[dict[str, Any]]:
+    if not isinstance(data, list):
+        return []
+    modes: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for index, item in enumerate(data, start=1):
+        if not isinstance(item, dict):
+            continue
+        profile = validate_profile(item)
+        if profile is None:
+            continue
+        key = _coerce_str(item.get("key"), f"custom_{index}")
+        if key in seen_keys:
+            key = f"custom_{index}"
+        seen_keys.add(key)
+        profile["key"] = key
+        source_profile_name = _coerce_str(item.get("source_profile_name"), "")
+        if source_profile_name:
+            profile["source_profile_name"] = source_profile_name
+        profile["accent"] = _coerce_hex_color(item.get("accent"), "#7fb7ff")
+        modes.append(profile)
+        if len(modes) >= limit:
+            break
+    return modes
+
+
 def _coerce_time_text(value: Any, default: str) -> str:
     text = _coerce_str(value, default)
     parts = text.split(":")
@@ -337,6 +377,7 @@ def validate_schedule(data: Any) -> dict[str, Any]:
         "enabled": _coerce_bool(data.get("enabled"), bool(defaults["enabled"])),
         "on_time": _coerce_time_text(data.get("on_time"), str(defaults["on_time"])),
         "off_time": _coerce_time_text(data.get("off_time"), str(defaults["off_time"])),
+        "startup_enabled": _coerce_bool(data.get("startup_enabled"), bool(defaults["startup_enabled"])),
     }
 
 
@@ -358,6 +399,7 @@ def validate_settings(data: Any) -> dict[str, Any]:
 
     language = _coerce_str(data.get("language"), DEFAULT_SETTINGS["language"])
     quick_mode = _coerce_str(data.get("quick_mode"), DEFAULT_SETTINGS["quick_mode"])
+    custom_quick_modes = validate_custom_quick_modes(data.get("custom_quick_modes", DEFAULT_SETTINGS["custom_quick_modes"]))
     capture_compatibility = _coerce_bool(
         data.get("capture_compatibility"),
         bool(DEFAULT_SETTINGS["capture_compatibility"]),
@@ -387,6 +429,7 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "capture_compatibility": capture_compatibility,
         "language": language,
         "quick_mode": quick_mode,
+        "custom_quick_modes": custom_quick_modes,
         "updates_last_auto_check_at": _coerce_int(
             data.get("updates_last_auto_check_at"),
             DEFAULT_SETTINGS["updates_last_auto_check_at"],

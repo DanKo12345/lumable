@@ -74,6 +74,11 @@ class LiquidSlider(QSlider):
             "white": QColor("#f4f7ff"),
             "neutral": QColor("#8fbfff"),
         }
+        # A near-white accent (brightness) is invisible on the light groove, so
+        # give it a soft cool tone in the light theme while keeping it white in
+        # the dark theme.
+        if self.accent == "white" and not theme_manager.is_dark:
+            return QColor("#9fb6dd")
         return QColor(palette.get(self.accent, palette["neutral"]))
 
     def enterEvent(self, event):

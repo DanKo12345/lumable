@@ -10,7 +10,7 @@ from app.schedule_controller import ScheduleController
 # ── fake host ─────────────────────────────────────────────────────────
 
 def _make_host(*, enabled: bool = False, on_time: str = "19:00", off_time: str = "23:00",
-               is_connected: bool = False, power_on: bool = False) -> MagicMock:
+               is_connected: bool = False, power_on: bool = False, startup_enabled: bool = False) -> MagicMock:
     host = MagicMock()
     host._initializing = False
     host._is_connected = is_connected
@@ -20,6 +20,10 @@ def _make_host(*, enabled: bool = False, on_time: str = "19:00", off_time: str =
     toggle = MagicMock()
     toggle.isChecked.return_value = enabled
     host.schedule_toggle_button = toggle
+
+    startup = MagicMock()
+    startup.isChecked.return_value = startup_enabled
+    host.schedule_startup_button = startup
 
     on = MagicMock()
     on.time.return_value = QTime.fromString(on_time, "HH:mm")
@@ -61,6 +65,7 @@ def test_settings_returns_enabled_state(monkeypatch) -> None:
     assert result["enabled"] is True
     assert result["on_time"] == "20:00"
     assert result["off_time"] == "22:30"
+    assert result["startup_enabled"] is False
 
 
 def test_settings_returns_disabled_when_toggle_off(monkeypatch) -> None:
@@ -77,6 +82,22 @@ def test_settings_returns_disabled_when_not_pro(monkeypatch) -> None:
     ctrl = _make_ctrl(host)
 
     assert ctrl.settings()["enabled"] is False
+
+
+def test_settings_returns_startup_when_pro(monkeypatch) -> None:
+    monkeypatch.setattr("app.schedule_controller.can_use", lambda _: True)
+    host = _make_host(startup_enabled=True)
+    ctrl = _make_ctrl(host)
+
+    assert ctrl.settings()["startup_enabled"] is True
+
+
+def test_settings_blocks_startup_when_not_pro(monkeypatch) -> None:
+    monkeypatch.setattr("app.schedule_controller.can_use", lambda _: False)
+    host = _make_host(startup_enabled=True)
+    ctrl = _make_ctrl(host)
+
+    assert ctrl.settings()["startup_enabled"] is False
 
 
 # ── time_from_text() ──────────────────────────────────────────────────

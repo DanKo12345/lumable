@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import Property, QEasingCurve, QElapsedTimer, QPropertyAnimation, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
@@ -73,12 +73,15 @@ class EffectPreviewStrip(QWidget):
         super().__init__(parent)
         self._phase = 0.0
         self._intensity = 1.0
+        self._active_pulse = 0.0
         self._speed = 60
         self._effect_key = "static_color"
         self._effect_code = 0
         self._elapsed = QElapsedTimer()
         self._elapsed.start()
         self._last_tick_ms = 0
+        self._prev_pixmap: QPixmap | None = None
+        self._switch_value = 0.0
         self.setMinimumHeight(54)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -90,6 +93,18 @@ class EffectPreviewStrip(QWidget):
         self._pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
         self._pulse_anim.setLoopCount(-1)
         self._pulse_anim.start()
+
+        self._active_pulse_anim = QPropertyAnimation(self, b"activePulse", self)
+        self._active_pulse_anim.setDuration(2400)
+        self._active_pulse_anim.setStartValue(0.0)
+        self._active_pulse_anim.setEndValue(1.0)
+        self._active_pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
+        self._active_pulse_anim.setLoopCount(-1)
+        self._active_pulse_anim.start()
+
+        self._switch_anim = QPropertyAnimation(self, b"switchValue", self)
+        self._switch_anim.setDuration(300)
+        self._switch_anim.setEasingCurve(QEasingCurve.OutCubic)
 
         self._timer = QTimer(self)
         self._timer.setInterval(33)
@@ -108,6 +123,26 @@ class EffectPreviewStrip(QWidget):
         self.update()
 
     intensity = Property(float, get_intensity, set_intensity)
+
+    def get_active_pulse(self) -> float:
+        return self._active_pulse
+
+    def set_active_pulse(self, value: float) -> None:
+        self._active_pulse = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    activePulse = Property(float, get_active_pulse, set_active_pulse)
+
+    def get_switch_value(self) -> float:
+        return self._switch_value
+
+    def set_switch_value(self, value: float) -> None:
+        self._switch_value = max(0.0, min(1.0, float(value)))
+        if self._switch_value <= 0.001:
+            self._prev_pixmap = None
+        self.update()
+
+    switchValue = Property(float, get_switch_value, set_switch_value)
 
     def _tick(self) -> None:
         elapsed_ms = max(0, self._elapsed.elapsed())
@@ -155,10 +190,22 @@ class EffectPreviewStrip(QWidget):
         self.update()
 
     def set_effect(self, effect_key: str, effect_code: int, *, reset_phase: bool = False) -> None:
-        self._effect_key = effect_key or "static_color"
-        self._effect_code = int(effect_code)
+        new_key = effect_key or "static_color"
+        new_code = int(effect_code)
+        changed = new_key != self._effect_key or new_code != self._effect_code
+        if changed and self.isVisible() and self.width() > 4 and self.height() > 4:
+            # Cross-dissolve from the previous look to the new one.
+            self._prev_pixmap = self.grab()
+            self._switch_anim.stop()
+            self._switch_value = 1.0
+            self._switch_anim.setStartValue(1.0)
+            self._switch_anim.setEndValue(0.0)
+            self._switch_anim.start()
+        self._effect_key = new_key
+        self._effect_code = new_code
         if reset_phase:
             self.restart()
+            self._active_pulse_anim.setCurrentTime(0)
         self.update()
 
     def restart(self) -> None:
@@ -215,6 +262,13 @@ class EffectPreviewStrip(QWidget):
         painter.setPen(QPen(inner, 1.0))
         painter.drawRoundedRect(rect.adjusted(1.0, 1.0, -1.0, -1.0), radius - 1.0, radius - 1.0)
 
+        self._paint_active_highlight(painter, rect, radius, is_dark)
+
+        if self._prev_pixmap is not None and self._switch_value > 0.001:
+            painter.setOpacity(self._switch_value)
+            painter.drawPixmap(0, 0, self._prev_pixmap)
+            painter.setOpacity(1.0)
+
     def _paint_effect_material(self, painter: QPainter, path: QPainterPath, rect: QRectF, is_dark: bool) -> None:
         key = effect_semantic_key(self._effect_key, self._effect_code)
         if key.startswith("flash"):
@@ -227,6 +281,25 @@ class EffectPreviewStrip(QWidget):
             self._paint_rainbow(painter, path, rect, is_dark)
         else:
             self._paint_static(painter, path, rect, is_dark)
+
+    def _paint_active_highlight(self, painter: QPainter, rect: QRectF, radius: float, is_dark: bool) -> None:
+        pulse = 0.5 + 0.5 * math.sin(self._active_pulse * math.pi * 2.0)
+        palette = theme_manager.palette
+        accent = qcolor_from_token(palette["accent_start"])
+
+        spark_x = rect.left() + rect.width() * self._active_pulse
+        spark = QRadialGradient(spark_x, rect.center().y(), rect.width() * 0.22)
+        spark.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 30 if is_dark else 38))
+        spark.setColorAt(0.48, QColor(255, 255, 255, 12 if is_dark else 18))
+        spark.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
+        path = QPainterPath()
+        path.addRoundedRect(rect.adjusted(1.0, 1.0, -1.0, -1.0), radius - 1.0, radius - 1.0)
+        painter.fillPath(path, spark)
+
+        glow = QColor(accent)
+        glow.setAlpha(int((26 if is_dark else 34) + pulse * (34 if is_dark else 42)))
+        painter.setPen(QPen(glow, 2.0))
+        painter.drawRoundedRect(rect.adjusted(1.0, 1.0, -1.0, -1.0), radius - 1.0, radius - 1.0)
 
     def _paint_static(self, painter: QPainter, path: QPainterPath, rect: QRectF, is_dark: bool) -> None:
         accent = QColor(118, 174, 255, 82 if is_dark else 68)

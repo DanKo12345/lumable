@@ -37,9 +37,13 @@ class FakeCombo:
 class FakeLabel:
     def __init__(self) -> None:
         self.text = ""
+        self.visible = True
 
     def setText(self, text: str) -> None:
         self.text = text
+
+    def setVisible(self, visible: bool) -> None:
+        self.visible = visible
 
 
 class FakeButton:
@@ -95,6 +99,7 @@ class FakeHost:
     device_combo: FakeCombo = field(default_factory=FakeCombo)
     device_status: FakeLabel = field(default_factory=FakeLabel)
     last_device_label: FakeLabel = field(default_factory=FakeLabel)
+    device_onboarding_label: FakeLabel = field(default_factory=FakeLabel)
     scan_button: FakeButton = field(default_factory=FakeButton)
     connect_button: FakeButton = field(default_factory=FakeButton)
     disconnect_button: FakeButton = field(default_factory=FakeButton)
@@ -138,6 +143,7 @@ def test_start_scan_resets_ui_and_calls_ble_scan() -> None:
     assert host._devices == []
     assert host.device_combo.items == [("device.choice.scan_placeholder", None)]
     assert host.device_status.text == "device.status.scanning"
+    assert host.device_onboarding_label.visible is False
     assert host.connect_button.enabled is False
     assert host.connect_button.visible is True
     assert host.disconnect_button.enabled is False
@@ -262,10 +268,13 @@ def test_last_device_hint_handles_empty_and_saved_state() -> None:
     empty_host = FakeHost()
     BleEventHandler(empty_host)._sync_last_device_hint()
     assert empty_host.last_device_label.text == "device.last.none"
+    assert empty_host.device_onboarding_label.text == "device.onboarding_hint"
+    assert empty_host.device_onboarding_label.visible is True
 
     saved_host = FakeHost(_settings={"last_device_address": "AA:BB:CC:DD:EE:FF", "last_device_name": "Desk strip"})
     BleEventHandler(saved_host)._sync_last_device_hint()
     assert saved_host.last_device_label.text == "device.last:name=Desk strip,address=AA:BB:CC:DD:EE:FF"
+    assert saved_host.device_onboarding_label.visible is False
 
 
 def test_populate_devices_autoconnects_single_device() -> None:

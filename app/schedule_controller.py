@@ -7,6 +7,12 @@ from PySide6.QtCore import QDate, Qt, QTime, QTimer
 from app.constants import SCHEDULE_MISSED_WINDOW_MINUTES
 from app.feature_gate import can_use
 from app.schedule import should_fire_schedule_time
+from app.startup_controller import (
+    are_schedule_tasks_enabled,
+    is_startup_enabled,
+    set_schedule_tasks_enabled,
+    set_startup_enabled,
+)
 from app.storage import save_settings, validate_schedule
 
 
@@ -17,6 +23,7 @@ class ScheduleHost(Protocol):
     _settings: dict
 
     schedule_toggle_button: Any
+    schedule_startup_button: Any
     schedule_on_time: Any
     schedule_off_time: Any
     power_button: Any
@@ -24,6 +31,8 @@ class ScheduleHost(Protocol):
     def _log(self, message: str) -> None: ...
 
     def _show_license_overlay(self) -> None: ...
+
+    def _show_error(self, message: str) -> None: ...
 
     def _suppress_signals(self): ...
 
@@ -49,6 +58,7 @@ class ScheduleController:
     def wire(self) -> None:
         host = self._host
         host.schedule_toggle_button.clicked.connect(self.toggle_schedule)
+        host.schedule_startup_button.clicked.connect(self.toggle_startup)
         host.schedule_on_time.timeChanged.connect(self.save_settings)
         host.schedule_off_time.timeChanged.connect(self.save_settings)
 
@@ -60,8 +70,13 @@ class ScheduleController:
         normalized = validate_schedule(schedule)
         if bool(normalized.get("enabled", False)) and not can_use("schedule"):
             normalized["enabled"] = False
+        if bool(normalized.get("startup_enabled", False)) and not can_use("schedule"):
+            normalized["startup_enabled"] = False
         with host._suppress_signals():
             host.schedule_toggle_button.setChecked(bool(normalized.get("enabled", False)))
+            host.schedule_startup_button.setChecked(
+                bool(normalized.get("startup_enabled", False)) and (is_startup_enabled() or are_schedule_tasks_enabled())
+            )
             host.schedule_on_time.setTime(self.time_from_text(str(normalized.get("on_time", "19:00")), QTime(19, 0)))
             host.schedule_off_time.setTime(self.time_from_text(str(normalized.get("off_time", "23:00")), QTime(23, 0)))
         self.sync_controls()
@@ -82,6 +97,7 @@ class ScheduleController:
             "enabled": host.schedule_toggle_button.isChecked() and can_use("schedule"),
             "on_time": host.schedule_on_time.time().toString("HH:mm"),
             "off_time": host.schedule_off_time.time().toString("HH:mm"),
+            "startup_enabled": host.schedule_startup_button.isChecked() and can_use("schedule"),
         }
 
     def save_settings(self, *_args: object) -> None:
@@ -91,6 +107,8 @@ class ScheduleController:
         host._settings["schedule"] = self.settings()
         self._last_fire.clear()
         save_settings(host._settings)
+        if host.schedule_startup_button.isChecked() or are_schedule_tasks_enabled():
+            self._sync_background_schedule_tasks()
         self.sync_controls()
         QTimer.singleShot(0, self._check_schedule)
 
@@ -107,13 +125,61 @@ class ScheduleController:
         self.save_settings()
         host._log(host._tr("schedule.enabled_log") if host.schedule_toggle_button.isChecked() else host._tr("schedule.disabled_log"))
 
+    def toggle_startup(self, _checked: bool = False) -> None:
+        host = self._host
+        requested = host.schedule_startup_button.isChecked()
+        if requested and not can_use("schedule"):
+            with host._suppress_signals():
+                host.schedule_startup_button.setChecked(False)
+            self.sync_controls()
+            host._settings["schedule"] = self.settings()
+            save_settings(host._settings)
+            host._show_license_overlay()
+            return
+        try:
+            set_startup_enabled(requested)
+            self._sync_background_schedule_tasks(force_enabled=requested)
+        except OSError as exc:
+            with host._suppress_signals():
+                host.schedule_startup_button.setChecked(is_startup_enabled())
+            self.sync_controls()
+            host._show_error(host._tr("schedule.startup_error", error=str(exc)))
+            return
+        self.save_settings()
+        host._log(host._tr("schedule.startup_enabled_log") if requested else host._tr("schedule.startup_disabled_log"))
+
     def sync_controls(self) -> None:
         host = self._host
         enabled = host.schedule_toggle_button.isChecked()
+        startup_enabled = host.schedule_startup_button.isChecked() and enabled
         host.schedule_toggle_button.setText(host._tr("schedule.toggle_on") if enabled else host._tr("schedule.toggle_off"))
         host.schedule_toggle_button.set_role("accent_soft" if enabled else "ghost")
+        host.schedule_startup_button.setText(
+            host._tr("schedule.startup_on") if startup_enabled else host._tr("schedule.startup_off")
+        )
+        host.schedule_startup_button.set_role("accent_soft" if startup_enabled else "ghost")
+        host.schedule_startup_button.setEnabled(enabled)
         host.schedule_on_time.setEnabled(enabled)
         host.schedule_off_time.setEnabled(enabled)
+
+    def _sync_background_schedule_tasks(self, *, force_enabled: bool | None = None) -> None:
+        host = self._host
+        if host._initializing:
+            return
+        enabled = (
+            host.schedule_toggle_button.isChecked() and host.schedule_startup_button.isChecked()
+            if force_enabled is None
+            else bool(force_enabled and host.schedule_toggle_button.isChecked())
+        )
+        try:
+            set_schedule_tasks_enabled(
+                enabled and can_use("schedule"),
+                on_time=host.schedule_on_time.time().toString("HH:mm"),
+                off_time=host.schedule_off_time.time().toString("HH:mm"),
+            )
+        except OSError as exc:
+            if enabled:
+                host._show_error(host._tr("schedule.startup_error", error=str(exc)))
 
     def _check_schedule(self) -> None:
         host = self._host

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTime
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMenu
 
 from app.app_info import APP_NAME
 from app.ble_drivers.base import EffectPreset
+from app.feature_gate import FREE_EFFECT_COUNT, invalidate_pro_cache
 from app.main_window import MainWindow
 from app.quick_modes import QUICK_MODE_MAP, QUICK_MODES
 
@@ -40,7 +41,8 @@ def test_edition_badge_shows_free_and_pro(monkeypatch) -> None:
         window.close()
         app.processEvents()
 
-    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings: True)
+    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
+    invalidate_pro_cache()
     window = MainWindow()
     try:
         assert window.hero_signature.edition_label.text() == "Pro"
@@ -51,7 +53,7 @@ def test_edition_badge_shows_free_and_pro(monkeypatch) -> None:
 
 
 def test_collected_scene_state_includes_schedule(monkeypatch) -> None:
-    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings: True)
+    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     try:
@@ -65,6 +67,7 @@ def test_collected_scene_state_includes_schedule(monkeypatch) -> None:
             "enabled": True,
             "on_time": "20:15",
             "off_time": "23:45",
+            "startup_enabled": False,
         }
     finally:
         window._ble.shutdown()
@@ -73,7 +76,7 @@ def test_collected_scene_state_includes_schedule(monkeypatch) -> None:
 
 
 def test_loading_scene_restores_schedule_controls(monkeypatch) -> None:
-    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings: True)
+    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     profile = {
@@ -87,6 +90,7 @@ def test_loading_scene_restores_schedule_controls(monkeypatch) -> None:
             "enabled": True,
             "on_time": "20:15",
             "off_time": "23:45",
+            "startup_enabled": False,
         },
     }
     try:
@@ -425,6 +429,50 @@ def test_tray_notice_is_shown_once() -> None:
         app.processEvents()
 
 
+def test_tray_quick_controls_show_locked_state_in_free(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        monkeypatch.setattr("app.tray_controller.can_use", lambda feature: False if feature == "tray_quick_controls" else True)
+        window._tray_controller._quick_menu = QMenu(window)
+        window._tray_controller.rebuild_quick_menu()
+        menu = window._tray_controller._quick_menu
+
+        assert menu is not None
+        assert [action.text() for action in menu.actions()] == [
+            window._tr("tray.quick_locked"),
+            window._tr("tray.unlock_pro"),
+        ]
+        assert menu.actions()[0].isEnabled() is False
+        assert menu.actions()[1].isEnabled() is True
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_tray_quick_controls_show_pro_actions(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        monkeypatch.setattr("app.tray_controller.can_use", lambda _feature: True)
+        window._tray_controller._quick_menu = QMenu(window)
+        window._settings["color_history"] = [{"r": 255, "g": 0, "b": 0}]
+        window._tray_controller.rebuild_quick_menu()
+        menu = window._tray_controller._quick_menu
+
+        assert menu is not None
+        texts = [action.text() for action in menu.actions()]
+        assert window._tr("color.power_off") in texts
+        assert window._tr("tray.brightness") in texts
+        assert window._tr("tray.recent_colors") in texts
+        assert window._tr("tray.profiles") in texts
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def test_power_button_uses_action_label_and_role_for_state() -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
@@ -668,15 +716,195 @@ def test_quick_mode_updates_aurora_accent_immediately() -> None:
         app.processEvents()
 
 
+def test_custom_quick_mode_pins_selected_profile(monkeypatch) -> None:
+    monkeypatch.setattr("app.main_window.can_use", lambda feature: True)
+    monkeypatch.setattr("app.main_window.save_settings", lambda _settings: None)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        profile = {
+            "name": "Desk Config",
+            "power": True,
+            "brightness": 78,
+            "speed": 45,
+            "effect_code": 0,
+            "color": {"r": 12, "g": 34, "b": 56},
+            "schedule": {"enabled": True, "on_time": "19:30", "off_time": "23:15", "startup_enabled": False},
+        }
+        window._profiles[:] = [profile]
+        window._refresh_profiles()
+        window.profile_list.setCurrentRow(0)
+        window._custom_quick_modes = []
+        window._settings["custom_quick_modes"] = []
+        window._refresh_quick_mode_buttons()
+
+        window._save_custom_quick_mode()
+
+        assert len(window._custom_quick_modes) == 1
+        mode = window._custom_quick_modes[0]
+        assert mode["name"] == "Desk Config"
+        assert mode["source_profile_name"] == "Desk Config"
+        assert mode["color"] == {"r": 12, "g": 34, "b": 56}
+        assert mode["brightness"] == 78
+        assert mode["speed"] == 45
+        assert mode["schedule"]["on_time"] == "19:30"
+        assert mode["schedule"]["off_time"] == "23:15"
+        assert window._custom_mode_buttons[0].isHidden() is False
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_custom_quick_mode_activation_applies_payload(monkeypatch) -> None:
+    monkeypatch.setattr("app.main_window.can_use", lambda feature: True)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    payloads = []
+    try:
+        window._custom_quick_modes = [
+            {
+                "key": "custom_1",
+                "name": "Desk Scene",
+                "power": True,
+                "brightness": 64,
+                "speed": 40,
+                "effect_code": 0,
+                "color": {"r": 20, "g": 40, "b": 60},
+                "schedule": {"enabled": True, "on_time": "19:00", "off_time": "23:00", "startup_enabled": False},
+                "accent": "#14283c",
+            }
+        ]
+        window._profile_actions.apply_profile_payload = lambda payload, announce_load=False: payloads.append(payload)
+
+        window._activate_custom_quick_mode(0)
+
+        assert window._active_mode_key == "custom_1"
+        assert payloads[0]["name"] == "Desk Scene"
+        assert payloads[0]["schedule"]["enabled"] is True
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_legacy_desk_scene_name_is_displayed_as_localized_scene(monkeypatch) -> None:
+    monkeypatch.setattr("app.main_window.can_use", lambda feature: True)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window._custom_quick_modes = [
+            {
+                "key": "custom_1",
+                "name": "Desk Scene",
+                "power": True,
+                "brightness": 64,
+                "speed": 40,
+                "effect_code": 0,
+                "color": {"r": 20, "g": 40, "b": 60},
+                "schedule": {"enabled": False, "on_time": "19:00", "off_time": "23:00", "startup_enabled": False},
+                "accent": "#14283c",
+            }
+        ]
+
+        window._refresh_quick_mode_buttons()
+
+        assert window._custom_mode_buttons[0].text() == window._tr("mode.custom_default", number=1)
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_custom_quick_mode_uses_current_profile_payload(monkeypatch) -> None:
+    monkeypatch.setattr("app.main_window.save_settings", lambda _settings: None)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window._profiles[:] = [
+            {
+                "name": "Movie",
+                "power": True,
+                "brightness": 91,
+                "speed": 40,
+                "effect_code": 0,
+                "color": {"r": 80, "g": 90, "b": 100},
+                "schedule": {"enabled": False, "on_time": "19:00", "off_time": "23:00", "startup_enabled": False},
+            }
+        ]
+        window._custom_quick_modes = [
+            {
+                "key": "custom_1",
+                "name": "Movie",
+                "source_profile_name": "Movie",
+                "power": True,
+                "brightness": 64,
+                "speed": 40,
+                "effect_code": 0,
+                "color": {"r": 20, "g": 40, "b": 60},
+                "schedule": {"enabled": False, "on_time": "19:00", "off_time": "23:00", "startup_enabled": False},
+                "accent": "#14283c",
+            }
+        ]
+
+        payload = window._mode_payload(window._custom_quick_modes[0])
+
+        assert payload["brightness"] == 91
+        assert payload["color"] == {"r": 80, "g": 90, "b": 100}
+        window._refresh_quick_mode_buttons()
+        assert window._custom_mode_buttons[0].text() == "Movie"
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_custom_quick_mode_delete_clears_active_mode(monkeypatch) -> None:
+    monkeypatch.setattr("app.main_window.save_settings", lambda _settings: None)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window._custom_quick_modes = [
+            {
+                "key": "custom_1",
+                "name": "Movie",
+                "power": True,
+                "brightness": 64,
+                "speed": 40,
+                "effect_code": 0,
+                "color": {"r": 20, "g": 40, "b": 60},
+                "schedule": {"enabled": False, "on_time": "19:00", "off_time": "23:00", "startup_enabled": False},
+                "accent": "#14283c",
+            }
+        ]
+        window._active_mode_key = "custom_1"
+        window._settings["quick_mode"] = "custom_1"
+
+        window._finish_delete_custom_quick_mode(0)
+
+        assert window._custom_quick_modes == []
+        assert window._settings["custom_quick_modes"] == []
+        assert window._active_mode_key is None
+        assert window._settings["quick_mode"] == ""
+        assert window._custom_mode_buttons[0].isHidden() is True
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def test_free_mode_locks_effects_after_free_limit(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     try:
-        assert window.effect_combo.count() > 5
-        for index in range(5):
+        assert window.effect_combo.count() > FREE_EFFECT_COUNT
+        for index in range(FREE_EFFECT_COUNT):
             assert window.effect_combo.itemData(index) is not None
-        assert window.effect_combo.itemData(5) is None
-        assert window.effect_combo.itemText(5).startswith("🔒 ")
+        # Locked effects are marked by a None payload and a dimmed lock swatch
+        # icon (the old "🔒 " text prefix was replaced by the swatch design).
+        assert window.effect_combo.itemData(FREE_EFFECT_COUNT) is None
+        assert not window.effect_combo.itemText(FREE_EFFECT_COUNT).startswith("🔒")
+        assert not window.effect_combo.itemIcon(FREE_EFFECT_COUNT).isNull()
     finally:
         window._ble.shutdown()
         window.close()
@@ -689,26 +917,11 @@ def test_free_mode_blocks_locked_effect_selection(monkeypatch) -> None:
     calls = []
     try:
         window._show_license_overlay = lambda: calls.append("license")
-        window.effect_combo.setCurrentIndex(5)
+        window.effect_combo.setCurrentIndex(FREE_EFFECT_COUNT)
         window._queue_selected_effect()
 
         assert calls == ["license"]
         assert window.effect_combo.currentData() == 0
-    finally:
-        window._ble.shutdown()
-        window.close()
-        app.processEvents()
-
-
-def test_free_mode_blocks_hsv_color_picker(monkeypatch) -> None:
-    app = QApplication.instance() or QApplication([])
-    window = MainWindow()
-    calls = []
-    try:
-        window._show_license_overlay = lambda: calls.append("license")
-        window._pick_color()
-
-        assert calls == ["license"]
     finally:
         window._ble.shutdown()
         window.close()
@@ -727,7 +940,7 @@ def test_free_mode_limits_visible_color_history(monkeypatch) -> None:
         ]
         window._refresh_color_history()
 
-        assert sum(button.isVisible() for button in window.color_history_buttons) == 3
+        assert sum(button.isVisible() for button in window.color_history_buttons) == 6
     finally:
         window._ble.shutdown()
         window.close()

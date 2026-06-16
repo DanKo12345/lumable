@@ -3,7 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Property, QEasingCurve, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QImage,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QRadialGradient,
+)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QPushButton, QSizePolicy
 
@@ -21,12 +32,16 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._scale = 1.0
         self._ripple = 0.0
         self._ripple_opacity = 0.0
+        self._impact = 0.0
         self._ripple_x = 0.0
         self._ripple_y = 0.0
         self._pointer_x = 0.5
         self._pointer_y = 0.5
         self._icon_kind = ""
         self._icon_renderer: QSvgRenderer | None = None
+        self._icon_pixmap_cache: dict[tuple, QPixmap] = {}
+        self._embedded_action_text = ""
+        self._embedded_action_callback = None
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFlat(True)
         self.setCursor(Qt.PointingHandCursor)
@@ -35,10 +50,17 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._anim = make_property_animation(self, b"hoverValue", 180, QEasingCurve.OutCubic)
         self._init_button_motion()
+        self._impact_anim = make_property_animation(self, b"impactValue", 260, QEasingCurve.OutCubic)
 
     def set_icon_kind(self, kind: str) -> None:
         self._icon_kind = kind
         self._icon_renderer = QSvgRenderer(str(LUCIDE_ICON_DIR / f"{kind}.svg"), self) if kind else None
+        self._icon_pixmap_cache.clear()
+        self.update()
+
+    def set_embedded_action(self, text: str = "", callback=None) -> None:
+        self._embedded_action_text = text
+        self._embedded_action_callback = callback
         self.update()
 
     def setIconSize(self, size) -> None:
@@ -91,8 +113,18 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
 
     rippleValue = Property(float, get_ripple, set_ripple)
 
+    def get_impact(self):
+        return self._impact
+
+    def set_impact(self, value):
+        self._impact = float(value)
+        self.update()
+
+    impactValue = Property(float, get_impact, set_impact)
+
     def mousePressEvent(self, event):
         pos = event.position()
+        restart_animation(self._impact_anim, 1.0, 0.0)
         self._handle_button_press(pos.x(), pos.y())
         super().mousePressEvent(event)
 
@@ -107,6 +139,12 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._embedded_action_text and self._embedded_action_rect().contains(event.position()):
+            if callable(self._embedded_action_callback):
+                self._embedded_action_callback()
+            event.accept()
+            self._handle_button_release()
+            return
         self._handle_button_release()
         super().mouseReleaseEvent(event)
 
@@ -114,13 +152,13 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
     @staticmethod
     def _light_palette() -> dict:
         return {
-            "fill_top":    QColor(255, 255, 255, 188),
-            "fill_mid":    QColor(236, 244, 255, 154),
-            "fill_bottom": QColor(198, 218, 248, 138),
+            "fill_top":    QColor(255, 255, 255, 196),
+            "fill_mid":    QColor(232, 241, 255, 168),
+            "fill_bottom": QColor(190, 212, 246, 168),
             "body_mid":    QColor(166, 192, 232, 12),
             "body_bottom": QColor(92,  120, 168, 14),
-            "border_top":  QColor(255, 255, 255, 144),
-            "border_bot":  QColor(164, 192, 236, 64),
+            "border_top":  QColor(150, 180, 228, 150),
+            "border_bot":  QColor(108, 142, 200, 132),
             "text":        QColor("#18243d"),
         }
 
@@ -157,6 +195,8 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             ripple.setColorAt(0.45, QColor(210, 228, 255, int(32 * self._ripple_opacity)))
             ripple.setColorAt(1.0, QColor(255, 255, 255, 0))
             painter.fillRect(self.rect(), ripple)
+
+        self._paint_impact(painter, rect)
 
         painter.setClipping(False)
         self._paint_border(painter, rect, radius, lc)
@@ -230,6 +270,8 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             ripple.setColorAt(1.0,  QColor(255, 255, 255, 0))
             painter.fillRect(self.rect(), ripple)
 
+        self._paint_impact(painter, rect)
+
         painter.setClipping(False)
 
         # 6. glass border
@@ -239,14 +281,14 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             border_g.setColorAt(0.0, QColor(255, 255, 255, 36 if enabled else 18))
             border_g.setColorAt(1.0, QColor(218, 224, 236, 20 if enabled else  9))
         else:
-            border_g.setColorAt(0.0, QColor(bt.red(),  bt.green(),  bt.blue(),  132 if enabled else 48))
-            border_g.setColorAt(1.0, QColor(bb2.red(), bb2.green(), bb2.blue(),  54 if enabled else 20))
+            border_g.setColorAt(0.0, QColor(bt.red(),  bt.green(),  bt.blue(),  168 if enabled else 60))
+            border_g.setColorAt(1.0, QColor(bb2.red(), bb2.green(), bb2.blue(), 140 if enabled else 52))
         painter.setPen(QPen(QBrush(border_g), 1.0))
         painter.drawRoundedRect(rect, radius, radius)
 
         # 7. text
         font = self.font()
-        font.setWeight(QFont.DemiBold)
+        font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
         text_color = QColor("#ffffff") if theme_manager.is_dark else QColor(lc["text"])
         if not enabled:
@@ -255,6 +297,17 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             text_color.setAlpha(232)
         painter.setPen(text_color)
         self._draw_content(painter, rect, text_color)
+
+    def _paint_impact(self, painter: QPainter, rect: QRectF) -> None:
+        if self._impact <= 0.01 or not self.isEnabled():
+            return
+        radius = max(rect.width(), rect.height()) * (0.34 + (1.0 - self._impact) * 0.42)
+        alpha = int((42 if theme_manager.is_dark else 34) * self._impact)
+        glow = QRadialGradient(self._ripple_x, self._ripple_y, radius)
+        glow.setColorAt(0.0, QColor(255, 255, 255, alpha))
+        glow.setColorAt(0.35, QColor(180, 210, 255, max(0, alpha // 3)))
+        glow.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.fillRect(self.rect(), glow)
 
     # ── base fill colours per role ────────────────────────────────────
     def _role_base_colors(self, lc: dict) -> tuple[QColor, QColor]:
@@ -517,7 +570,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         if not enabled:
             text_color.setAlpha(132 if not theme_manager.is_dark else 110)
         font = self.font()
-        font.setWeight(QFont.DemiBold)
+        font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
         if role == "primary_warm" and enabled:
             painter.setPen(QColor(0, 0, 0, 52 if theme_manager.is_dark else 18))
@@ -527,8 +580,13 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
 
     def _draw_content(self, painter: QPainter, rect: QRectF, text_color: QColor) -> None:
         text = self.text()
+        if self._embedded_action_text:
+            content_rect = QRectF(rect).adjusted(0.0, 0.0, -20.0, 0.0)
+            self._draw_embedded_action(painter, text_color)
+        else:
+            content_rect = rect
         if self._icon_renderer is None or not self._icon_renderer.isValid():
-            painter.drawText(rect, Qt.AlignCenter, text)
+            painter.drawText(content_rect, Qt.AlignCenter, text)
             return
 
         metrics = painter.fontMetrics()
@@ -537,38 +595,96 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         if icon_size <= 0:
             icon_size = min(17.0, max(14.0, rect.height() * 0.43))
         if not text:
-            icon_rect = QRectF(rect.center().x() - icon_size / 2.0, rect.center().y() - icon_size / 2.0, icon_size, icon_size)
+            icon_rect = QRectF(content_rect.center().x() - icon_size / 2.0, content_rect.center().y() - icon_size / 2.0, icon_size, icon_size)
             self._draw_svg_icon(painter, icon_rect, text_color)
             return
 
         gap = 7.0
         text_width = metrics.horizontalAdvance(text)
         total_width = icon_size + gap + text_width
-        start_x = rect.center().x() - total_width / 2.0
-        icon_rect = QRectF(start_x, rect.center().y() - icon_size / 2.0, icon_size, icon_size)
-        text_rect = QRectF(icon_rect.right() + gap, rect.top(), text_width + 2.0, rect.height())
+        start_x = content_rect.center().x() - total_width / 2.0
+        icon_rect = QRectF(start_x, content_rect.center().y() - icon_size / 2.0, icon_size, icon_size)
+        text_rect = QRectF(icon_rect.right() + gap, content_rect.top(), text_width + 2.0, content_rect.height())
 
         self._draw_svg_icon(painter, icon_rect, text_color)
         painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, text)
 
+    def _embedded_action_rect(self) -> QRectF:
+        size = min(20.0, max(16.0, self.height() * 0.46))
+        return QRectF(self.width() - size - 7.0, (self.height() - size) / 2.0, size, size)
+
+    def _draw_embedded_action(self, painter: QPainter, text_color: QColor) -> None:
+        rect = self._embedded_action_rect()
+        if rect.width() <= 0:
+            return
+        is_dark = theme_manager.is_dark
+        enabled = self.isEnabled()
+        glow = max(0.0, min(1.0, self._hover))
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # No enclosing chip: a soft radial glow has no hard edge, so it can never
+        # clash with the host button's corner radius. At rest only the cross
+        # shows; on hover a gentle red halo appears behind it.
+        if glow > 0.02 and enabled:
+            center = rect.center()
+            outer = rect.width() * 0.95
+            halo = QRadialGradient(center, outer)
+            halo.setColorAt(0.0, QColor(255, 108, 130, int(150 * glow)))
+            halo.setColorAt(0.62, QColor(255, 108, 130, int(58 * glow)))
+            halo.setColorAt(1.0, QColor(255, 108, 130, 0))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(halo)
+            painter.drawEllipse(center, outer, outer)
+
+        if glow > 0.4:
+            cross = QColor(255, 255, 255, 245)
+        elif is_dark:
+            cross = QColor(255, 255, 255, int(92 + 120 * glow))
+        else:
+            cross = QColor(46, 60, 92, int(120 + 90 * glow))
+        if not enabled:
+            cross.setAlpha(80)
+        inset = rect.width() * 0.32
+        arm = rect.adjusted(inset, inset, -inset, -inset)
+        pen = QPen(cross, max(1.4, rect.width() * 0.11))
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(arm.topLeft(), arm.bottomRight())
+        painter.drawLine(arm.topRight(), arm.bottomLeft())
+        painter.restore()
+
     def _draw_svg_icon(self, target_painter: QPainter, rect: QRectF, color: QColor) -> None:
         if self._icon_renderer is None or not self._icon_renderer.isValid():
             return
-        image = QImage(self.size(), QImage.Format_ARGB32_Premultiplied)
-        image.fill(Qt.transparent)
-        painter = QPainter(image)
-        painter.setRenderHint(QPainter.Antialiasing)
-        self._icon_renderer.render(painter, rect)
-        painter.end()
-
-        tint = QImage(image.size(), QImage.Format_ARGB32_Premultiplied)
-        tint.fill(Qt.transparent)
-        painter = QPainter(tint)
+        width = max(1, round(rect.width()))
+        height = max(1, round(rect.height()))
         icon_color = QColor(color)
         icon_color.setAlpha(230 if self.isEnabled() else 120)
-        painter.fillRect(tint.rect(), icon_color)
-        painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
-        painter.drawImage(0, 0, image)
+
+        # The tinted icon only changes with its size and colour, so cache it as a
+        # pixmap instead of allocating and compositing two QImages every paint.
+        key = (self._icon_kind, width, height, icon_color.rgba())
+        pixmap = self._icon_pixmap_cache.get(key)
+        if pixmap is None:
+            pixmap = self._build_tinted_icon(width, height, icon_color)
+            self._icon_pixmap_cache[key] = pixmap
+        target_painter.drawPixmap(rect.topLeft(), pixmap)
+
+    def _build_tinted_icon(self, width: int, height: int, icon_color: QColor) -> QPixmap:
+        glyph = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
+        glyph.fill(Qt.transparent)
+        painter = QPainter(glyph)
+        painter.setRenderHint(QPainter.Antialiasing)
+        self._icon_renderer.render(painter, QRectF(0, 0, width, height))
         painter.end()
 
-        target_painter.drawImage(0, 0, tint)
+        tint = QImage(glyph.size(), QImage.Format_ARGB32_Premultiplied)
+        tint.fill(Qt.transparent)
+        painter = QPainter(tint)
+        painter.fillRect(tint.rect(), icon_color)
+        painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        painter.drawImage(0, 0, glyph)
+        painter.end()
+        return QPixmap.fromImage(tint)

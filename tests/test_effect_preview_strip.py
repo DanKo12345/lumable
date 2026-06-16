@@ -73,6 +73,27 @@ def test_preview_phase_stays_continuous_when_speed_changes() -> None:
     assert math.isclose(preview._phase, 1.25)
 
 
+def test_active_highlight_pulse_is_clamped_and_restartable() -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from app.widgets.effect_preview_strip import EffectPreviewStrip
+
+    _app = QApplication.instance() or QApplication([])
+    preview = EffectPreviewStrip()
+
+    preview.set_active_pulse(1.5)
+    assert preview.get_active_pulse() == 1.0
+
+    preview.set_active_pulse(-0.5)
+    assert preview.get_active_pulse() == 0.0
+
+    preview.set_active_pulse(0.75)
+    preview.set_effect("smooth_rainbow", 0x8A, reset_phase=True)
+    preview.deleteLater()
+
+    assert preview.get_active_pulse() == 0.0
+
+
 def test_jump_preview_uses_absolute_timing_and_shorter_steps() -> None:
     from PySide6.QtWidgets import QApplication
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QFontMetrics
-from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QTextEdit
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QTextEdit
 
 from app.panels.types import PanelHost
 from app.widgets import GlassCard
@@ -17,6 +17,10 @@ def build_diagnostics_section(host: PanelHost) -> GlassCard:
     host.diagnostics_output.setMinimumHeight(200)
     host.diagnostics_output.verticalScrollBar().setSingleStep(18)
     host.diagnostics_card.content_layout.addWidget(host.diagnostics_output)
+    host.diagnostics_support_label = QLabel(host._tr("diagnostics.support_hint"))
+    host.diagnostics_support_label.setObjectName("diagnosticsSupportHint")
+    host.diagnostics_support_label.setWordWrap(True)
+    host.diagnostics_support_label.hide()
 
     button_row = QHBoxLayout()
     button_row.setContentsMargins(0, 2, 0, 0)
@@ -24,6 +28,7 @@ def build_diagnostics_section(host: PanelHost) -> GlassCard:
     button_row.addStretch(1)
     host.copy_diagnostics_button = host._button(host._tr("diagnostics.copy"), "ghost")
     host.copy_diagnostics_button.set_icon_kind("copy")
+    host.copy_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
     _prepare_action_button(host.copy_diagnostics_button)
     button_row.addWidget(host.copy_diagnostics_button)
     host.show_logs_button = host._button(host._tr("device.show_logs"), "ghost")
@@ -32,6 +37,7 @@ def build_diagnostics_section(host: PanelHost) -> GlassCard:
     button_row.addWidget(host.show_logs_button)
     host.export_diagnostics_button = host._button(host._tr("diagnostics.export"), "ghost")
     host.export_diagnostics_button.set_icon_kind("download")
+    host.export_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
     _prepare_action_button(host.export_diagnostics_button)
     button_row.addWidget(host.export_diagnostics_button)
     host.check_update_button = host._button(host._tr("updates.check"), "ghost")

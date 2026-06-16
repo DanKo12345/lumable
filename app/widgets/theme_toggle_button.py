@@ -97,6 +97,6 @@ class ThemeToggleButton(ButtonAnimationMixin, QPushButton):
 
         painter.setPen(QColor(palette["text"]))
         font = self.font()
-        font.setWeight(QFont.DemiBold)
+        font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
         painter.drawText(rect, Qt.AlignCenter, self.text())

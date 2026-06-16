@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.app_info import APP_AUTHOR, APP_VERSION
-from app.feature_gate import is_pro
-from app.license import activate_license_key
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
+
+from app.app_info import APP_AUTHOR, APP_CHECKOUT_URL, APP_VERSION
+from app.feature_gate import invalidate_pro_cache, is_pro
+from app.license import activate_license_key, deactivate_license
 from app.storage import save_settings
 from app.widgets import AboutOverlay, LicenseOverlay
 
@@ -12,9 +15,14 @@ from app.widgets import AboutOverlay, LicenseOverlay
 class OverlayController:
     def __init__(self, host: Any) -> None:
         self._host = host
+        self._about_overlay: AboutOverlay | None = None
+        self._license_overlay: LicenseOverlay | None = None
 
     def show_about(self) -> None:
         host = self._host
+        if self._about_overlay is not None:
+            self._about_overlay.raise_()
+            return
         plan = host._tr("app.edition.pro") if is_pro() else host._tr("app.edition.free")
         labels = {
             "title": host._tr("about.title"),
@@ -27,29 +35,81 @@ class OverlayController:
             "components_text": host._tr("about.components_text"),
             "ok": host._tr("dialog.ok"),
         }
-        AboutOverlay(labels, host).exec()
+        overlay = AboutOverlay(labels, host)
+        self._about_overlay = overlay
+        overlay.closed.connect(lambda: setattr(self, "_about_overlay", None))
+        overlay.open()
 
     def show_license(self) -> None:
         host = self._host
+        if self._license_overlay is not None:
+            self._license_overlay.raise_()
+            return
         labels = {
             "title": host._tr("license.title"),
             "subtitle": host._tr("license.subtitle"),
+            "active_title": host._tr("license.active_title"),
+            "active_license": host._tr("license.active_license"),
+            "active_dev": host._tr("license.active_dev"),
             "key_label": host._tr("license.key_label"),
             "placeholder": host._tr("license.placeholder"),
             "activate": host._tr("license.activate"),
             "buy": host._tr("license.buy"),
             "cancel": host._tr("dialog.cancel"),
+            "ok": host._tr("dialog.ok"),
             "invalid": host._tr("license.invalid"),
             "activated": host._tr("license.activated"),
             "buy_unavailable": host._tr("license.buy_unavailable"),
+            "deactivate": host._tr("license.deactivate"),
+            "deactivate_confirm": host._tr("license.deactivate_confirm"),
+            "deactivated": host._tr("license.deactivated"),
+            "deactivate_failed": host._tr("license.deactivate_failed"),
         }
+        license_state = host._settings.get("license", {})
+        is_license_pro = is_pro()
+        is_dev_pro = bool(is_license_pro and not str(license_state.get("license_key", "")).strip())
+        mode = "dev" if is_dev_pro else ("license" if is_license_pro else "free")
 
         def activate(key: str) -> tuple[bool, str]:
             if activate_license_key(key, host._settings):
                 save_settings(host._settings)
+                invalidate_pro_cache()
                 return True, labels["activated"]
             return False, labels["invalid"]
 
-        if LicenseOverlay(labels, activate, host).exec():
+        def open_checkout() -> bool:
+            url = APP_CHECKOUT_URL.strip()
+            if not url:
+                return False
+            return QDesktopServices.openUrl(QUrl(url))
+
+        def deactivate() -> tuple[bool, str]:
+            if deactivate_license(host._settings):
+                save_settings(host._settings)
+                invalidate_pro_cache()
+                return True, labels["deactivated"]
+            return False, labels["deactivate_failed"]
+
+        overlay = LicenseOverlay(
+            labels,
+            activate,
+            host,
+            mode=mode,
+            buy_callback=open_checkout,
+            deactivate_callback=deactivate,
+            license_key=str(license_state.get("license_key", "")).strip(),
+        )
+        self._license_overlay = overlay
+
+        def on_activated() -> None:
             host._apply_localized_texts()
             host._log(host._tr("license.activated_log"))
+
+        def on_deactivated() -> None:
+            host._apply_localized_texts()
+            host._log(host._tr("license.deactivated_log"))
+
+        overlay.activated.connect(on_activated)
+        overlay.deactivated.connect(on_deactivated)
+        overlay.closed.connect(lambda: setattr(self, "_license_overlay", None))
+        overlay.open()

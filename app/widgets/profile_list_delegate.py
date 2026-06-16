@@ -73,7 +73,7 @@ class ProfileListDelegate(QStyledItemDelegate):
         action_width = (self.ACTION_SIZE * 2 + self.ACTION_GAP + 8) if selected else 0
         text_rect = row.adjusted(18.0, 0.0, -(58.0 + action_width), 0.0)
         font = QFont(option.font)
-        font.setWeight(QFont.DemiBold if selected else QFont.Medium)
+        font.setWeight(QFont.Weight.DemiBold if selected else QFont.Weight.Medium)
         painter.setFont(font)
         painter.setPen(qcolor_from_token(palette["text"]))
         painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, index.data(Qt.DisplayRole) or "")

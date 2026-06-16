@@ -21,13 +21,23 @@ def mix_colors(a: QColor, b: QColor, t: float) -> QColor:
 
 
 class AuroraBackground(QWidget):
+    ACTIVE_INTERVAL_MS = 33
+    CAPTURE_INTERVAL_MS = 1000
+    # When the window is not the active one, paint every Nth tick only
+    # (~5 fps at 33 ms) so a backdrop on a second monitor still moves slowly
+    # without burning CPU/GPU.
+    INACTIVE_FRAME_SKIP = 6
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._dark = True
         self._phase = 0.0
         self._phase_target = 0.0
         self._phase_speed = 0.32
-        self._frame_interval_ms = 12
+        # ~30 fps is plenty for this slow ambient motion. The old 12 ms (~83 fps)
+        # only burned CPU/battery and rendered frames most 60 Hz displays drop.
+        self._frame_interval_ms = self.ACTIVE_INTERVAL_MS
+        self._inactive_skip = 0
         self._capture_compatibility = False
         self._accent = QColor(0, 0, 0, 0)
         self._elapsed = QElapsedTimer()
@@ -45,7 +55,7 @@ class AuroraBackground(QWidget):
 
     def set_capture_compatibility(self, enabled: bool) -> None:
         self._capture_compatibility = bool(enabled)
-        self._frame_interval_ms = 1000 if self._capture_compatibility else 12
+        self._frame_interval_ms = self.CAPTURE_INTERVAL_MS if self._capture_compatibility else self.ACTIVE_INTERVAL_MS
         self._timer.setInterval(self._frame_interval_ms)
         self.update()
 
@@ -68,16 +78,27 @@ class AuroraBackground(QWidget):
         self.update()
 
     def _tick(self):
-        if not self.isVisible() or (self.window() and self.window().isMinimized()):
+        window = self.window()
+        # Nothing to draw when hidden or minimised.
+        if not self.isVisible() or window is None or window.isMinimized():
             self._elapsed.restart()
             return
         if self._capture_compatibility:
             return
+        # In the background, drop to a low frame rate rather than freezing, so a
+        # backdrop on a second monitor keeps drifting while still saving power.
+        if not window.isActiveWindow():
+            self._inactive_skip = (self._inactive_skip + 1) % self.INACTIVE_FRAME_SKIP
+            if self._inactive_skip != 0:
+                self._elapsed.restart()
+                return
+        else:
+            self._inactive_skip = 0
 
         elapsed_ms = self._elapsed.restart()
         if elapsed_ms <= 0:
             elapsed_ms = self._frame_interval_ms
-        elapsed_ms = min(elapsed_ms, 24)
+        elapsed_ms = min(elapsed_ms, 48)
 
         # Advance a target phase in real time, then ease the displayed phase
         # toward it. This smooths out timer jitter that can happen in Qt Widgets.

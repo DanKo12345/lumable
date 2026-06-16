@@ -71,6 +71,7 @@ class UiLocalizationController:
         if host.device_card.subtitle_label is not None:
             host.device_card.subtitle_label.setText(host._tr("device.subtitle"))
         host.scan_button.setText(host._tr("device.find"))
+        host.device_onboarding_label.setText(host._tr("device.onboarding_hint"))
         host.connect_button.setText(host._tr("device.connect"))
         host.disconnect_button.setText(host._tr("device.disconnect"))
         host.device_status.setText(
@@ -118,6 +119,8 @@ class UiLocalizationController:
         if host.schedule_card.subtitle_label is not None:
             host.schedule_card.subtitle_label.setText(host._tr("schedule.subtitle"))
         host.schedule_runtime_note.setText(host._tr("schedule.runtime_note"))
+        host.schedule_toggle_button.setToolTip(host._tr("schedule.toggle_hint"))
+        host.schedule_startup_button.setToolTip(host._tr("schedule.startup_hint"))
         host.schedule_on_label.setText(host._tr("schedule.on"))
         host.schedule_off_label.setText(host._tr("schedule.off"))
         host.schedule_on_time.set_picker_title(host._tr("schedule.pick_on"))
@@ -136,9 +139,12 @@ class UiLocalizationController:
         host.diagnostics_card.title_label.setText(host._tr("diagnostics.title"))
         if host.diagnostics_card.subtitle_label is not None:
             host.diagnostics_card.subtitle_label.setText(host._tr("diagnostics.subtitle"))
+        host.diagnostics_support_label.setText(host._tr("diagnostics.support_hint"))
         host.copy_diagnostics_button.setText(host._tr("diagnostics.copy"))
+        host.copy_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
         host.show_logs_button.setText(host._tr("device.show_logs"))
         host.export_diagnostics_button.setText(host._tr("diagnostics.export"))
+        host.export_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
         host.check_update_button.setText(
             host._tr("updates.open")
             if host._update_result is not None and host._update_result.state == "available"

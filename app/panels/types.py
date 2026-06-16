@@ -28,6 +28,7 @@ class PanelHost(Protocol):
     device_combo: StaticPopupComboBox
     scan_button: LiquidButton
     last_device_label: QLabel
+    device_onboarding_label: QLabel
     device_status: QLabel
     connect_button: LiquidButton
     disconnect_button: LiquidButton
@@ -69,6 +70,7 @@ class PanelHost(Protocol):
 
     diagnostics_card: GlassCard
     diagnostics_output: object
+    diagnostics_support_label: QLabel
     copy_diagnostics_button: LiquidButton
     show_logs_button: LiquidButton
     export_diagnostics_button: LiquidButton
@@ -76,6 +78,7 @@ class PanelHost(Protocol):
     schedule_card: GlassCard
     schedule_runtime_note: QLabel
     schedule_toggle_button: LiquidButton
+    schedule_startup_button: LiquidButton
     schedule_on_label: QLabel
     schedule_off_label: QLabel
     schedule_on_time: TimeButton

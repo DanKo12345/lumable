@@ -46,16 +46,20 @@ def test_delete_config_requires_confirmation(monkeypatch) -> None:
     monkeypatch.setattr("app.main_window.save_settings", lambda _settings: None)
     window = MainWindow()
     calls: list[str] = []
+    overlays = []
+
+    def fake_open(self):
+        overlays.append(self)
+
     try:
         window.profile_list.setCurrentRow(0)
         window._profile_controller.delete_selected_profile = lambda *_args: calls.append("deleted")
 
-        monkeypatch.setattr("app.profile_actions.ProfileConfirmOverlay.exec", lambda _self: False)
+        monkeypatch.setattr("app.profile_actions.ProfileConfirmOverlay.open", fake_open)
         window._profile_actions.delete_selected_profile()
         assert calls == []
 
-        monkeypatch.setattr("app.profile_actions.ProfileConfirmOverlay.exec", lambda _self: True)
-        window._profile_actions.delete_selected_profile()
+        overlays[-1].confirmed.emit()
         assert calls == ["deleted"]
     finally:
         window._ble.shutdown()

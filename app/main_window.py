@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, Qt, QTimer
@@ -30,13 +30,14 @@ from app.constants import (
     WINDOW_MIN_WIDTH,
 )
 from app.diagnostics import build_diagnostics_report
-from app.feature_gate import can_use, free_effect_limit
+from app.feature_gate import FREE_COLOR_HISTORY_COUNT, PRO_COLOR_HISTORY_COUNT, can_use, free_effect_limit
+from app.license_refresh import LicenseRefresher
 from app.localization import localization_manager
 from app.main_layout import build_main_layout
 from app.overlay_controller import OverlayController
 from app.profile_actions import ProfileActions
 from app.profile_controller import ProfileController
-from app.quick_modes import QUICK_MODE_MAP
+from app.quick_mode_controller import QuickModeController
 from app.schedule_controller import ScheduleController
 from app.shortcut_controller import ShortcutController
 from app.storage import DEFAULT_START_COLOR, load_profiles, load_settings, save_settings
@@ -57,18 +58,9 @@ from app.widgets import (
     SmoothScrollFilter,
     ValueChip,
 )
+from app.widgets.effect_swatch import effect_swatch_icon
+from app.widgets.styled_tooltip import TooltipManager
 from app.window_state_controller import WindowStateController
-
-
-@dataclass
-class ProfileState:
-    name: str
-    power: bool
-    brightness: int
-    speed: int
-    effect_code: int
-    schedule: dict
-    color: dict
 
 
 class MainWindow(QMainWindow):
@@ -90,8 +82,13 @@ class MainWindow(QMainWindow):
         self._tray_controller.setup()
         self._apply_windows_backdrop()
         self._schedule_ctrl.start()
-        QTimer.singleShot(500, self._ble_events.start_autoconnect)
-        QTimer.singleShot(1600, self._update_controller.check_silent)
+        self._tooltip_manager = TooltipManager(self)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self._tooltip_manager)
+        self._start_deferred(500, self._ble_events.start_autoconnect)
+        self._start_deferred(900, self._license_refresher.refresh)
+        self._start_deferred(1600, self._update_controller.check_silent)
 
     def _init_state(self) -> None:
         """Initialise plain data attributes before any controller is created."""
@@ -106,6 +103,7 @@ class MainWindow(QMainWindow):
         self._is_dark = ThemeController.resolve_dark_from_mode(self._theme_mode)
         self._theme_tokens = theme_manager.set_dark(self._is_dark)
         self._profiles = load_profiles()
+        self._custom_quick_modes: list[dict] = list(self._settings.get("custom_quick_modes", []))
         self._devices: list = []
         self._is_connected = False
         self._initializing = False
@@ -119,6 +117,9 @@ class MainWindow(QMainWindow):
         self._theme_transition = None
         self._theme_transition_overlay = None
         self._update_result: UpdateResult | None = None
+        self._color_picker_overlay: ColorPickerOverlay | None = None
+        self._custom_quick_overlay = None
+        self._logs_overlay: LogsOverlay | None = None
         # Widget refs set later by _build_ui / build_main_layout
         self.content_shell = None
         self.diagnostics_output = None
@@ -142,7 +143,10 @@ class MainWindow(QMainWindow):
         self._tray_controller = TrayController(self)
         self._ui_localization = UiLocalizationController(self)
         self._schedule_ctrl = ScheduleController(self)
+        self._quick_mode_ctrl = QuickModeController(self)
         self._window_state = WindowStateController(self)
+        self._license_refresher = LicenseRefresher(self)
+        self._license_refresher.finished.connect(self._on_license_refreshed)
         self._aurora = AuroraBackground(self)
         self._aurora.lower()
 
@@ -210,6 +214,14 @@ class MainWindow(QMainWindow):
     def _show_license_overlay(self) -> None:
         self._overlay_controller.show_license()
 
+    def _on_license_refreshed(self, is_pro_now: bool, changed: bool) -> None:
+        """React to a background license revalidation finishing."""
+        if not changed:
+            return
+        self._apply_localized_texts()
+        self._refresh_color_history()
+        self._log(self._tr("license.activated_log") if is_pro_now else self._tr("license.expired_log"))
+
     def _refresh_effect_names(self):
         current_code = self.effect_combo.currentData()
         effects = list(self._ble.effect_presets())
@@ -219,10 +231,9 @@ class MainWindow(QMainWindow):
         self._effect_key_by_code = {effect.code: effect.key for effect in effects[:unlocked_count]}
         for index, effect in enumerate(effects):
             name = localization_manager.effect_name(effect.key)
-            if index < unlocked_count:
-                self.effect_combo.addItem(name, effect.code)
-            else:
-                self.effect_combo.addItem(f"🔒 {name}", None)
+            locked = index >= unlocked_count
+            icon = effect_swatch_icon(effect.key, effect.code, is_dark=self._is_dark, locked=locked)
+            self.effect_combo.addItem(icon, name, None if locked else effect.code)
         idx = self.effect_combo.findData(current_code)
         self.effect_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.effect_combo.blockSignals(False)
@@ -249,7 +260,7 @@ class MainWindow(QMainWindow):
         button = LiquidButton(text, role)
         font = button.font()
         font.setPointSize(11)
-        font.setWeight(QFont.DemiBold)
+        font.setWeight(QFont.Weight.DemiBold)
         button.setFont(font)
         self._buttons.append(button)
         return button
@@ -452,7 +463,7 @@ class MainWindow(QMainWindow):
         return history if isinstance(history, list) else []
 
     def _refresh_color_history(self) -> None:
-        visible_limit = 12 if can_use("color_history_full") else 3
+        visible_limit = PRO_COLOR_HISTORY_COUNT if can_use("color_history_full") else FREE_COLOR_HISTORY_COUNT
         history = self._color_history()[:visible_limit]
         for index, button in enumerate(self.color_history_buttons):
             if index >= len(history):
@@ -474,7 +485,7 @@ class MainWindow(QMainWindow):
                 and int(item.get("b", -1)) == rgb["b"]
             )
         ]
-        limit = 12 if can_use("color_history_full") else 3
+        limit = PRO_COLOR_HISTORY_COUNT if can_use("color_history_full") else FREE_COLOR_HISTORY_COUNT
         self._settings["color_history"] = [rgb, *history][:limit]
         save_settings(self._settings)
         self._refresh_color_history()
@@ -512,8 +523,8 @@ class MainWindow(QMainWindow):
         self.speed_value.setEnabled(enabled)
 
     def _pick_color(self):
-        if not can_use("color_picker_hsv"):
-            self._show_license_overlay()
+        if self._color_picker_overlay is not None:
+            self._color_picker_overlay.raise_()
             return
         picker = ColorPickerOverlay(
             self._tr("dialog.pick_color"),
@@ -530,9 +541,12 @@ class MainWindow(QMainWindow):
             self._color_history(),
             self,
         )
-        if not picker.exec():
-            return
-        color = picker.selected_color()
+        self._color_picker_overlay = picker
+        picker.colorSelected.connect(self._apply_picked_color)
+        picker.closed.connect(lambda: setattr(self, "_color_picker_overlay", None))
+        picker.open()
+
+    def _apply_picked_color(self, color: QColor) -> None:
         self.red_slider.setValue(color.red())
         self.green_slider.setValue(color.green())
         self.blue_slider.setValue(color.blue())
@@ -672,13 +686,19 @@ class MainWindow(QMainWindow):
         self._show_logs_overlay()
 
     def _show_logs_overlay(self):
+        if self._logs_overlay is not None:
+            self._logs_overlay.raise_()
+            return
         labels = {
             "title": self._tr("logs.title"),
             "subtitle": self._tr("logs.subtitle"),
             "empty": self._tr("logs.empty"),
             "close": self._tr("dialog.ok"),
         }
-        LogsOverlay(labels, self._ui_feedback.localized_log_text(), self).exec()
+        overlay = LogsOverlay(labels, self._ui_feedback.localized_log_text(), self)
+        self._logs_overlay = overlay
+        overlay.closed.connect(lambda: setattr(self, "_logs_overlay", None))
+        overlay.open()
 
     def _check_for_updates_silent(self):
         self._update_controller.check_silent()
@@ -712,101 +732,76 @@ class MainWindow(QMainWindow):
         self._theme_controller.animate_overlay_fade(snapshot, duration=210)
 
     def _refresh_quick_mode_buttons(self):
-        for key, button in self._mode_buttons.items():
-            button.setText(self._tr(f"mode.{key}"))
-            mode = QUICK_MODE_MAP.get(key)
-            is_supported = True if mode is None else self._quick_mode_effect_code(mode) is not None
-            button.setEnabled(is_supported or key == self._active_mode_key)
-            button.set_role("mode_active" if key == self._active_mode_key else "mode")
+        self._quick_mode_ctrl.refresh_buttons()
 
     def _set_active_mode(self, mode_key: str | None, *, update_theme: bool = True):
-        normalized = mode_key if mode_key in QUICK_MODE_MAP else None
-        if normalized == self._active_mode_key:
-            return
-        self._active_mode_key = normalized
-        self._settings["quick_mode"] = normalized or ""
-        self._refresh_quick_mode_buttons()
-        if update_theme:
-            self._theme_controller.apply_theme()
+        self._quick_mode_ctrl.set_active(mode_key, update_theme=update_theme)
 
     def _current_state_dict(self) -> dict:
-        color = self._current_color()
-        return {
-            "power": self.power_button.isChecked(),
-            "brightness": self.brightness_slider.value(),
-            "speed": self.speed_slider.value(),
-            "effect_code": int(self.effect_combo.currentData() or 0),
-            "color": {"r": color.red(), "g": color.green(), "b": color.blue()},
-        }
+        return self._quick_mode_ctrl.current_state()
 
     def _sync_quick_mode_from_state(self, preferred: str | None = None):
-        if self._initializing:
-            return
-        state = self._current_state_dict()
-        preferred_mode = QUICK_MODE_MAP.get(preferred or "")
-        if preferred_mode is not None and self._quick_mode_matches(preferred_mode, state):
-            self._set_active_mode(preferred_mode.key)
-            return
-        active_mode = QUICK_MODE_MAP.get(self._active_mode_key or "")
-        if active_mode is not None and not self._quick_mode_matches(active_mode, state):
-            self._set_active_mode(None, update_theme=False)
+        self._quick_mode_ctrl.sync_from_state(preferred)
 
     def _activate_quick_mode(self, mode_key: str):
-        mode = QUICK_MODE_MAP.get(mode_key)
-        if mode is None:
-            return
-        effect_code = self._quick_mode_effect_code(mode)
-        if self._is_connected and effect_code is None:
-            self._show_error(self._tr("error.effects_not_supported"))
-            return
-        self._set_active_mode(mode.key)
-        payload = mode.as_profile()
-        if effect_code is not None:
-            payload["effect_code"] = effect_code
-        color = payload.get("color", {})
-        self._aurora.set_accent_color(
-            int(color.get("r", 0)),
-            int(color.get("g", 0)),
-            int(color.get("b", 0)),
-            enabled=bool(payload.get("power", True)),
-        )
-        self._profile_actions.apply_profile_payload(payload, announce_load=False)
+        self._quick_mode_ctrl.activate(mode_key)
+
+    def _activate_custom_quick_mode(self, index: int) -> None:
+        self._quick_mode_ctrl.activate_custom(index)
+
+    def _rename_custom_quick_mode(self, index: int) -> None:
+        self._quick_mode_ctrl.rename_custom(index)
+
+    def _finish_rename_custom_quick_mode(self, index: int, name: str) -> None:
+        self._quick_mode_ctrl.finish_rename_custom(index, name)
+
+    def _delete_custom_quick_mode(self, index: int) -> None:
+        self._quick_mode_ctrl.delete_custom(index)
+
+    def _finish_delete_custom_quick_mode(self, index: int) -> None:
+        self._quick_mode_ctrl.finish_delete_custom(index)
+
+    def _save_custom_quick_mode(self) -> None:
+        self._quick_mode_ctrl.save_custom()
+
+    def _finish_save_custom_quick_mode(self, name: str) -> None:
+        self._quick_mode_ctrl.finish_save_custom(name)
+
+    def _next_custom_quick_key(self) -> str:
+        return self._quick_mode_ctrl.next_custom_key()
+
+    def _custom_quick_mode_name(self, mode: dict, index: int) -> str:
+        return self._quick_mode_ctrl.custom_name(mode, index)
+
+    def _quick_mode_keys(self) -> set[str]:
+        return self._quick_mode_ctrl.keys()
+
+    def _quick_mode_by_key(self, mode_key: str):
+        return self._quick_mode_ctrl.by_key(mode_key)
+
+    def _mode_key(self, mode) -> str:
+        return self._quick_mode_ctrl.mode_key(mode)
+
+    def _mode_payload(self, mode) -> dict:
+        return self._quick_mode_ctrl.payload(mode)
 
     def _quick_mode_effect_code(self, mode) -> int | None:
-        if mode.effect_code == 0 or self._ble.supports_effect_code(mode.effect_code):
-            return mode.effect_code
-        if mode.key != "rainbow":
-            return None
-        for effect in self._ble.effect_presets():
-            if effect.key in {"smooth_rainbow", "smooth_spectrum", "triones_rainbow", "magic_home_rainbow"}:
-                if self._ble.supports_effect_code(effect.code):
-                    return effect.code
-        return None
+        return self._quick_mode_ctrl.effect_code(mode)
 
     def _quick_mode_matches(self, mode, state: dict) -> bool:
-        if mode.matches(state):
-            return True
-        effect_code = self._quick_mode_effect_code(mode)
-        if effect_code is None or effect_code == mode.effect_code:
-            return False
-        return (
-            bool(state.get("power")) == mode.power
-            and int(state.get("brightness", -1)) == mode.brightness
-            and int(state.get("effect_code", -1)) == effect_code
-            and int(state.get("speed", -1)) == mode.speed
-        )
+        return self._quick_mode_ctrl.matches(mode, state)
 
     def _collect_state(self, name):
-        color = self._current_color()
-        return ProfileState(
-            name=name,
-            power=self.power_button.isChecked(),
-            brightness=self.brightness_slider.value(),
-            speed=self.speed_slider.value(),
-            effect_code=int(self.effect_combo.currentData() or 0),
-            schedule=self._schedule_ctrl.settings(),
-            color={"r": color.red(), "g": color.green(), "b": color.blue()},
-        )
+        return self._quick_mode_ctrl.collect_state(name)
+
+    def _state_to_dict(self, state) -> dict:
+        return asdict(state)
+
+    def _can_use(self, feature: str) -> bool:
+        return can_use(feature)
+
+    def _persist_settings(self) -> None:
+        save_settings(self._settings)
 
     def _refresh_profiles(self):
         self._profile_controller.refresh_list(self.profile_list)
@@ -866,7 +861,9 @@ class MainWindow(QMainWindow):
         self._settings["theme"] = "dark" if self._is_dark else "light"
         self._settings["capture_compatibility"] = bool(self._settings.get("capture_compatibility", True))
         self._settings["quick_mode"] = self._active_mode_key or ""
-        self._settings["color_history"] = self._color_history()[: 12 if can_use("color_history_full") else 3]
+        self._settings["custom_quick_modes"] = self._custom_quick_modes
+        color_history_limit = PRO_COLOR_HISTORY_COUNT if can_use("color_history_full") else FREE_COLOR_HISTORY_COUNT
+        self._settings["color_history"] = self._color_history()[:color_history_limit]
         self._settings["schedule"] = self._schedule_ctrl.settings()
         last_state = asdict(self._collect_state("last"))
         last_state.pop("schedule", None)
@@ -883,6 +880,29 @@ class MainWindow(QMainWindow):
         self._close_after_ble_shutdown = True
         self.close()
 
+    def _start_deferred(self, delay_ms: int, callback) -> None:
+        """Schedule a startup task on a window-owned timer.
+
+        Parented to the window so it's cancelled automatically when the window
+        is destroyed, and guarded so it never runs once a close is underway —
+        this avoids stray network/UI work firing after the window goes away.
+        """
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: self._run_deferred(callback))
+        timer.start(delay_ms)
+
+    def _run_deferred(self, callback) -> None:
+        if self._close_requested:
+            return
+        callback()
+
+    def _shutdown_tooltip_manager(self) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self._tooltip_manager)
+        self._tooltip_manager.shutdown()
+
     def closeEvent(self, event):
         try:
             self._save_window_settings()
@@ -895,6 +915,7 @@ class MainWindow(QMainWindow):
             return
         if self._close_after_ble_shutdown:
             self._tray_controller.hide_icon()
+            self._shutdown_tooltip_manager()
             super().closeEvent(event)
             app = QApplication.instance()
             if app is not None:

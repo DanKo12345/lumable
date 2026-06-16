@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFrame,
+    QGraphicsOpacityEffect,
     QListWidget,
     QListWidgetItem,
     QVBoxLayout,
@@ -31,6 +32,8 @@ class StaticPopupComboBox(QComboBox):
         self._list: QListWidget | None = None
         self._popup_parent: QWidget | None = None
         self._app_filter_installed = False
+        self._open_fade: QPropertyAnimation | None = None
+        self._open_slide: QPropertyAnimation | None = None
 
     def _popup_host(self):
         return self.window()
@@ -95,13 +98,20 @@ class StaticPopupComboBox(QComboBox):
             bottom = QColor(214, 228, 250, 255)
         border = qcolor_from_token(tokens["field_border"])
         border.setAlpha(130 if is_dark else 118)
-        selected = QColor(255, 255, 255, 26 if is_dark else 58)
-        selected_bottom = QColor(255, 255, 255, 12 if is_dark else 34)
+        accent = qcolor_from_token(tokens["accent_start"])
+
+        def _accent(alpha: int) -> QColor:
+            return QColor(accent.red(), accent.green(), accent.blue(), alpha)
+
+        # Tint the current selection with the theme accent so the active effect
+        # reads clearly in both light and dark modes.
+        selected = _accent(74 if is_dark else 92)
+        selected_bottom = _accent(30 if is_dark else 44)
         hover = QColor(255, 255, 255, 7 if is_dark else 24)
         text = qcolor_from_token(tokens["text"]).name()
-        selected_border = QColor(255, 255, 255, 42 if is_dark else 82)
+        selected_border = _accent(150)
         hover_border = QColor(255, 255, 255, 8 if is_dark else 34)
-        top_light = QColor(255, 255, 255, 18 if is_dark else 76)
+        top_light = _accent(34 if is_dark else 60)
 
         self._popup.setStyleSheet(
             f"""
@@ -174,15 +184,23 @@ class StaticPopupComboBox(QComboBox):
         if self._list is None:
             return
         self._list.clear()
-        self._list.setIconSize(QSize(18, 18))
+        self._list.setIconSize(QSize(34, 18))
+        muted = qcolor_from_token(self._theme_provider()["muted"])
         for index in range(self.count()):
             text = self.itemText(index)
             item = QListWidgetItem()
+            combo_icon = self.itemIcon(index)
             if text.startswith("↻ "):
                 item.setText(text[2:])
                 item.setIcon(self._reload_icon())
             else:
                 item.setText(text)
+                if not combo_icon.isNull():
+                    item.setIcon(combo_icon)
+            # A None payload on an item that carries its own icon marks a locked
+            # (Pro) effect: keep it visible but clearly muted.
+            if self.itemData(index) is None and not combo_icon.isNull():
+                item.setForeground(muted)
             item.setData(Qt.ItemDataRole.UserRole, index)
             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             item.setSizeHint(QSize(0, 42))
@@ -239,7 +257,9 @@ class StaticPopupComboBox(QComboBox):
             return
         size = self._popup_size()
         position = self._popup_position(size)
-        self._popup.setGeometry(position.x(), position.y(), size.width(), size.height())
+        target = QRect(position.x(), position.y(), size.width(), size.height())
+        self._popup.setGeometry(target)
+        self._animate_open(target)
         self._popup.show()
         self._popup.raise_()
         self._list.setFocus()
@@ -249,6 +269,25 @@ class StaticPopupComboBox(QComboBox):
         if app is not None and not self._app_filter_installed:
             app.installEventFilter(self)
             self._app_filter_installed = True
+
+    def _animate_open(self, target: QRect) -> None:
+        if self._popup is None:
+            return
+        effect = QGraphicsOpacityEffect(self._popup)
+        self._popup.setGraphicsEffect(effect)
+        effect.setOpacity(0.0)
+        self._open_fade = QPropertyAnimation(effect, b"opacity", self._popup)
+        self._open_fade.setDuration(150)
+        self._open_fade.setStartValue(0.0)
+        self._open_fade.setEndValue(1.0)
+        self._open_fade.setEasingCurve(QEasingCurve.OutCubic)
+        self._open_slide = QPropertyAnimation(self._popup, b"geometry", self._popup)
+        self._open_slide.setDuration(190)
+        self._open_slide.setStartValue(target.translated(0, -8))
+        self._open_slide.setEndValue(target)
+        self._open_slide.setEasingCurve(QEasingCurve.OutCubic)
+        self._open_fade.start()
+        self._open_slide.start()
 
     def hidePopup(self) -> None:
         if self._popup is not None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from PySide6.QtCore import QSize
+
 from app.ble import EFFECTS
 from app.constants import EFFECTS_CONTENT_TOP_MARGIN
 from app.localization import localization_manager
@@ -14,6 +16,7 @@ def build_effects_section(host: PanelHost) -> GlassCard:
     host.effect_combo = StaticPopupComboBox(lambda: host._theme_tokens, lambda: host._is_dark)
     host.effect_combo.setMinimumHeight(host._control_height)
     host.effect_combo.setMaxVisibleItems(5)
+    host.effect_combo.setIconSize(QSize(34, 18))
     host._effect_key_by_code = {effect.code: effect.key for effect in EFFECTS}
     for effect in EFFECTS:
         host.effect_combo.addItem(localization_manager.effect_name(effect.key), effect.code)

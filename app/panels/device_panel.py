@@ -39,6 +39,13 @@ def build_device_section(host: PanelHost) -> GlassCard:
     host.last_device_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
     host.device_card.content_layout.addWidget(host.last_device_label)
 
+    host.device_onboarding_label = QLabel(host._tr("device.onboarding_hint"))
+    host.device_onboarding_label.setObjectName("deviceOnboardingHint")
+    host.device_onboarding_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    host.device_onboarding_label.setWordWrap(True)
+    host.device_onboarding_label.setMinimumHeight(24)
+    host.device_card.content_layout.addWidget(host.device_onboarding_label)
+
     row2 = QHBoxLayout()
     row2.setSpacing(ROW_SPACING_TIGHT)
     row2.setContentsMargins(0, ROW_TOP_MARGIN, 0, 0)

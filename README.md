@@ -8,7 +8,7 @@ profiles.
 
 Author: `dollza`
 
-Version: `0.1.2 beta`
+Version: `0.1.3 beta`
 
 Download the latest Windows build from the [Releases page](https://github.com/DanKo12345/lumable/releases).
 

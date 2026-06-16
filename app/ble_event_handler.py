@@ -35,6 +35,7 @@ class BleEventHandler:
         host.device_combo.addItem(host._tr("device.choice.scan_placeholder"))
         host.device_status.setText(host._tr("device.status.scanning"))
         self._sync_last_device_hint()
+        self._sync_device_onboarding_hint()
         host._sync_connect_buttons()
         host._ble.scan()
 
@@ -93,6 +94,7 @@ class BleEventHandler:
             host.device_combo.addItem(host._tr("device.choice.not_found"))
             host.device_status.setText(host._tr("device.status.not_found"))
             self._sync_last_device_hint()
+            self._sync_device_onboarding_hint()
             host._sync_connect_buttons()
             return
         for device in devices:
@@ -108,6 +110,7 @@ class BleEventHandler:
             )
         else:
             self._sync_last_device_hint()
+        self._sync_device_onboarding_hint()
         host._sync_connect_buttons()
         if len(devices) == 1:
             device = devices[0]
@@ -116,6 +119,7 @@ class BleEventHandler:
             host._connect_in_progress = True
             host.device_status.setText(host._tr("device.status.connecting"))
             self._sync_last_device_hint(name=str(device.get("name", "")).strip(), address=str(device.get("address", "")).strip(), autoconnecting=True)
+            self._sync_device_onboarding_hint()
             host._sync_connect_buttons()
             host._ble.connect_to_address(device["address"])
         else:
@@ -148,6 +152,7 @@ class BleEventHandler:
             save_settings(host._settings)
         elif not host._connect_in_progress:
             self._sync_last_device_hint()
+        self._sync_device_onboarding_hint()
 
     def _device_name_for_address(self, address: str) -> str:
         for device in self._host._devices:
@@ -176,10 +181,28 @@ class BleEventHandler:
         resolved_name = str(name if name is not None else host._settings.get("last_device_name", "")).strip()
         if not resolved_address:
             label.setText(host._tr("device.last.none"))
+            self._sync_device_onboarding_hint()
             return
         display_name = resolved_name or resolved_address
         key = "device.last.autoconnecting" if autoconnecting else "device.last"
         label.setText(host._tr(key, name=display_name, address=resolved_address))
+        self._sync_device_onboarding_hint()
+
+    def _sync_device_onboarding_hint(self) -> None:
+        label = getattr(self._host, "device_onboarding_label", None)
+        if label is None:
+            return
+        host = self._host
+        has_last_device = bool(str(host._settings.get("last_device_address", "")).strip())
+        should_show = not any((
+            has_last_device,
+            host._is_connected,
+            host._scan_in_progress,
+            host._connect_in_progress,
+            bool(host._devices),
+        ))
+        label.setText(host._tr("device.onboarding_hint"))
+        label.setVisible(should_show)
 
     def show_error(self, message: str) -> None:
         self._host._connect_in_progress = False

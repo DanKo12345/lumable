@@ -65,6 +65,8 @@ class ProfileActionsHost(Protocol):
 class ProfileActions:
     def __init__(self, host: ProfileActionsHost) -> None:
         self._host = host
+        self._confirm_overlay: ProfileConfirmOverlay | None = None
+        self._rename_overlay: ProfileRenameOverlay | None = None
 
     def save_profile(self) -> None:
         host = self._host
@@ -100,8 +102,14 @@ class ProfileActions:
             "cancel": host._tr("dialog.cancel"),
             "delete": host._tr("configs.delete_confirm"),
         }
-        if not ProfileConfirmOverlay(labels, host).exec():
-            return
+        overlay = ProfileConfirmOverlay(labels, host)
+        self._confirm_overlay = overlay
+        overlay.confirmed.connect(self._delete_selected_profile_after_confirm)
+        overlay.closed.connect(lambda: setattr(self, "_confirm_overlay", None))
+        overlay.open()
+
+    def _delete_selected_profile_after_confirm(self) -> None:
+        host = self._host
         host._profile_controller.delete_selected_profile(
             host.profile_list,
             host._show_error,
@@ -122,9 +130,14 @@ class ProfileActions:
             "cancel": host._tr("dialog.cancel"),
             "ok": host._tr("dialog.ok"),
         }
-        new_name = ProfileRenameOverlay(labels, current_name, host).exec()
-        if new_name is None:
-            return
+        overlay = ProfileRenameOverlay(labels, current_name, host)
+        self._rename_overlay = overlay
+        overlay.nameSelected.connect(self._rename_selected_profile_after_input)
+        overlay.closed.connect(lambda: setattr(self, "_rename_overlay", None))
+        overlay.open()
+
+    def _rename_selected_profile_after_input(self, new_name: str) -> None:
+        host = self._host
         host._profile_controller.rename_selected_profile(
             host.profile_list,
             new_name,

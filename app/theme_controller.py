@@ -5,13 +5,12 @@ from typing import cast
 
 import darkdetect
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLabel, QWidget
 
-from app.quick_modes import QUICK_MODE_MAP
 from app.storage import save_settings
-from app.styles import build_theme_stylesheet
-from app.theme import theme_manager
+from app.styles import build_theme_stylesheet, build_tooltip_stylesheet
+from app.theme import qcolor_from_token, theme_manager
 from app.types import ThemeHost
 
 
@@ -80,14 +79,34 @@ class ThemeController:
 
     def apply_theme(self) -> None:
         theme_manager.set_dark(self._host._is_dark)
-        mode = QUICK_MODE_MAP.get(self._host._active_mode_key or "")
-        self._host._theme_tokens = theme_manager.set_accent_override(None if mode is None else QColor(mode.accent))
+        mode = self._host._quick_mode_by_key(self._host._active_mode_key or "")
+        accent = None
+        if mode is not None:
+            accent = mode.accent if hasattr(mode, "accent") else str(mode.get("accent", "#7fb7ff"))
+        self._host._theme_tokens = theme_manager.set_accent_override(None if accent is None else QColor(accent))
         self._host._aurora.set_dark(self._host._is_dark)
         if hasattr(self._host._aurora, "set_capture_compatibility"):
             self._host._aurora.set_capture_compatibility(bool(self._host._settings.get("capture_compatibility", True)))
         app = QApplication.instance()
         if app:
             app.setFont(QFont("Segoe UI Variable Text", 10))
+            # Tooltips are top-level popups, so their style must live on the app,
+            # not the main window — otherwise they fall back to the OS default.
+            # Only re-apply when it actually changes (it depends on the theme, not
+            # the accent) to avoid a global re-polish on every quick-mode switch.
+            tooltip_qss = build_tooltip_stylesheet(self._host._theme_tokens)
+            if tooltip_qss != getattr(self, "_last_tooltip_qss", None):
+                self._last_tooltip_qss = tooltip_qss
+                app.setStyleSheet(tooltip_qss)
+                # Stylesheet alone doesn't always reach tooltip popups (Windows
+                # may keep the system tooltip colours), so also drive the colours
+                # through the application palette, which Qt always honours.
+                tip_bg = qcolor_from_token(self._host._theme_tokens["surface_strong"])
+                tip_bg.setAlpha(255)
+                pal = app.palette()
+                pal.setColor(QPalette.ColorRole.ToolTipBase, tip_bg)
+                pal.setColor(QPalette.ColorRole.ToolTipText, qcolor_from_token(self._host._theme_tokens["text"]))
+                app.setPalette(pal)
         self._host.setStyleSheet(self.theme_stylesheet())
         self.apply_slider_theme()
         self.refresh_theme_widgets()

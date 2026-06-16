@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QEventLoop, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
@@ -239,6 +239,9 @@ class _ColorPickerPanel(QFrame):
 
 
 class ColorPickerOverlay(QWidget):
+    colorSelected = Signal(QColor)
+    closed = Signal()
+
     def __init__(
         self,
         title: str,
@@ -251,8 +254,6 @@ class ColorPickerOverlay(QWidget):
         self.setObjectName("colorPickerOverlay")
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
-        self._accepted = False
-        self._loop: QEventLoop | None = None
         self._color = QColor(color)
         self._syncing = False
         self._hex_syncing = False
@@ -436,8 +437,7 @@ class ColorPickerOverlay(QWidget):
     def _hex_text(color: QColor) -> str:
         return f"#{color.red():02x}{color.green():02x}{color.blue():02x}"
 
-    def exec(self) -> bool:
-        self._accepted = False
+    def open(self) -> None:
         parent = self.parentWidget()
         if parent is not None:
             self.setGeometry(parent.rect())
@@ -445,19 +445,15 @@ class ColorPickerOverlay(QWidget):
         self.show()
         self.raise_()
         self.setFocus(Qt.PopupFocusReason)
-        self._loop = QEventLoop(self)
-        self._loop.exec()
-        return self._accepted
 
     def selected_color(self) -> QColor:
         return QColor(self._color)
 
     def accept(self) -> None:
-        self._accepted = True
+        self.colorSelected.emit(QColor(self._color))
         self._finish()
 
     def reject(self) -> None:
-        self._accepted = False
         self._finish()
 
     def _finish(self) -> None:
@@ -465,9 +461,7 @@ class ColorPickerOverlay(QWidget):
         if parent is not None:
             parent.removeEventFilter(self)
         self.hide()
-        if self._loop is not None:
-            self._loop.quit()
-            self._loop = None
+        self.closed.emit()
         self.deleteLater()
 
     def paintEvent(self, event) -> None:

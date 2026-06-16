@@ -2,6 +2,31 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.1.3] - 2026-06-16
+
+### Added
+- Connected Lemon Squeezy Pro activation, validation and deactivation flow.
+- Added a background license refresher so Pro checks no longer block the UI.
+- Added a polished Pro activation experience with themed status UI and success celebration.
+- Added styled app-wide tooltips that match dark and light themes.
+- Added effect swatches, Pro lock icons and animated effect-list opening.
+- Added smoother effect-preview transitions and active-effect highlighting.
+
+### Improved
+- Reduced Aurora background rendering from high refresh to a calmer 30 fps, with low-fps background mode.
+- Cached tinted button icons to reduce repeated paint allocations.
+- Improved Pro active/deactivate UX with a masked key chip and safer two-click deactivation.
+- Reworked locked Pro effects to use visual swatches instead of text lock prefixes.
+- Improved light-theme contrast for buttons, sliders, text and edition badges.
+- Hardened startup deferred tasks so they cannot fire after the main window starts closing.
+
+### Fixed
+- Fixed a tooltip lifecycle leak that could hang the full test suite after many window creations.
+- Fixed license state caching so `is_pro()` no longer writes settings or performs network requests during UI rendering.
+- Fixed Lemon Squeezy activation instance names to use safe ASCII machine labels.
+- Fixed deactivate recovery when the server succeeds but the response is lost.
+- Fixed tests so they are isolated from the developer's real local license/settings data.
+
 ## [0.1.2] - 2026-06-05
 
 ### Fixed

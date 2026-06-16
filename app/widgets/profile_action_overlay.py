@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QEvent, QEventLoop, QPoint, QPropertyAnimation, QRectF, Qt
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
@@ -46,13 +46,14 @@ class _ProfileActionPanel(QFrame):
 
 
 class ProfileRenameOverlay(QWidget):
+    nameSelected = Signal(str)
+    closed = Signal()
+
     def __init__(self, labels: dict[str, str], current_name: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
         self._labels = labels
-        self._loop: QEventLoop | None = None
-        self._result: str | None = None
         self._fade_anim: QPropertyAnimation | None = None
         self._panel_anim: QPropertyAnimation | None = None
         if parent is not None:
@@ -109,7 +110,7 @@ class ProfileRenameOverlay(QWidget):
         buttons.addStretch(1)
         panel_layout.addLayout(buttons)
 
-    def exec(self) -> str | None:
+    def open(self) -> None:
         parent = self.parentWidget()
         if parent is not None:
             self.setGeometry(parent.rect())
@@ -119,12 +120,9 @@ class ProfileRenameOverlay(QWidget):
         self.setFocus(Qt.PopupFocusReason)
         self.name_input.setFocus(Qt.PopupFocusReason)
         self._start_open_animation()
-        self._loop = QEventLoop(self)
-        self._loop.exec()
-        return self._result
 
     def _accept(self) -> None:
-        self._result = self.name_input.text()
+        self.nameSelected.emit(self.name_input.text())
         self.close_overlay()
 
     def _start_open_animation(self) -> None:
@@ -150,9 +148,7 @@ class ProfileRenameOverlay(QWidget):
         if parent is not None:
             parent.removeEventFilter(self)
         self.hide()
-        if self._loop is not None:
-            self._loop.quit()
-            self._loop = None
+        self.closed.emit()
         self.deleteLater()
 
     def paintEvent(self, event) -> None:
@@ -210,13 +206,13 @@ class ProfileRenameOverlay(QWidget):
 
 
 class ProfileConfirmOverlay(ProfileRenameOverlay):
+    confirmed = Signal()
+
     def __init__(self, labels: dict[str, str], parent: QWidget | None = None) -> None:
         QWidget.__init__(self, parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
         self._labels = labels
-        self._loop: QEventLoop | None = None
-        self._result = False
         self._fade_anim: QPropertyAnimation | None = None
         self._panel_anim: QPropertyAnimation | None = None
         if parent is not None:
@@ -275,7 +271,7 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         buttons.addStretch(1)
         panel_layout.addLayout(buttons)
 
-    def exec(self) -> bool:
+    def open(self) -> None:
         parent = self.parentWidget()
         if parent is not None:
             self.setGeometry(parent.rect())
@@ -284,12 +280,9 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         self.raise_()
         self.setFocus(Qt.PopupFocusReason)
         self._start_open_animation()
-        self._loop = QEventLoop(self)
-        self._loop.exec()
-        return bool(self._result)
 
     def _accept_confirm(self) -> None:
-        self._result = True
+        self.confirmed.emit()
         self.close_overlay()
 
     def _apply_style(self) -> None:

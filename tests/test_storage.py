@@ -34,6 +34,7 @@ def test_validate_profile_keeps_scene_schedule_when_present() -> None:
                 "enabled": "yes",
                 "on_time": "21:5",
                 "off_time": "25:00",
+                "startup_enabled": "yes",
             },
         }
     )
@@ -43,6 +44,7 @@ def test_validate_profile_keeps_scene_schedule_when_present() -> None:
         "enabled": True,
         "on_time": "21:05",
         "off_time": "23:00",
+        "startup_enabled": True,
     }
 
 
@@ -69,6 +71,7 @@ def test_validate_settings_normalizes_broken_payload() -> None:
                 "enabled": "yes",
                 "on_time": "7:5",
                 "off_time": "99:00",
+                "startup_enabled": "yes",
             },
             "window_width": "wide",
             "window_height": 10,
@@ -108,6 +111,7 @@ def test_validate_settings_normalizes_broken_payload() -> None:
         "enabled": True,
         "on_time": "07:05",
         "off_time": "23:00",
+        "startup_enabled": True,
     }
     assert settings["window_width"] == 1320
     assert settings["window_height"] == 600
@@ -129,6 +133,47 @@ def test_validate_settings_migrates_legacy_dark_start_color() -> None:
     )
 
     assert settings["last_state"]["brightness"] == 100
+
+
+def test_validate_settings_keeps_custom_quick_modes_as_scene_payloads() -> None:
+    settings = storage.validate_settings(
+        {
+            "custom_quick_modes": [
+                {
+                    "key": "custom_1",
+                    "name": "Desk",
+                    "power": True,
+                    "brightness": 80,
+                    "speed": 30,
+                    "effect_code": 0,
+                    "color": {"r": 10, "g": 20, "b": 30},
+                    "accent": "3366cc",
+                    "schedule": {"enabled": True, "on_time": "20:00", "off_time": "23:00"},
+                },
+                "broken",
+            ],
+        }
+    )
+
+    assert settings["custom_quick_modes"] == [
+        {
+            "key": "custom_1",
+            "preset_key": "",
+            "name": "Desk",
+            "power": True,
+            "brightness": 80,
+            "speed": 30,
+            "effect_code": 0,
+            "color": {"r": 10, "g": 20, "b": 30},
+            "schedule": {
+                "enabled": True,
+                "on_time": "20:00",
+                "off_time": "23:00",
+                "startup_enabled": False,
+            },
+            "accent": "#3366cc",
+        }
+    ]
     assert settings["last_state"]["color"] == storage.DEFAULT_START_COLOR
 
 

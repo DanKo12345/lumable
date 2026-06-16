@@ -4,7 +4,39 @@ import os
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("LUMABLE_DISABLE_SCHTASKS", "1")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_data(tmp_path, monkeypatch):
+    """Isolate every test from the developer's real LumaBLE data.
+
+    Without this, ``load_settings()`` (reached via ``feature_gate.is_pro``) reads
+    the actual ``settings.json`` on the machine running the suite, so results
+    differ between a developer with an activated Pro license and a clean CI box.
+    Each test gets a fresh, empty data directory; tests that need their own
+    storage paths simply monkeypatch them again afterwards (their setattr wins).
+    """
+    try:
+        from app import feature_gate, storage
+    except Exception:
+        yield
+        return
+
+    data_dir = tmp_path / "lumable-data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(storage, "DATA_DIR", data_dir, raising=False)
+    monkeypatch.setattr(storage, "SETTINGS_PATH", data_dir / "settings.json", raising=False)
+    monkeypatch.setattr(storage, "PROFILES_PATH", data_dir / "profiles.json", raising=False)
+    monkeypatch.setattr(storage, "_legacy_migration_pairs", lambda: [], raising=False)
+    monkeypatch.setattr(storage, "_migration_done", True, raising=False)
+
+    feature_gate.invalidate_pro_cache()
+    yield
+    feature_gate.invalidate_pro_cache()
 
 
 def _qt_widgets_available() -> bool:

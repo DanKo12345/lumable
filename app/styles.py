@@ -17,6 +17,24 @@ def build_theme_stylesheet(tokens: dict[str, str]) -> str:
 
 # ── base ──────────────────────────────────────────────────────────────
 
+def build_tooltip_stylesheet(tokens: dict[str, str]) -> str:
+    """QToolTip styling. Must be applied at the QApplication level: tooltips are
+    top-level popups and do not inherit a widget/window stylesheet."""
+    tip_bg = qcolor_from_token(tokens["surface_strong"])
+    tip_bg.setAlpha(255)
+    return f"""
+        QToolTip {{
+            background: {tip_bg.name()};
+            color: {tokens["text"]};
+            border: 1px solid {tokens["surface_border"]};
+            border-radius: 9px;
+            padding: 7px 11px;
+            font-size: 12px;
+            font-weight: 500;
+        }}
+    """
+
+
 def _base_styles(T: dict) -> str:
     return f"""
         QMainWindow, #rootWidget, #bodyCanvas, #bodyScroll, QScrollArea {{
@@ -48,6 +66,12 @@ def _base_styles(T: dict) -> str:
             font-size: 11px;
             font-weight: 600;
             padding-left: 2px;
+        }}
+        #deviceOnboardingHint {{
+            color: {T["text_soft"]};
+            font-size: 12px;
+            font-weight: 600;
+            padding: 2px 2px 0 2px;
         }}
         #scheduleNote {{
             color: {T["muted"]};
@@ -275,6 +299,12 @@ def _form_styles(T: dict, is_dark: bool) -> str:
             font-size: 12px;
             line-height: 1.6em;
             padding: 16px 18px;
+        }}
+        #diagnosticsSupportHint {{
+            color: {T["muted"]};
+            font-size: 11px;
+            font-weight: 600;
+            padding: 0 2px;
         }}
     """
 

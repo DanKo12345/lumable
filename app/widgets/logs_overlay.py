@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QEvent, QEventLoop, QPoint, QPropertyAnimation, QRectF, Qt
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QTextEdit, QVBoxLayout, QWidget
 
@@ -46,11 +46,12 @@ class _LogsPanel(QFrame):
 
 
 class LogsOverlay(QWidget):
+    closed = Signal()
+
     def __init__(self, labels: dict[str, str], text: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
-        self._loop: QEventLoop | None = None
         self._fade_anim: QPropertyAnimation | None = None
         self._panel_anim: QPropertyAnimation | None = None
         if parent is not None:
@@ -99,7 +100,7 @@ class LogsOverlay(QWidget):
         button_row.addWidget(close_button, 0, Qt.AlignRight | Qt.AlignVCenter)
         panel_layout.addLayout(button_row)
 
-    def exec(self) -> None:
+    def open(self) -> None:
         parent = self.parentWidget()
         if parent is not None:
             self.setGeometry(parent.rect())
@@ -108,8 +109,6 @@ class LogsOverlay(QWidget):
         self.raise_()
         self.setFocus(Qt.PopupFocusReason)
         self._start_open_animation()
-        self._loop = QEventLoop(self)
-        self._loop.exec()
 
     def _start_open_animation(self) -> None:
         self.layout().activate()
@@ -137,9 +136,7 @@ class LogsOverlay(QWidget):
         if parent is not None:
             parent.removeEventFilter(self)
         self.hide()
-        if self._loop is not None:
-            self._loop.quit()
-            self._loop = None
+        self.closed.emit()
         self.deleteLater()
 
     def paintEvent(self, event) -> None:

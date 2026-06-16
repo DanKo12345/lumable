@@ -54,20 +54,37 @@ def _build_mode_row(host) -> QHBoxLayout:
     mode_row.setSpacing(MODE_ROW_SPACING)
     mode_row.setAlignment(Qt.AlignHCenter)
     host._mode_buttons: dict[str, LiquidButton] = {}
+    host._custom_mode_buttons: list[LiquidButton] = []
     for mode in QUICK_MODES:
         button = host._button(host._tr(f"mode.{mode.key}"), "mode")
-        button.setMinimumHeight(MODE_BUTTON_HEIGHT)
-        button.setMaximumHeight(MODE_BUTTON_HEIGHT)
-        button.setMinimumWidth(MODE_BUTTON_MIN_WIDTH)
-        button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        font = button.font()
-        font.setPointSize(9)
-        font.setWeight(QFont.DemiBold)
-        button.setFont(font)
+        _prepare_mode_button(button)
         button.clicked.connect(lambda _checked=False, key=mode.key: host._activate_quick_mode(key))
         host._mode_buttons[mode.key] = button
         mode_row.addWidget(button)
+    for index in range(4):
+        button = host._button("", "mode")
+        _prepare_mode_button(button)
+        button.hide()
+        button.clicked.connect(lambda _checked=False, slot=index: host._activate_custom_quick_mode(slot))
+        button.set_embedded_action("x", lambda slot=index: host._delete_custom_quick_mode(slot))
+        host._custom_mode_buttons.append(button)
+        mode_row.addWidget(button)
+    host.save_quick_mode_button = host._button("+", "ghost")
+    host.save_quick_mode_button.setFixedSize(MODE_BUTTON_HEIGHT, MODE_BUTTON_HEIGHT)
+    host.save_quick_mode_button.clicked.connect(host._save_custom_quick_mode)
+    mode_row.addWidget(host.save_quick_mode_button)
     return mode_row
+
+
+def _prepare_mode_button(button: LiquidButton) -> None:
+    button.setMinimumHeight(MODE_BUTTON_HEIGHT)
+    button.setMaximumHeight(MODE_BUTTON_HEIGHT)
+    button.setMinimumWidth(MODE_BUTTON_MIN_WIDTH)
+    button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+    font = button.font()
+    font.setPointSize(9)
+    font.setWeight(QFont.Weight.DemiBold)
+    button.setFont(font)
 
 
 def _build_controls(host) -> QWidget:
@@ -82,7 +99,7 @@ def _build_controls(host) -> QWidget:
     host.language_combo.setFixedWidth(LANGUAGE_MIN_WIDTH)
     language_font = host.language_combo.font()
     language_font.setPointSize(10)
-    language_font.setWeight(QFont.DemiBold)
+    language_font.setWeight(QFont.Weight.DemiBold)
     host.language_combo.setFont(language_font)
 
     host.theme_button = host._button("", "ghost")
@@ -92,7 +109,7 @@ def _build_controls(host) -> QWidget:
     host.theme_button.setFixedWidth(LANGUAGE_MIN_WIDTH)
     theme_font = host.theme_button.font()
     theme_font.setPointSize(10)
-    theme_font.setWeight(QFont.DemiBold)
+    theme_font.setWeight(QFont.Weight.DemiBold)
     host.theme_button.setFont(theme_font)
 
     host.about_button = host._button("i", "ghost")

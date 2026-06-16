@@ -29,6 +29,8 @@ class BleEventHost(Protocol):
 
     device_combo: StaticPopupComboBox
     device_status: QLabel
+    last_device_label: QLabel
+    device_onboarding_label: QLabel
     connect_button: LiquidButton
     disconnect_button: LiquidButton
     logs_toggle_button: LiquidButton
@@ -68,6 +70,8 @@ class ThemeHost(Protocol):
     speed_slider: LiquidSlider
 
     def _tr(self, key: str, **kwargs: object) -> str: ...
+
+    def _quick_mode_by_key(self, mode_key: str): ...
 
     def grab(self) -> QPixmap: ...
 
