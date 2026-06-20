@@ -97,8 +97,25 @@ class UpdateController:
                     latest=result.info.latest_version,
                 )
             )
+            self._notify_update(result.info, was_silent)
             return
         self._host._log(self._host._tr("updates.current", version=result.info.current_version))
+
+    def _notify_update(self, info, was_silent: bool) -> None:
+        # Show the pop-up only for the quiet auto-check (a manual check already
+        # surfaces the result on the button), and only once per version so it
+        # never nags after the user dismissed it.
+        if not was_silent:
+            return
+        settings = getattr(self._host, "_settings", None)
+        if isinstance(settings, dict):
+            if str(settings.get("updates_notified_version", "")) == info.latest_version:
+                return
+            settings["updates_notified_version"] = info.latest_version
+            save_settings(settings)
+        show = getattr(self._host, "_show_update_overlay", None)
+        if callable(show):
+            show(info)
 
     def open_update_page(self) -> None:
         if self.result is None or self.result.info is None or not self.result.info.url:

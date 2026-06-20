@@ -84,6 +84,16 @@ class PanelHost(Protocol):
     schedule_on_time: TimeButton
     schedule_off_time: TimeButton
 
+    ambient_card: GlassCard
+    ambient_toggle_button: LiquidButton
+    ambient_region_combo: StaticPopupComboBox
+    ambient_monitor_combo: object
+    ambient_preview: object
+    ambient_saturation_slider: LiquidSlider
+    ambient_saturation_value: ValueChip
+    ambient_smoothing_slider: LiquidSlider
+    ambient_smoothing_value: ValueChip
+
     def _tr(self, key: str, **kwargs: object) -> str: ...
 
     def _card(self, title: str, subtitle: str | None = None, icon: str | None = None) -> GlassCard: ...

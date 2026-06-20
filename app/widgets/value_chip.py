@@ -24,7 +24,9 @@ class ValueChip(QLabel):
         self.setObjectName("valueChip")
         self.setAttribute(Qt.WA_StyledBackground)
         self.setAlignment(Qt.AlignCenter)
-        self.setMinimumWidth(68)
+        # Fixed (not just minimum) width so the readout boxes line up in one
+        # vertical column instead of jumping around with their content.
+        self.setFixedWidth(74)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
 

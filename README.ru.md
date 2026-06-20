@@ -8,7 +8,7 @@ LumaBLE ищет поддерживаемые Bluetooth-контроллеры, 
 
 Автор: `dollza`
 
-Версия: `0.1.3 beta`
+Версия: `0.2.0 beta`
 
 Скачать последнюю Windows-сборку можно на странице [Releases](https://github.com/DanKo12345/lumable/releases).
 

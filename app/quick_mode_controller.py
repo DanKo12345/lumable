@@ -30,7 +30,7 @@ class QuickModeController:
             mode = QUICK_MODE_MAP.get(key)
             is_supported = True if mode is None else self.effect_code(mode) is not None
             button.setEnabled(is_supported or key == host._active_mode_key)
-            button.set_role("mode_active" if key == host._active_mode_key else "mode")
+            button.set_role("accent" if key == host._active_mode_key else "mode")
         for index, button in enumerate(host._custom_mode_buttons):
             if index >= len(host._custom_quick_modes):
                 button.hide()
@@ -41,7 +41,7 @@ class QuickModeController:
             button.setText(name[:18])
             button.setToolTip(name)
             button.setEnabled(self.effect_code(mode) is not None or key == host._active_mode_key)
-            button.set_role("mode_active" if key == host._active_mode_key else "mode")
+            button.set_role("accent" if key == host._active_mode_key else "mode")
             button.set_embedded_action("x", lambda slot=index: self.finish_delete_custom(slot))
             button.show()
         host.save_quick_mode_button.setToolTip(host._tr("mode.save_current"))

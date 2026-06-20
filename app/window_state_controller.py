@@ -6,12 +6,16 @@ from typing import Protocol
 
 from PySide6.QtWidgets import QApplication
 
-from app.constants import ROOT_MARGINS, WINDOW_CONTENT_MAX_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH
+from app.constants import WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH
+
+# A utility window: never reopen larger than this, even if a maximised size was
+# saved previously.
+STARTUP_MAX_WIDTH = 1440
+STARTUP_MAX_HEIGHT = 960
 
 
 class WindowStateHost(Protocol):
     _settings: dict
-    content_shell: object
 
     def width(self) -> int: ...
 
@@ -32,20 +36,17 @@ class WindowStateController:
     def __init__(self, host: WindowStateHost) -> None:
         self._host = host
 
-    def sync_content_shell_width(self) -> None:
-        host = self._host
-        if host.content_shell is None:
-            return
-        available_width = max(0, host.width() - ROOT_MARGINS[0] - ROOT_MARGINS[2])
-        desired_width = min(WINDOW_CONTENT_MAX_WIDTH, available_width)
-        host.content_shell.setFixedWidth(max(0, desired_width))
-
     def restore_startup_size(self) -> None:
         host = self._host
         screen = host.screen() or QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else None
         requested_width = int(host._settings.get("window_width", 1320))
         requested_height = int(host._settings.get("window_height", 860))
+        # Sane ceiling so a previously-maximised (huge) saved size doesn't reopen
+        # as a giant window with the content floating in empty space. This is a
+        # utility, not a full-screen app.
+        requested_width = min(requested_width, STARTUP_MAX_WIDTH)
+        requested_height = min(requested_height, STARTUP_MAX_HEIGHT)
         if available is None:
             host.resize(requested_width, requested_height)
             return

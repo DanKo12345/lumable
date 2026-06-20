@@ -10,11 +10,11 @@ from app.widgets import GlassCard
 
 def build_diagnostics_section(host: PanelHost) -> GlassCard:
     host.diagnostics_card = host._card(host._tr("diagnostics.title"), host._tr("diagnostics.subtitle"), icon="diagnostics")
-    host.diagnostics_card.setMinimumHeight(250)
+    host.diagnostics_card.setMinimumHeight(host._sz(250))
     host.diagnostics_output = QTextEdit()
     host.diagnostics_output.setObjectName("diagnosticsOutput")
     host.diagnostics_output.setReadOnly(True)
-    host.diagnostics_output.setMinimumHeight(200)
+    host.diagnostics_output.setMinimumHeight(host._sz(200))
     host.diagnostics_output.verticalScrollBar().setSingleStep(18)
     host.diagnostics_card.content_layout.addWidget(host.diagnostics_output)
     host.diagnostics_support_label = QLabel(host._tr("diagnostics.support_hint"))

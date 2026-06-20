@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
+from app.localization import localization_manager
 from app.theme import qcolor_from_token, theme_manager
 from app.widgets.color_swatch import paint_color_tile
 
@@ -72,18 +73,44 @@ class ProfileListDelegate(QStyledItemDelegate):
 
         action_width = (self.ACTION_SIZE * 2 + self.ACTION_GAP + 8) if selected else 0
         text_rect = row.adjusted(18.0, 0.0, -(58.0 + action_width), 0.0)
+        profile = index.data(Qt.UserRole) or {}
+
+        # Name (top line)
         font = QFont(option.font)
         font.setWeight(QFont.Weight.DemiBold if selected else QFont.Weight.Medium)
         painter.setFont(font)
         painter.setPen(qcolor_from_token(palette["text"]))
-        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, index.data(Qt.DisplayRole) or "")
+        name_rect = QRectF(text_rect.left(), row.top() + 5.0, text_rect.width(), 20.0)
+        painter.drawText(name_rect, Qt.AlignVCenter | Qt.AlignLeft, index.data(Qt.DisplayRole) or "")
 
-        profile = index.data(Qt.UserRole) or {}
+        # Subtitle (RGB · brightness · mode) — makes a profile read as a saved scene.
+        subtitle = self._profile_subtitle(profile)
+        if subtitle:
+            sub_font = QFont(option.font)
+            sub_font.setPointSizeF(max(7.5, option.font.pointSizeF() - 1.5))
+            painter.setFont(sub_font)
+            painter.setPen(qcolor_from_token(palette["muted"]))
+            sub_rect = QRectF(text_rect.left(), row.top() + 24.0, text_rect.width(), 16.0)
+            painter.drawText(sub_rect, Qt.AlignVCenter | Qt.AlignLeft, subtitle)
+
         self._paint_color_tile(painter, row, profile, selected)
         if selected:
             self._paint_action_icon(painter, self.action_rect(option, "rename"), "pencil", self._is_action_hovered(index, "rename"))
             self._paint_action_icon(painter, self.action_rect(option, "delete"), "trash-2", self._is_action_hovered(index, "delete"))
         painter.restore()
+
+    def _profile_subtitle(self, profile: dict) -> str:
+        color = profile.get("color", {}) or {}
+        try:
+            r = int(color.get("r", 0))
+            g = int(color.get("g", 0))
+            b = int(color.get("b", 0))
+            brightness = int(profile.get("brightness", 100) or 0)
+            effect_code = int(profile.get("effect_code", 0) or 0)
+        except (TypeError, ValueError):
+            return ""
+        mode_key = "profile.mode_static" if effect_code == 0 else "profile.mode_effect"
+        return f"RGB {r}, {g}, {b} · {brightness}% · {localization_manager.t(mode_key)}"
 
     def _is_action_hovered(self, index, action: str) -> bool:
         view = self.parent()

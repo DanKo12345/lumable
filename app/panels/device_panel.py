@@ -10,7 +10,6 @@ from app.constants import (
     ROW_SPACING_TIGHT,
     ROW_TOP_MARGIN,
     SCAN_BUTTON_MIN_WIDTH,
-    STATUS_MIN_WIDTH,
 )
 from app.panels.types import PanelHost
 from app.widgets import GlassCard, StaticPopupComboBox
@@ -18,7 +17,7 @@ from app.widgets import GlassCard, StaticPopupComboBox
 
 def build_device_section(host: PanelHost) -> GlassCard:
     host.device_card = host._card(host._tr("device.title"), host._tr("device.subtitle"), icon="device")
-    host.device_card.setMinimumHeight(162)
+    host.device_card.setMinimumHeight(host._sz(162))
     host.device_card.content_layout.setContentsMargins(0, DEVICE_CONTENT_TOP_MARGIN, 0, 0)
 
     row = QHBoxLayout()
@@ -49,18 +48,12 @@ def build_device_section(host: PanelHost) -> GlassCard:
     row2 = QHBoxLayout()
     row2.setSpacing(ROW_SPACING_TIGHT)
     row2.setContentsMargins(0, ROW_TOP_MARGIN, 0, 0)
-    host.device_status = QLabel(host._tr("device.status.not_connected"))
-    host.device_status.setObjectName("statusChip")
-    host.device_status.setAlignment(Qt.AlignCenter)
-    host.device_status.setFixedHeight(host._control_height)
-    host.device_status.setMinimumHeight(host._chip_height)
-    host.device_status.setMinimumWidth(STATUS_MIN_WIDTH)
+    # device_status now lives in the persistent top region.
     host.connect_button = host._button(host._tr("device.connect"), "ghost")
     host.disconnect_button = host._button(host._tr("device.disconnect"), "ghost")
     host.logs_toggle_button = host._button(host._tr("device.show_logs"), "ghost")
     for button in (host.connect_button, host.disconnect_button, host.logs_toggle_button):
         button.setMinimumWidth(DEVICE_ACTION_MIN_WIDTH)
-    row2.addWidget(host.device_status, 0)
     row2.addStretch(1)
     row2.addWidget(host.connect_button)
     row2.addWidget(host.disconnect_button)

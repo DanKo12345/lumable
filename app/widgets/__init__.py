@@ -18,6 +18,7 @@ from .smooth_scroll_filter import SmoothScrollFilter
 from .static_popup_combo_box import StaticPopupComboBox
 from .theme_toggle_button import ThemeToggleButton
 from .time_button import TimeButton
+from .update_overlay import UpdateOverlay
 from .value_chip import ValueChip
 
 __all__ = [
@@ -42,5 +43,6 @@ __all__ = [
     "StaticPopupComboBox",
     "ThemeToggleButton",
     "TimeButton",
+    "UpdateOverlay",
     "ValueChip",
 ]

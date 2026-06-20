@@ -3,13 +3,13 @@ from __future__ import annotations
 from PySide6.QtGui import QColor
 
 DARK = {
-    "window_start": "#09112b",
-    "window_end": "#0d1136",
-    "surface": "rgba(22, 31, 63, 0.78)",
-    "surface_soft": "rgba(56, 76, 132, 0.52)",
-    "surface_strong": "rgba(14, 20, 42, 0.74)",
-    "surface_border": "rgba(255, 255, 255, 0.22)",
-    "surface_line": "rgba(255, 255, 255, 0.16)",
+    "window_start": "#0a0b10",
+    "window_end": "#0d0e15",
+    "surface": "rgba(28, 31, 41, 0.94)",
+    "surface_soft": "rgba(40, 44, 55, 0.66)",
+    "surface_strong": "rgba(18, 20, 28, 0.94)",
+    "surface_border": "rgba(255, 255, 255, 0.10)",
+    "surface_line": "rgba(255, 255, 255, 0.12)",
     "text": "#f6f8ff",
     "text_soft": "rgba(232, 238, 255, 0.82)",
     "muted": "rgba(214, 224, 255, 0.58)",
@@ -84,6 +84,9 @@ class ThemeManager:
     def __init__(self) -> None:
         self._is_dark = True
         self._accent_override: QColor | None = None
+        # Current LED strip colour, shared so widgets (e.g. the power button)
+        # can tint themselves to "the light you control". None = no colour yet.
+        self.led_glow: QColor | None = None
 
     @property
     def is_dark(self) -> bool:

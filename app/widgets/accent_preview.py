@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QLabel, QSizePolicy, QVBoxLayout
 
 from app.localization import localization_manager
 from app.theme import theme_manager
@@ -15,14 +15,20 @@ class AccentPreview(QFrame):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self._color = QColor(88, 182, 255)
         self._brightness = 100
-        self.setMinimumHeight(128)
+        self.setMinimumHeight(140)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 14)
         layout.setSpacing(10)
         self.swatch = QFrame()
         self.swatch.setObjectName("previewSwatch")
-        self.swatch.setMinimumHeight(72)
+        self.swatch.setMinimumHeight(86)
+        # Coloured glow beneath the swatch — makes it read as real light. Its
+        # strength tracks brightness, so a dim strip glows softly without the
+        # colour itself going dark (the colour stays recognisable at any %).
+        self._glow = QGraphicsDropShadowEffect(self)
+        self._glow.setOffset(0, 6)
+        self.swatch.setGraphicsEffect(self._glow)
         layout.addWidget(self.swatch)
         self.info_label = QLabel()
         self.info_label.setObjectName("previewInfo")
@@ -44,22 +50,23 @@ class AccentPreview(QFrame):
         self._refresh()
 
     def _refresh(self):
-        factor = self._brightness / 100
-        display = QColor(
-            round(self._color.red() * factor),
-            round(self._color.green() * factor),
-            round(self._color.blue() * factor),
-        )
-        if self._brightness >= 99:
-            top = display.lighter(108)
-            bottom = display
-        else:
-            top = display.lighter(112)
-            bottom = display.darker(102)
+        # Show the pure colour (NOT multiplied by brightness) so it's always
+        # recognisable; brightness is conveyed by the glow + the readout text.
+        color = QColor(self._color)
+        top = color.lighter(116)
+        bottom = color.darker(106)
         border = "rgba(255,255,255,0.22)" if theme_manager.is_dark else "rgba(80,110,180,0.35)"
         self.swatch.setStyleSheet(
-            f"QFrame#previewSwatch {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {top.name()}, stop:1 {bottom.name()}); border: 1px solid {border}; border-radius: 20px; }}"
+            "QFrame#previewSwatch { "
+            f"background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            f"stop:0 {top.name()}, stop:0.5 {color.name()}, stop:1 {bottom.name()}); "
+            f"border: 1px solid {border}; border-radius: 20px; }}"
         )
+        glow = QColor(color)
+        glow.setAlpha(int(70 + self._brightness * 1.6))  # brighter strip → stronger glow
+        self._glow.setColor(glow)
+        self._glow.setBlurRadius(28 + self._brightness * 0.22)
+
         self.info_label.setText(
             localization_manager.t(
                 "preview.rgb",

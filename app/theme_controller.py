@@ -34,7 +34,7 @@ class ThemeController:
         return hour >= 19 or hour < 7
 
     def theme_stylesheet(self) -> str:
-        return build_theme_stylesheet(self._host._theme_tokens)
+        return build_theme_stylesheet(self._host._theme_tokens, getattr(self._host, "_ui_scale", 1.0))
 
     def sync_theme_button(self) -> None:
         labels = {
@@ -89,7 +89,9 @@ class ThemeController:
             self._host._aurora.set_capture_compatibility(bool(self._host._settings.get("capture_compatibility", True)))
         app = QApplication.instance()
         if app:
-            app.setFont(QFont("Segoe UI Variable Text", 10))
+            base_font = QFont("Segoe UI Variable Text")
+            base_font.setPointSizeF(10.0 * getattr(self._host, "_ui_scale", 1.0))
+            app.setFont(base_font)
             # Tooltips are top-level popups, so their style must live on the app,
             # not the main window — otherwise they fall back to the OS default.
             # Only re-apply when it actually changes (it depends on the theme, not
@@ -113,7 +115,10 @@ class ThemeController:
 
     def toggle_theme(self) -> None:
         snapshot = self._host.grab()
-        order = ("dark", "light", "auto")
+        # auto → light → dark → auto: from the default "auto" a single click shows
+        # the light theme (clicking to "dark" first looked like nothing happened
+        # when the system was already dark).
+        order = ("auto", "light", "dark")
         current_index = order.index(self._host._theme_mode) if self._host._theme_mode in order else 0
         self._host._theme_mode = order[(current_index + 1) % len(order)]
         self._host._is_dark = self.resolve_dark_from_mode(self._host._theme_mode)

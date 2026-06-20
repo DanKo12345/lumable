@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt
@@ -22,12 +23,21 @@ class UiFeedback:
         self._theme_provider = theme_provider
         self._translate = translate
         self._raw_log_messages: list[str] = []
+        self._last_error_message = ""
+        self._last_error_time = 0.0
 
     def show_error(self, message: str) -> None:
         theme = self._theme_provider()
         message = localization_manager.normalize_error_message(message).strip()
         if not message:
             message = self._translate("error.unknown")
+        # De-dupe: don't spam an identical modal (e.g. "connect first" fired on
+        # every action while disconnected). The error is still logged separately.
+        now = time.monotonic()
+        if message == self._last_error_message and (now - self._last_error_time) < 2.5:
+            return
+        self._last_error_message = message
+        self._last_error_time = now
         parent_width = max(520, self._parent.width() if self._parent is not None else 640)
         dialog_width = min(620, max(460, parent_width - 80))
         label_width = max(340, dialog_width - 80)

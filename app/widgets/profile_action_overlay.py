@@ -26,8 +26,8 @@ class _ProfileActionPanel(QFrame):
 
         fill = QLinearGradient(rect.topLeft(), rect.bottomRight())
         if theme_manager.is_dark:
-            fill.setColorAt(0.0, QColor(43, 60, 108, 248))
-            fill.setColorAt(1.0, QColor(15, 22, 52, 252))
+            fill.setColorAt(0.0, QColor(34, 38, 50, 250))
+            fill.setColorAt(1.0, QColor(18, 20, 28, 252))
         else:
             fill.setColorAt(0.0, QColor(250, 252, 255, 252))
             fill.setColorAt(1.0, QColor(222, 235, 255, 252))

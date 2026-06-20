@@ -9,7 +9,7 @@ from app.app_info import APP_AUTHOR, APP_CHECKOUT_URL, APP_VERSION
 from app.feature_gate import invalidate_pro_cache, is_pro
 from app.license import activate_license_key, deactivate_license
 from app.storage import save_settings
-from app.widgets import AboutOverlay, LicenseOverlay
+from app.widgets import AboutOverlay, LicenseOverlay, UpdateOverlay
 
 
 class OverlayController:
@@ -17,6 +17,24 @@ class OverlayController:
         self._host = host
         self._about_overlay: AboutOverlay | None = None
         self._license_overlay: LicenseOverlay | None = None
+        self._update_overlay: UpdateOverlay | None = None
+
+    def show_update(self, info) -> None:
+        host = self._host
+        if self._update_overlay is not None:
+            self._update_overlay.raise_()
+            return
+        labels = {
+            "title": host._tr("updates.popup_title"),
+            "body": host._tr("updates.popup_body", current=info.current_version, latest=info.latest_version),
+            "update": host._tr("updates.popup_now"),
+            "later": host._tr("updates.popup_later"),
+        }
+        overlay = UpdateOverlay(labels, host)
+        self._update_overlay = overlay
+        overlay.update_requested.connect(host._update_controller.open_update_page)
+        overlay.closed.connect(lambda: setattr(self, "_update_overlay", None))
+        overlay.open()
 
     def show_about(self) -> None:
         host = self._host

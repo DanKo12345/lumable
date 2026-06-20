@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
 )
 
+from app.ambient_ui_controller import AmbientUiController
 from app.app_info import APP_ORGANIZATION, APP_RELEASES_URL, APP_UPDATE_URL, APP_VERSION
 from app.ble import BleController
 from app.ble_event_handler import BleEventHandler
@@ -35,6 +36,7 @@ from app.license_refresh import LicenseRefresher
 from app.localization import localization_manager
 from app.main_layout import build_main_layout
 from app.overlay_controller import OverlayController
+from app.performance import resolve_ui_fps
 from app.profile_actions import ProfileActions
 from app.profile_controller import ProfileController
 from app.quick_mode_controller import QuickModeController
@@ -46,6 +48,7 @@ from app.theme_controller import ThemeController
 from app.tray_controller import TrayController
 from app.ui_feedback import UiFeedback
 from app.ui_localization_controller import UiLocalizationController
+from app.ui_scale import resolve_ui_scale
 from app.update_checker import UpdateResult
 from app.update_controller import UpdateController
 from app.widgets import (
@@ -77,6 +80,7 @@ class MainWindow(QMainWindow):
         self._init_timers()
         self._build_ui()
         self._theme_controller.apply_theme()
+        self._apply_ui_fps()
         self._wire_events()
         self._load_initial_state()
         self._tray_controller.setup()
@@ -90,10 +94,15 @@ class MainWindow(QMainWindow):
         self._start_deferred(900, self._license_refresher.refresh)
         self._start_deferred(1600, self._update_controller.check_silent)
 
+    def _sz(self, value: float) -> int:
+        """Scale a base pixel size by the current UI-density factor."""
+        return max(1, round(value * getattr(self, "_ui_scale", 1.0)))
+
     def _init_state(self) -> None:
         """Initialise plain data attributes before any controller is created."""
-        self._control_height = CONTROL_HEIGHT
-        self._chip_height = CHIP_HEIGHT
+        self._ui_scale = resolve_ui_scale(QApplication.primaryScreen())
+        self._control_height = self._sz(CONTROL_HEIGHT)
+        self._chip_height = self._sz(CHIP_HEIGHT)
         self._settings = load_settings()
         self._theme_mode = self._settings.get("theme_mode") or self._settings.get("theme", "dark")
         self._language = self._settings.get("language", "ru")
@@ -121,7 +130,6 @@ class MainWindow(QMainWindow):
         self._custom_quick_overlay = None
         self._logs_overlay: LogsOverlay | None = None
         # Widget refs set later by _build_ui / build_main_layout
-        self.content_shell = None
         self.diagnostics_output = None
         self._ui_feedback = None
         self._buttons: list[LiquidButton] = []
@@ -144,6 +152,7 @@ class MainWindow(QMainWindow):
         self._ui_localization = UiLocalizationController(self)
         self._schedule_ctrl = ScheduleController(self)
         self._quick_mode_ctrl = QuickModeController(self)
+        self._ambient_ui = AmbientUiController(self)
         self._window_state = WindowStateController(self)
         self._license_refresher = LicenseRefresher(self)
         self._license_refresher.finished.connect(self._on_license_refreshed)
@@ -176,6 +185,13 @@ class MainWindow(QMainWindow):
         self._connection_status_timer.setInterval(450)
         self._connection_status_timer.timeout.connect(self._tick_connection_status_animation)
 
+        # Re-resolve "auto" UI fps periodically so unplugging the laptop drops to
+        # the battery-friendly rate (and plugging in restores the smooth rate).
+        self._ui_fps_timer = QTimer(self)
+        self._ui_fps_timer.setInterval(20_000)
+        self._ui_fps_timer.timeout.connect(self._apply_ui_fps)
+        self._ui_fps_timer.start()
+
     def _tr(self, key: str, **kwargs) -> str:
         return localization_manager.t(key, **kwargs)
 
@@ -200,16 +216,15 @@ class MainWindow(QMainWindow):
         self.log_output.hide()
         self._ui_feedback = UiFeedback(self, self.log_output, lambda: self._theme_tokens, self._tr)
         self.setCentralWidget(root)
-        self._window_state.sync_content_shell_width()
-
-    def _sync_content_shell_width(self):
-        self._window_state.sync_content_shell_width()
 
     def _apply_localized_texts(self):
         self._ui_localization.apply_texts()
 
     def _show_about_overlay(self) -> None:
         self._overlay_controller.show_about()
+
+    def _show_update_overlay(self, info) -> None:
+        self._overlay_controller.show_update(info)
 
     def _show_license_overlay(self) -> None:
         self._overlay_controller.show_license()
@@ -259,19 +274,21 @@ class MainWindow(QMainWindow):
     def _button(self, text: str, role: str) -> LiquidButton:
         button = LiquidButton(text, role)
         font = button.font()
-        font.setPointSize(11)
+        font.setPointSizeF(11.0 * self._ui_scale)
         font.setWeight(QFont.Weight.DemiBold)
         button.setFont(font)
         self._buttons.append(button)
         return button
 
     def _slider(self, accent: str) -> LiquidSlider:
-        return LiquidSlider(accent)
+        slider = LiquidSlider(accent)
+        slider.set_render_scale(self._ui_scale)
+        return slider
 
     def _pill(self, text: str) -> ValueChip:
         label = ValueChip(text)
-        label.setMinimumWidth(68)
-        label.setMinimumHeight(CHIP_HEIGHT)
+        label.setMinimumWidth(self._sz(68))
+        label.setMinimumHeight(self._chip_height)
         return label
 
     def _slider_row(self, name: str, slider: LiquidSlider, value: ValueChip, key: str | None = None):
@@ -280,7 +297,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(*SLIDER_ROW_MARGINS)
         label = QLabel(name)
         label.setObjectName("sliderLabel")
-        label.setFixedWidth(SLIDER_LABEL_WIDTH)
+        label.setFixedWidth(self._sz(SLIDER_LABEL_WIDTH))
         label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         if key is not None:
             self._slider_labels[key] = label
@@ -304,6 +321,7 @@ class MainWindow(QMainWindow):
         self._wire_update_events()
         self._wire_diagnostics_events()
         self._wire_schedule_events()
+        self._ambient_ui.wire()
         self._wire_shortcuts()
 
     def _wire_device_events(self):
@@ -327,6 +345,21 @@ class MainWindow(QMainWindow):
     def _wire_theme_events(self):
         self.theme_button.clicked.connect(self._theme_controller.toggle_theme)
         self.language_combo.currentIndexChanged.connect(self._change_language)
+        self.performance_combo.currentIndexChanged.connect(self._change_performance)
+
+    def _apply_ui_fps(self) -> None:
+        fps = resolve_ui_fps(self._settings.get("ui_fps", "auto"))
+        self._aurora.set_target_fps(fps)
+        if self.effect_preview is not None:
+            self.effect_preview.set_target_fps(fps)
+
+    def _change_performance(self):
+        mode = self.performance_combo.currentData()
+        if not mode:
+            return
+        self._settings["ui_fps"] = str(mode)
+        save_settings(self._settings)
+        self._apply_ui_fps()
 
     def _wire_color_events(self):
         self.pick_color_button.clicked.connect(self._pick_color)
@@ -441,7 +474,6 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._sync_content_shell_width()
         self._aurora.setGeometry(0, 0, self.width(), self.height())
 
     def _apply_windows_backdrop(self):
@@ -456,7 +488,9 @@ class MainWindow(QMainWindow):
     def _sync_aurora_accent(self, *, enabled: bool | None = None) -> None:
         color = self._current_color()
         active = self.power_button.isChecked() if enabled is None else bool(enabled)
+        theme_manager.led_glow = QColor(color)
         self._aurora.set_accent_color(color.red(), color.green(), color.blue(), enabled=active)
+        self.power_button.update()
 
     def _color_history(self) -> list[dict[str, int]]:
         history = self._settings.get("color_history", [])
@@ -465,6 +499,8 @@ class MainWindow(QMainWindow):
     def _refresh_color_history(self) -> None:
         visible_limit = PRO_COLOR_HISTORY_COUNT if can_use("color_history_full") else FREE_COLOR_HISTORY_COUNT
         history = self._color_history()[:visible_limit]
+        # Hide the "Recent" label when there's nothing yet (no empty row on top).
+        self.color_history_label.setVisible(len(history) > 0)
         for index, button in enumerate(self.color_history_buttons):
             if index >= len(history):
                 button.hide()
@@ -573,7 +609,13 @@ class MainWindow(QMainWindow):
         self._apply_local_color_state(self._current_color())
 
     def _apply_local_color_state(self, color: QColor):
-        self._aurora.set_accent_color(color.red(), color.green(), color.blue(), enabled=self.power_button.isChecked())
+        # Applying a colour always lights the strip (the command is sent even
+        # when the power toggle is "off"), so the Lumen glow must follow the
+        # colour here regardless of the toggle. Only an explicit power-off
+        # (_toggle_power) returns the backdrop to neutral.
+        theme_manager.led_glow = QColor(color)
+        self._aurora.set_accent_color(color.red(), color.green(), color.blue(), enabled=True)
+        self.power_button.update()
         self._remember_current_color()
         if self.effect_combo.currentData() != 0:
             with self._suppress_signals():
@@ -593,6 +635,8 @@ class MainWindow(QMainWindow):
         self._sync_power_button()
         if self._initializing:
             return
+        # Power is a manual override: leave ambient sync if it was running.
+        self._ambient_ui.stop_if_running()
         enabled = self.power_button.isChecked()
         self._ble.set_power(enabled)
         self._sync_aurora_accent(enabled=enabled)
@@ -601,7 +645,9 @@ class MainWindow(QMainWindow):
     def _sync_power_button(self):
         powered_on = self.power_button.isChecked()
         self.power_button.setText(self._tr("color.power_off") if powered_on else self._tr("color.power_on"))
-        self.power_button.set_role("accent_soft" if powered_on else "ghost")
+        # When lit, the main action carries the current strip colour ("your
+        # light"); when the strip is off it falls back to a neutral glass look.
+        self.power_button.set_role("led" if powered_on else "ghost")
 
     def _sync_connect_buttons(self):
         connected = bool(self._is_connected)
@@ -915,6 +961,7 @@ class MainWindow(QMainWindow):
             return
         if self._close_after_ble_shutdown:
             self._tray_controller.hide_icon()
+            self._ambient_ui.shutdown()
             self._shutdown_tooltip_manager()
             super().closeEvent(event)
             app = QApplication.instance()
@@ -942,5 +989,8 @@ def run():
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
     window = MainWindow()
-    window.showMaximized()
+    # Open at a sane windowed size (restore_startup_size sets ~1320x860 centred)
+    # instead of maximised — a maximised window left the content floating in a
+    # huge empty area on wide monitors.
+    window.show()
     sys.exit(app.exec())

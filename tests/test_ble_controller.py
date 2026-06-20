@@ -151,7 +151,7 @@ def test_write_many_remembers_successful_payload_variant() -> None:
     controller._preferred_payload_indices = {}
     calls = []
 
-    async def fake_write(payload: bytes, _description: str) -> None:
+    async def fake_write(payload: bytes, _description: str, **_kwargs) -> None:
         calls.append(payload)
         if payload == b"primary":
             raise RuntimeError("primary failed")
@@ -177,7 +177,7 @@ def test_write_many_does_not_share_cache_between_payload_shapes() -> None:
     controller._preferred_payload_indices = {}
     calls = []
 
-    async def fake_write(payload: bytes, _description: str) -> None:
+    async def fake_write(payload: bytes, _description: str, **_kwargs) -> None:
         calls.append(payload)
         if payload in {bytes.fromhex("7e 00 01 32 00 00 00 00 ef"), bytes.fromhex("7e 00 05 03 01 02 03 00 ef")}:
             raise RuntimeError("primary failed")
@@ -219,7 +219,7 @@ def test_set_effect_with_speed_skips_missing_speed_payload() -> None:
         def speed_payload(self, _value: int) -> bytes | None:
             return None
 
-    async def fake_write(payload: bytes, _description: str) -> None:
+    async def fake_write(payload: bytes, _description: str, **_kwargs) -> None:
         calls.append(payload)
 
     controller._driver = FakeDriver()
@@ -227,7 +227,9 @@ def test_set_effect_with_speed_skips_missing_speed_payload() -> None:
 
     asyncio.run(controller._set_effect_with_speed(0x25, 60))
 
-    assert calls == [b"effect"]
+    # Effect is sent then re-sent once (BLEDOM switch-reliability nudge); no
+    # speed command because speed_payload returns None.
+    assert calls == [b"effect", b"effect"]
 
 
 def test_set_effect_with_speed_uses_combined_effect_payload() -> None:
@@ -245,7 +247,7 @@ def test_set_effect_with_speed_uses_combined_effect_payload() -> None:
         def speed_payload(self, _value: int) -> bytes | None:
             return None
 
-    async def fake_write(payload: bytes, _description: str) -> None:
+    async def fake_write(payload: bytes, _description: str, **_kwargs) -> None:
         calls.append(payload)
 
     controller._driver = FakeDriver()
@@ -272,7 +274,7 @@ def test_set_effect_speed_reuses_current_combined_effect_payload() -> None:
         def speed_payload(self, _value: int) -> bytes | None:
             return None
 
-    async def fake_write(payload: bytes, _description: str) -> None:
+    async def fake_write(payload: bytes, _description: str, **_kwargs) -> None:
         calls.append(payload)
 
     controller._driver = FakeDriver()
@@ -291,7 +293,7 @@ def test_bledom_write_many_stops_after_primary_payload_success() -> None:
     controller._driver = BledomDriver()
     calls = []
 
-    async def fake_write(payload: bytes, _description: str) -> None:
+    async def fake_write(payload: bytes, _description: str, **_kwargs) -> None:
         calls.append(payload)
 
     controller._write = fake_write
@@ -311,7 +313,7 @@ def test_bledom_write_many_remembers_alt_payload_when_primary_fails() -> None:
     primary = bytes.fromhex("7e 00 04 f0 00 01 ff 00 ef")
     alt = bytes.fromhex("cc 23 33")
 
-    async def fake_write(payload: bytes, _description: str) -> None:
+    async def fake_write(payload: bytes, _description: str, **_kwargs) -> None:
         calls.append(payload)
         if payload == primary:
             raise RuntimeError("primary failed")
@@ -332,7 +334,7 @@ def test_bledom_driver_variant_is_remembered_after_successful_write_many() -> No
     controller._preferred_payload_indices = {}
     controller._driver = BledomDriver()
 
-    async def fake_write(_payload: bytes, _description: str) -> None:
+    async def fake_write(_payload: bytes, _description: str, **_kwargs) -> None:
         return None
 
     controller._write = fake_write
@@ -427,7 +429,7 @@ def test_write_many_raises_protocol_compatibility_error_after_all_variants_fail(
         def emit(self, message: str) -> None:
             emitted.append(message)
 
-    async def fake_write(_payload: bytes, _description: str) -> None:
+    async def fake_write(_payload: bytes, _description: str, **_kwargs) -> None:
         raise ProtocolCompatibilityError("nope")
 
     controller._driver = FakeDriver()
@@ -563,7 +565,7 @@ def test_write_many_preserves_connection_lost_error() -> None:
     class FakeDriver:
         id = "fake"
 
-    async def fake_write(_payload: bytes, _description: str) -> None:
+    async def fake_write(_payload: bytes, _description: str, **_kwargs) -> None:
         raise ConnectionLostError("BLE connection was lost. Reconnecting to the last controller...")
 
     controller._driver = FakeDriver()

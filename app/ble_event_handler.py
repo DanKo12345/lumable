@@ -130,6 +130,19 @@ class BleEventHandler:
         host._is_connected = connected
         host._connect_in_progress = False
         host.device_status.setText(host._tr("device.status.connected") if connected else host._tr("device.status.not_connected"))
+        dot = getattr(host, "device_status_dot", None)
+        if dot is not None:
+            dot_color = "#46d39a" if connected else "rgba(255, 255, 255, 0.30)"
+            dot.setStyleSheet(f"background: {dot_color}; border-radius: {max(2, dot.width() // 2)}px;")
+        hint = getattr(host, "device_status_hint", None)
+        if hint is not None:
+            if connected:
+                name = self._device_name_for_address(address) or address or ""
+                hint.setText(name)
+                hint.setVisible(bool(name))
+            else:
+                hint.setText(host._tr("device.connect_hint"))
+                hint.setVisible(True)
         sync_power_button = getattr(host, "_sync_power_button", None)
         if callable(sync_power_button):
             sync_power_button()

@@ -1,18 +1,35 @@
 from __future__ import annotations
 
+import re
+
 from app.theme import qcolor_from_token
 
+_PX_RE = re.compile(r"(\d+)px")
 
-def build_theme_stylesheet(tokens: dict[str, str]) -> str:
+
+def _scale_px(css: str, scale: float) -> str:
+    """Scale every ``<n>px`` size in the stylesheet by ``scale`` (min 1px).
+
+    This uniformly shrinks/grows fonts, paddings, radii and min/max sizes for the
+    UI-density feature without parameterising each literal. Colours (rgba/#hex)
+    and relative units (em) have no ``px`` suffix and are left untouched.
+    """
+    if abs(scale - 1.0) < 0.005:
+        return css
+    return _PX_RE.sub(lambda m: f"{max(1, round(int(m.group(1)) * scale))}px", css)
+
+
+def build_theme_stylesheet(tokens: dict[str, str], scale: float = 1.0) -> str:
     T = tokens
     is_dark = qcolor_from_token(T["text"]).lightness() > 180
-    return "".join([
+    css = "".join([
         _base_styles(T),
         _hero_styles(T, is_dark),
         _card_styles(T),
         _form_styles(T, is_dark),
         _scrollbar_styles(T, is_dark),
     ])
+    return _scale_px(css, scale)
 
 
 # ── base ──────────────────────────────────────────────────────────────

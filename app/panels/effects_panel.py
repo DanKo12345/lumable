@@ -11,7 +11,7 @@ from app.widgets import EffectPreviewStrip, GlassCard, StaticPopupComboBox
 
 def build_effects_section(host: PanelHost) -> GlassCard:
     host.effects_card = host._card(host._tr("effects.title"), host._tr("effects.subtitle"), icon="effects")
-    host.effects_card.setMinimumHeight(260)
+    host.effects_card.setMinimumHeight(host._sz(260))
     host.effects_card.content_layout.setContentsMargins(0, EFFECTS_CONTENT_TOP_MARGIN, 0, 0)
     host.effect_combo = StaticPopupComboBox(lambda: host._theme_tokens, lambda: host._is_dark)
     host.effect_combo.setMinimumHeight(host._control_height)
