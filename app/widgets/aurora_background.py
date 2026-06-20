@@ -36,10 +36,15 @@ class AuroraBackground(QWidget):
         self._phase_speed = 0.32
         # ~30 fps is plenty for this slow ambient motion. The old 12 ms (~83 fps)
         # only burned CPU/battery and rendered frames most 60 Hz displays drop.
-        self._frame_interval_ms = self.ACTIVE_INTERVAL_MS
+        self._active_interval_ms = self.ACTIVE_INTERVAL_MS
+        self._frame_interval_ms = self._active_interval_ms
         self._inactive_skip = 0
         self._capture_compatibility = False
-        self._accent = QColor(0, 0, 0, 0)
+        # "Lumen": the strip colour becomes the dominant ambient light. We keep
+        # the full-strength rgb plus an enabled flag and build a breathing glow
+        # in paintEvent so the whole window washes with the colour you control.
+        self._accent_enabled = False
+        self._accent_rgb = (120, 150, 255)
         self._elapsed = QElapsedTimer()
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.PreciseTimer)
@@ -55,9 +60,17 @@ class AuroraBackground(QWidget):
 
     def set_capture_compatibility(self, enabled: bool) -> None:
         self._capture_compatibility = bool(enabled)
-        self._frame_interval_ms = self.CAPTURE_INTERVAL_MS if self._capture_compatibility else self.ACTIVE_INTERVAL_MS
+        self._frame_interval_ms = self.CAPTURE_INTERVAL_MS if self._capture_compatibility else self._active_interval_ms
         self._timer.setInterval(self._frame_interval_ms)
         self.update()
+
+    def set_target_fps(self, fps: int) -> None:
+        """Set the animation frame rate (ignored while in capture-compat mode)."""
+        fps = max(15, min(144, int(fps)))
+        self._active_interval_ms = max(7, round(1000.0 / fps))
+        if not self._capture_compatibility:
+            self._frame_interval_ms = self._active_interval_ms
+            self._timer.setInterval(self._frame_interval_ms)
 
     def set_accent_color(self, r: int, g: int, b: int, *, enabled: bool = True) -> None:
         """
@@ -67,13 +80,13 @@ class AuroraBackground(QWidget):
         strip is powered off to return to the neutral backdrop.
         """
         if not enabled:
-            self._accent = QColor(0, 0, 0, 0)
+            self._accent_enabled = False
         else:
-            self._accent = QColor(
+            self._accent_enabled = True
+            self._accent_rgb = (
                 max(0, min(255, int(r))),
                 max(0, min(255, int(g))),
                 max(0, min(255, int(b))),
-                38,
             )
         self.update()
 
@@ -114,74 +127,42 @@ class AuroraBackground(QWidget):
         h = self.height()
         palette = theme_manager.palette
 
-        start_color = qcolor_from_token(palette["window_start"])
-        end_color = qcolor_from_token(palette["window_end"])
-
-        base = QLinearGradient(0, 0, w, h)
         if self._dark:
-            swap = (math.sin(self._phase * 0.26) + 1.0) * 0.5
-            center = (math.cos(self._phase * 0.33 + 0.8) + 1.0) * 0.5
-            left_color = mix_colors(start_color, end_color, swap * 0.38)
-            right_color = mix_colors(end_color, start_color, swap * 0.38)
-            center_color = mix_colors(left_color, right_color, 0.5 + (center - 0.5) * 0.4)
-            base.setColorAt(0.0, left_color)
-            base.setColorAt(0.52, center_color)
-            base.setColorAt(1.0, right_color)
+            # Premium near-black canvas: almost black in the centre so the
+            # interface and the LED colour pop, with only a faint dye at the edges.
+            base = QLinearGradient(0, 0, 0, h)
+            base.setColorAt(0.0, QColor(14, 16, 24))
+            base.setColorAt(0.55, QColor(9, 10, 16))
+            base.setColorAt(1.0, QColor(6, 7, 11))
+            painter.fillRect(self.rect(), base)
         else:
+            start_color = qcolor_from_token(palette["window_start"])
+            end_color = qcolor_from_token(palette["window_end"])
             swap = (math.sin(self._phase * 0.22) + 1.0) * 0.5
             center = (math.cos(self._phase * 0.28 + 0.65) + 1.0) * 0.5
             left_color = mix_colors(start_color, end_color, swap * 0.18)
             right_color = mix_colors(end_color, start_color, swap * 0.18)
             center_color = mix_colors(left_color, right_color, 0.5 + (center - 0.5) * 0.22)
+            base = QLinearGradient(0, 0, w, h)
             base.setColorAt(0.0, left_color)
             base.setColorAt(0.52, center_color)
             base.setColorAt(1.0, right_color)
-        painter.fillRect(self.rect(), base)
+            painter.fillRect(self.rect(), base)
 
-        # Let the dark backdrop "breathe" with the same palette instead of
-        # introducing new hues. Keep it visible enough to read as motion,
-        # but still premium and slow.
         if self._dark:
-            pulse = (math.sin(self._phase * 0.58) + 1.0) * 0.5
-            drift = (math.cos(self._phase * 0.44 + 0.7) + 1.0) * 0.5
-            sweep = (math.sin(self._phase * 0.34 + 1.1) + 1.0) * 0.5
+            # Two faint corner glows over the near-black base — slow, subtle,
+            # never a full-screen wash of colour.
+            drift = (math.cos(self._phase * 0.30) + 1.0) * 0.5
+            pulse = (math.sin(self._phase * 0.40) + 1.0) * 0.5
+            top_left = QRadialGradient(w * (0.12 + drift * 0.05), 0.0, max(w, h) * 0.72)
+            top_left.setColorAt(0.0, QColor(104, 92, 214, int(22 + pulse * 8)))
+            top_left.setColorAt(1.0, QColor(104, 92, 214, 0))
+            painter.fillRect(self.rect(), top_left)
 
-            wave = QLinearGradient(
-                w * (0.04 + sweep * 0.08),
-                h * (0.10 + drift * 0.08),
-                w * (0.96 - sweep * 0.06),
-                h * (0.92 - drift * 0.06),
-            )
-            wave_top = qcolor_from_token(palette["window_start"])
-            wave_bottom = qcolor_from_token(palette["window_end"])
-            wave_top.setAlpha(int(40 + pulse * 22))
-            wave_bottom.setAlpha(int(52 + drift * 22))
-            wave.setColorAt(0.0, wave_top)
-            wave.setColorAt(0.42, QColor(wave_top.red(), wave_top.green(), wave_top.blue(), int(18 + pulse * 10)))
-            wave.setColorAt(1.0, wave_bottom)
-            painter.fillRect(self.rect(), wave)
-
-            veil = QLinearGradient(w * (0.02 + drift * 0.08), 0, w * (0.98 - drift * 0.05), h)
-            veil_left = QColor(255, 255, 255, int(10 + pulse * 10))
-            veil_mid = QColor(160, 190, 255, int(18 + drift * 14))
-            veil_right = QColor(255, 255, 255, 0)
-            veil.setColorAt(0.0, veil_left)
-            veil.setColorAt(0.52, veil_mid)
-            veil.setColorAt(1.0, veil_right)
-            painter.fillRect(self.rect(), veil)
-
-            bloom = QRadialGradient(
-                w * (0.30 + sweep * 0.24),
-                h * (0.34 + pulse * 0.10),
-                max(w, h) * 0.72,
-            )
-            bloom_core = QColor(110, 150, 255, int(18 + pulse * 12))
-            bloom_mid = QColor(86, 118, 210, int(10 + drift * 10))
-            bloom_edge = QColor(86, 118, 210, 0)
-            bloom.setColorAt(0.0, bloom_core)
-            bloom.setColorAt(0.48, bloom_mid)
-            bloom.setColorAt(1.0, bloom_edge)
-            painter.fillRect(self.rect(), bloom)
+            bottom_right = QRadialGradient(w * (0.92 - drift * 0.05), float(h), max(w, h) * 0.68)
+            bottom_right.setColorAt(0.0, QColor(52, 104, 190, int(18 + pulse * 8)))
+            bottom_right.setColorAt(1.0, QColor(52, 104, 190, 0))
+            painter.fillRect(self.rect(), bottom_right)
         else:
             pulse = (math.sin(self._phase * 0.46) + 1.0) * 0.5
             drift = (math.cos(self._phase * 0.34 + 0.55) + 1.0) * 0.5
@@ -227,34 +208,51 @@ class AuroraBackground(QWidget):
             bloom.setColorAt(1.0, bloom_edge)
             painter.fillRect(self.rect(), bloom)
 
-        if self._dark:
-            orbs = [
-                (0.16, 0.14, 0.42, QColor(72, 132, 255, 58)),
-                (0.78, 0.18, 0.28, QColor(124, 90, 255, 46)),
-                (0.52, 0.78, 0.38, QColor(75, 215, 210, 30)),
-            ]
-        else:
+        # Colourful drifting orbs only in the light theme; the dark canvas stays
+        # near-black with the faint corner dye above.
+        if not self._dark:
             orbs = [
                 (0.16, 0.14, 0.42, QColor(80, 140, 255, 70)),
                 (0.78, 0.18, 0.28, QColor(130, 90, 255, 55)),
                 (0.52, 0.78, 0.38, QColor(60, 185, 210, 42)),
             ]
-        for ox, oy, size, color in orbs:
-            cx = (ox + math.sin(self._phase + ox) * 0.03) * w
-            cy = (oy + math.cos(self._phase + oy) * 0.03) * h
-            radius = size * max(w, h)
-            grad = QRadialGradient(cx, cy, radius)
-            grad.setColorAt(0.0, color)
-            edge = QColor(color)
-            edge.setAlpha(0)
-            grad.setColorAt(1.0, edge)
-            painter.fillRect(self.rect(), grad)
+            orb_damp = 0.28 if self._accent_enabled else 1.0
+            for ox, oy, size, color in orbs:
+                cx = (ox + math.sin(self._phase + ox) * 0.03) * w
+                cy = (oy + math.cos(self._phase + oy) * 0.03) * h
+                radius = size * max(w, h)
+                grad = QRadialGradient(cx, cy, radius)
+                core = QColor(color)
+                core.setAlpha(round(color.alpha() * orb_damp))
+                grad.setColorAt(0.0, core)
+                edge = QColor(color)
+                edge.setAlpha(0)
+                grad.setColorAt(1.0, edge)
+                painter.fillRect(self.rect(), grad)
 
-        if self._accent.alpha() > 0:
-            accent_grad = QRadialGradient(self.rect().center(), max(w, h) * 0.7)
-            accent_grad.setColorAt(0.0, self._accent)
-            accent_grad.setColorAt(
-                1.0,
-                QColor(self._accent.red(), self._accent.green(), self._accent.blue(), 0),
+        # ── Lumen glow: the strip colour as a large, slowly breathing light ──
+        if self._accent_enabled:
+            r, g, b = self._accent_rgb
+            pulse = (math.sin(self._phase * 1.5) + 1.0) * 0.5
+            core_alpha = int((32 + pulse * 18) if self._dark else (22 + pulse * 12))
+
+            top = QRadialGradient(
+                w * 0.5,
+                h * (0.02 + pulse * 0.06),
+                max(w, h) * (0.92 + pulse * 0.06),
             )
-            painter.fillRect(self.rect(), accent_grad)
+            top.setColorAt(0.0, QColor(r, g, b, core_alpha))
+            top.setColorAt(0.42, QColor(r, g, b, int(core_alpha * 0.42)))
+            top.setColorAt(1.0, QColor(r, g, b, 0))
+            painter.fillRect(self.rect(), top)
+
+            drift = (math.cos(self._phase * 0.4 + 0.6) + 1.0) * 0.5
+            low = QRadialGradient(
+                w * (0.14 + drift * 0.06),
+                h * (1.02 - drift * 0.05),
+                max(w, h) * 0.62,
+            )
+            low_alpha = int(core_alpha * 0.55)
+            low.setColorAt(0.0, QColor(r, g, b, low_alpha))
+            low.setColorAt(1.0, QColor(r, g, b, 0))
+            painter.fillRect(self.rect(), low)

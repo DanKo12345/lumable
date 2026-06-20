@@ -19,8 +19,14 @@ class UiLocalizationController:
             host._tr("app.edition.pro") if is_pro() else host._tr("app.edition.free"),
             host._tr("app.edition.tooltip"),
         )
+        host.about_button.setText(host._tr("settings.about"))
         host.about_button.setToolTip(host._tr("tray.about"))
+        for nav_key, nav_button in getattr(host, "_nav_buttons", {}).items():
+            nav_button.setText(host._tr(f"nav.{nav_key}"))
+        for label_key, label in getattr(host, "_settings_labels", []):
+            label.setText(host._tr(label_key))
         self.refresh_language_options()
+        self._apply_performance_texts()
         host._refresh_quick_mode_buttons()
 
         self._apply_device_texts()
@@ -28,6 +34,7 @@ class UiLocalizationController:
         self._apply_effect_texts()
         self._apply_config_texts()
         self._apply_schedule_texts()
+        self._apply_ambient_texts()
         self._apply_diagnostics_texts()
 
         host._refresh_diagnostics_view()
@@ -77,6 +84,15 @@ class UiLocalizationController:
         host.device_status.setText(
             host._tr("device.status.connected") if host._is_connected else host._tr("device.status.not_connected")
         )
+        hint = getattr(host, "device_status_hint", None)
+        if hint is not None:
+            if host._is_connected:
+                name = str(host._settings.get("last_device_name") or host._settings.get("last_device_address") or "")
+                hint.setText(name)
+                hint.setVisible(bool(name))
+            else:
+                hint.setText(host._tr("device.connect_hint"))
+                hint.setVisible(True)
         host._ble_events._sync_last_device_hint(autoconnecting=host._connect_in_progress)
         host.logs_toggle_button.setText(host._tr("device.show_logs"))
         host._sync_connect_buttons()
@@ -133,6 +149,60 @@ class UiLocalizationController:
         host.schedule_on_time.set_picker_labels(**time_picker_labels)
         host.schedule_off_time.set_picker_labels(**time_picker_labels)
         host._schedule_ctrl.sync_controls()
+
+    def _apply_performance_texts(self) -> None:
+        host = self._host
+        combo = host.performance_combo
+        current = host._settings.get("ui_fps", "auto") if isinstance(host._settings, dict) else "auto"
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(host._tr("performance.auto"), "auto")
+        for rate in ("30", "60", "120"):
+            combo.addItem(f"{rate} FPS", rate)
+        index = combo.findData(current)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+        combo.setToolTip(host._tr("performance.tooltip"))
+
+    def _apply_ambient_texts(self) -> None:
+        host = self._host
+        host.ambient_card.title_label.setText(host._tr("ambient.title"))
+        if host.ambient_card.subtitle_label is not None:
+            host.ambient_card.subtitle_label.setText(host._tr("ambient.subtitle"))
+        host._set_slider_label_text("ambient.saturation", host._tr("ambient.saturation"))
+        host._set_slider_label_text("ambient.smoothing", host._tr("ambient.smoothing"))
+        running = host._ambient_ui.is_running()
+        host.ambient_toggle_button.setText(host._tr("ambient.toggle_on" if running else "ambient.toggle_off"))
+        if getattr(host, "ambient_lock_label", None) is not None:
+            host.ambient_lock_label.setText(host._tr("ambient.pro_locked"))
+        host._ambient_ui.refresh_lock()
+
+        combo = host.ambient_region_combo
+        current = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        for region in ("full", "center", "bottom", "top"):
+            combo.addItem(host._tr(f"ambient.region.{region}"), region)
+        index = combo.findData(current)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
+        if host.ambient_monitor_combo is not None:
+            from PySide6.QtGui import QGuiApplication
+
+            monitor_combo = host.ambient_monitor_combo
+            selected = monitor_combo.currentData()
+            monitor_combo.blockSignals(True)
+            monitor_combo.clear()
+            for screen_index, screen in enumerate(QGuiApplication.screens()):
+                geometry = screen.geometry()
+                monitor_combo.addItem(
+                    f"{host._tr('ambient.monitor')} {screen_index + 1} ({geometry.width()}×{geometry.height()})",
+                    screen_index,
+                )
+            monitor_index = monitor_combo.findData(selected)
+            monitor_combo.setCurrentIndex(monitor_index if monitor_index >= 0 else 0)
+            monitor_combo.blockSignals(False)
 
     def _apply_diagnostics_texts(self) -> None:
         host = self._host

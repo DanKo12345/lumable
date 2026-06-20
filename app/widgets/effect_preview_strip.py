@@ -185,6 +185,10 @@ class EffectPreviewStrip(QWidget):
         speed_ratio = self._speed / 100.0
         return 8600.0 - speed_ratio * 6400.0
 
+    def set_target_fps(self, fps: int) -> None:
+        fps = max(15, min(144, int(fps)))
+        self._timer.setInterval(max(7, round(1000.0 / fps)))
+
     def set_speed(self, value: int) -> None:
         self._speed = max(0, min(100, int(value)))
         self.update()
@@ -230,9 +234,11 @@ class EffectPreviewStrip(QWidget):
 
         base = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
         if is_dark:
-            base.setColorAt(0.0, QColor(20, 33, 72, 190))
-            base.setColorAt(0.55, QColor(14, 24, 54, 184))
-            base.setColorAt(1.0, QColor(10, 17, 42, 198))
+            # Opaque charcoal (slightly lighter than the card) so the pill is
+            # always visible and never blends away or reads as a blue bar.
+            base.setColorAt(0.0, QColor(40, 44, 56, 255))
+            base.setColorAt(0.55, QColor(31, 34, 45, 255))
+            base.setColorAt(1.0, QColor(24, 27, 36, 255))
         else:
             base.setColorAt(0.0, QColor(255, 255, 255, 198))
             base.setColorAt(0.55, QColor(236, 244, 255, 172))
@@ -302,11 +308,12 @@ class EffectPreviewStrip(QWidget):
         painter.drawRoundedRect(rect.adjusted(1.0, 1.0, -1.0, -1.0), radius - 1.0, radius - 1.0)
 
     def _paint_static(self, painter: QPainter, path: QPainterPath, rect: QRectF, is_dark: bool) -> None:
-        accent = QColor(118, 174, 255, 82 if is_dark else 68)
+        # Neutral, quiet sheen for the "static colour" preview (no stray blue).
+        alpha = 30 if is_dark else 44
         glow = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
-        glow.setColorAt(0.0, QColor(96, 180, 255, accent.alpha()))
-        glow.setColorAt(0.55, QColor(158, 132, 255, max(36, accent.alpha() - 18)))
-        glow.setColorAt(1.0, QColor(118, 174, 255, accent.alpha()))
+        glow.setColorAt(0.0, QColor(170, 178, 196, alpha))
+        glow.setColorAt(0.55, QColor(150, 158, 178, max(14, alpha - 12)))
+        glow.setColorAt(1.0, QColor(170, 178, 196, alpha))
         painter.fillPath(path, glow)
 
     def _paint_jump(self, painter: QPainter, path: QPainterPath, rect: QRectF, is_dark: bool) -> None:

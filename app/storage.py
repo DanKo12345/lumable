@@ -172,10 +172,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "theme_mode": "auto",
     "theme": "dark",
     "capture_compatibility": True,
+    "ui_fps": "auto",
     "language": "ru",
+    "ambient": {"region": "full", "saturation": 55, "smoothing": 65, "monitor": 0},
     "quick_mode": "",
     "custom_quick_modes": [],
     "updates_last_auto_check_at": 0,
+    "updates_notified_version": "",
     "license": {
         "activated": False,
         "edition": "free",
@@ -369,6 +372,21 @@ def _coerce_time_text(value: Any, default: str) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
+def validate_ambient(data: Any) -> dict[str, Any]:
+    defaults = DEFAULT_SETTINGS["ambient"]
+    if not isinstance(data, dict):
+        data = {}
+    region = _coerce_str(data.get("region"), str(defaults["region"]))
+    if region not in {"full", "center", "bottom", "top"}:
+        region = str(defaults["region"])
+    return {
+        "region": region,
+        "saturation": _coerce_int(data.get("saturation"), int(defaults["saturation"]), 0, 100),
+        "smoothing": _coerce_int(data.get("smoothing"), int(defaults["smoothing"]), 0, 100),
+        "monitor": _coerce_int(data.get("monitor"), int(defaults["monitor"]), 0, 15),
+    }
+
+
 def validate_schedule(data: Any) -> dict[str, Any]:
     defaults = DEFAULT_SETTINGS["schedule"]
     if not isinstance(data, dict):
@@ -404,6 +422,9 @@ def validate_settings(data: Any) -> dict[str, Any]:
         data.get("capture_compatibility"),
         bool(DEFAULT_SETTINGS["capture_compatibility"]),
     )
+    ui_fps = _coerce_str(data.get("ui_fps"), str(DEFAULT_SETTINGS["ui_fps"])).lower()
+    if ui_fps not in {"auto", "30", "60", "120"}:
+        ui_fps = str(DEFAULT_SETTINGS["ui_fps"])
     last_device_address = _coerce_str(data.get("last_device_address"), DEFAULT_SETTINGS["last_device_address"])
     last_device_name = _coerce_str(data.get("last_device_name"), DEFAULT_SETTINGS["last_device_name"])
     color_history = validate_color_history(data.get("color_history", DEFAULT_SETTINGS["color_history"]))
@@ -427,7 +448,9 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "theme_mode": theme_mode,
         "theme": theme,
         "capture_compatibility": capture_compatibility,
+        "ui_fps": ui_fps,
         "language": language,
+        "ambient": validate_ambient(data.get("ambient", DEFAULT_SETTINGS["ambient"])),
         "quick_mode": quick_mode,
         "custom_quick_modes": custom_quick_modes,
         "updates_last_auto_check_at": _coerce_int(
@@ -435,6 +458,10 @@ def validate_settings(data: Any) -> dict[str, Any]:
             DEFAULT_SETTINGS["updates_last_auto_check_at"],
             0,
             4_102_444_800,
+        ),
+        "updates_notified_version": _coerce_str(
+            data.get("updates_notified_version"),
+            DEFAULT_SETTINGS["updates_notified_version"],
         ),
         "license": validate_license_state(data.get("license", DEFAULT_SETTINGS["license"])),
         "window_width": _coerce_int(data.get("window_width"), DEFAULT_SETTINGS["window_width"], 800, 7680),

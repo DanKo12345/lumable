@@ -15,6 +15,7 @@ class LiquidSlider(QSlider):
         self.setCursor(Qt.PointingHandCursor)
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self._scale = 1.0
         self.setMinimumHeight(68)
         self.accent = accent
         self._hover = 0.0
@@ -62,6 +63,26 @@ class LiquidSlider(QSlider):
 
     def set_accent_color(self, accent: str):
         self.accent = accent
+        self.update()
+
+    def set_render_scale(self, scale: float) -> None:
+        """Scale the slider's height and internal geometry (handle, glow, groove)
+        together so it stays proportional and the glow never clips when compact."""
+        self._scale = max(0.6, min(1.6, float(scale)))
+        self.setMinimumHeight(max(40, round(68 * self._scale)))
+        self.update()
+
+    def jump_to(self, value: int) -> None:
+        """Set the value without animation/signals, keeping the handle in sync.
+
+        Plain ``setValue`` under ``blockSignals`` leaves the painted handle at its
+        old position (the handle follows ``_display_value``, updated via the
+        valueChanged signal). Use this when syncing a slider from saved settings.
+        """
+        self.blockSignals(True)
+        self.setValue(int(value))
+        self.blockSignals(False)
+        self._display_value = float(self.value())
         self.update()
 
     def _accent_color(self) -> QColor:
@@ -227,10 +248,11 @@ class LiquidSlider(QSlider):
         handle_fill = QColor(255, 255, 255, 245)
         handle_border = QColor(255, 255, 255, 90) if theme_manager.is_dark else QColor(80, 130, 210, 90)
 
-        left = 14.0
-        right = self.width() - 14.0
-        cy = self.height() / 2 + 3.0
-        groove_h = 7.2 + self._hover * 0.8 + self._press * 0.55
+        s = self._scale
+        left = 14.0 * s
+        right = self.width() - 14.0 * s
+        cy = self.height() / 2 + 3.0 * s
+        groove_h = (7.2 + self._hover * 0.8 + self._press * 0.55) * s
         groove_rect = QRectF(left, cy - groove_h / 2, max(12.0, right - left), groove_h)
 
         ratio = self._ratio_from_value(self._display_value)
@@ -249,10 +271,10 @@ class LiquidSlider(QSlider):
             shake_y = math.sin(impact_phase * 24.0) * (self._impact ** 1.25) * 0.65
             handle_x += shake_x
 
-        handle_radius = 9.3 + self._hover * 1.5 + self._press * 2.7 + self._impact * 0.45
-        handle_cy = cy - self._press * 1.6 + landing_drop + shake_y
+        handle_radius = (9.3 + self._hover * 1.5 + self._press * 2.7 + self._impact * 0.45) * s
+        handle_cy = cy - self._press * 1.6 * s + landing_drop + shake_y
 
-        glow_radius = 18.0 + self._hover * 6.5 + self._press * 7.5 + self._impact * 3.2
+        glow_radius = (18.0 + self._hover * 6.5 + self._press * 7.5 + self._impact * 3.2) * s
         glow = QRadialGradient(handle_x, handle_cy, glow_radius)
         glow.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 96 if theme_manager.is_dark else 64))
         glow.setColorAt(0.50, QColor(accent.red(), accent.green(), accent.blue(), 34 if theme_manager.is_dark else 22))

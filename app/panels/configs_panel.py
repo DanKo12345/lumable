@@ -71,7 +71,7 @@ class InlineProfileList(QListWidget):
 
 def build_configs_section(host: PanelHost) -> GlassCard:
     host.configs_card = host._card(host._tr("configs.title"), host._tr("configs.subtitle"), icon="configs")
-    host.configs_card.setMinimumHeight(374)
+    host.configs_card.setMinimumHeight(host._sz(374))
     host.import_profiles_button = host._button("", "ghost")
     host.import_profiles_button.set_icon_kind("upload")
     host.import_profiles_button.setFixedSize(HEADER_ACTION_SIZE, HEADER_ACTION_SIZE)
@@ -115,7 +115,7 @@ def build_configs_section(host: PanelHost) -> GlassCard:
 
     host.profile_list = InlineProfileList()
     host.profile_list.setObjectName("profileList")
-    host.profile_list.setMinimumHeight(250)
+    host.profile_list.setMinimumHeight(host._sz(250))
     host.profile_list.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
     host.profile_list.verticalScrollBar().setSingleStep(18)
     host.profile_list.setUniformItemSizes(True)

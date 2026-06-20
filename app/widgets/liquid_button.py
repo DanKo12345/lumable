@@ -168,6 +168,11 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         grow = max(0.0, self._scale - 1.0)
         inset = max(0.8, 4.0 - grow * 75.0)
         rect = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
+
+        if self._role in ("nav", "nav_active"):
+            self._paint_nav(painter, rect)
+            return
+
         is_ghost = self._role == "ghost"
         radius = rect.height() / 2.0 if is_ghost else 17.0
         path = QPainterPath()
@@ -201,6 +206,42 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         painter.setClipping(False)
         self._paint_border(painter, rect, radius, lc)
         self._paint_label(painter, rect, lc)
+
+    # ── flat navigation item (sidebar) ─────────────────────────────────
+    def _paint_nav(self, painter: QPainter, rect: QRectF) -> None:
+        active = self._role == "nav_active"
+        dark = theme_manager.is_dark
+        radius = 10.0
+
+        if active:
+            bg_alpha = 18 if dark else 30
+        elif self._hover > 0.01:
+            bg_alpha = int((11 if dark else 20) * self._hover)
+        else:
+            bg_alpha = 0
+        if bg_alpha > 0:
+            bg_path = QPainterPath()
+            bg_path.addRoundedRect(rect, radius, radius)
+            fill = QColor(255, 255, 255, bg_alpha) if dark else QColor(40, 55, 95, bg_alpha)
+            painter.fillPath(bg_path, fill)
+
+        if active:
+            accent = qcolor_from_token(theme_manager.palette["accent_start"])
+            bar_height = rect.height() * 0.5
+            bar = QRectF(rect.left() + 2.0, rect.center().y() - bar_height / 2.0, 3.0, bar_height)
+            bar_path = QPainterPath()
+            bar_path.addRoundedRect(bar, 1.5, 1.5)
+            painter.fillPath(bar_path, accent)
+
+        if active:
+            text_color = QColor("#ffffff") if dark else QColor("#18243d")
+        else:
+            text_color = QColor(255, 255, 255, 150) if dark else QColor(24, 36, 61, 150)
+        font = self.font()
+        font.setWeight(QFont.Weight.DemiBold if active else QFont.Weight.Medium)
+        painter.setFont(font)
+        painter.setPen(text_color)
+        painter.drawText(rect.adjusted(16.0, 0.0, -8.0, 0.0), Qt.AlignLeft | Qt.AlignVCenter, self.text())
 
     # ── ghost (Liquid Glass) ───────────────────────────────────────────
     def _paint_ghost(self, painter: QPainter, path: QPainterPath, rect: QRectF, radius: float, lc: dict) -> None:
@@ -314,6 +355,17 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         palette = theme_manager.palette
         ft, fb = lc["fill_top"], lc["fill_bottom"]
         role = self._role
+        if role == "led":
+            glow = getattr(theme_manager, "led_glow", None) or QColor(120, 150, 255)
+            top = QColor(glow.red(), glow.green(), glow.blue())
+            bot = QColor(glow.red(), glow.green(), glow.blue())
+            if theme_manager.is_dark:
+                top.setAlpha(150)
+                bot.setAlpha(104)
+            else:
+                top.setAlpha(220)
+                bot.setAlpha(180)
+            return top, bot
         if role == "mode":
             return (QColor(255, 255, 255, 17), QColor(95, 110, 160, 10)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
         if role == "mode_active":
@@ -341,19 +393,23 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         is_mode = role in {"mode", "mode_active"}
         is_warm = role == "primary_warm"
         is_soft = role == "accent_soft"
-        if role not in {"accent", "primary"} and not is_mode and not is_warm and not is_soft:
+        is_led = role == "led"
+        if role not in {"accent", "primary"} and not is_mode and not is_warm and not is_soft and not is_led:
             return
         palette = theme_manager.palette
         glow_rect = rect.adjusted(-1.0, -1.0, 1.0, 1.0)
         glow_path = QPainterPath()
         glow_path.addRoundedRect(glow_rect, radius + 1.0, radius + 1.0)
-        if is_warm or role == "mode_active":
+        if is_led:
+            led = getattr(theme_manager, "led_glow", None) or QColor(120, 150, 255)
+            glow_color = QColor(led.red(), led.green(), led.blue())
+        elif is_warm or role == "mode_active":
             glow_color = QColor(255, 187, 140)
         elif is_soft:
             glow_color = QColor(150, 188, 255) if not theme_manager.is_dark else QColor(255, 255, 255)
         else:
             glow_color = qcolor_from_token(palette["accent_start"])
-        if not theme_manager.is_dark:
+        if not theme_manager.is_dark and not is_led:
             glow_color = QColor(120, 160, 255) if is_warm else QColor(168, 198, 244)
         if role == "mode":
             glow_alpha = 8

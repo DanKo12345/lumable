@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication, QMenu
 from app.app_info import APP_NAME
 from app.ble_drivers.base import EffectPreset
 from app.feature_gate import FREE_EFFECT_COUNT, invalidate_pro_cache
+from app.main_layout import select_section
 from app.main_window import MainWindow
 from app.quick_modes import QUICK_MODE_MAP, QUICK_MODES
 
@@ -236,10 +237,8 @@ def test_apply_static_color_updates_aurora_accent() -> None:
 
         window._apply_current_color()
 
-        assert window._aurora._accent.red() == 255
-        assert window._aurora._accent.green() == 255
-        assert window._aurora._accent.blue() == 255
-        assert window._aurora._accent.alpha() == 38
+        assert window._aurora._accent_rgb == (255, 255, 255)
+        assert window._aurora._accent_enabled is True
     finally:
         window.close()
         app.processEvents()
@@ -278,6 +277,7 @@ def test_connection_actions_show_only_relevant_buttons() -> None:
     window = MainWindow()
     try:
         window.show()
+        select_section(window, "settings")  # device controls live on the Settings page
         app.processEvents()
         window._devices = [{"name": "Demo", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-40"}]
         window._scan_in_progress = False
@@ -481,13 +481,14 @@ def test_power_button_uses_action_label_and_role_for_state() -> None:
         window._sync_power_button()
 
         assert window.power_button.text() == window._tr("color.power_on")
+        # Off → neutral glass; on → tinted with the current LED colour.
         assert window.power_button._role == "ghost"
 
         window.power_button.setChecked(True)
         window._sync_power_button()
 
         assert window.power_button.text() == window._tr("color.power_off")
-        assert window.power_button._role == "accent_soft"
+        assert window.power_button._role == "led"
     finally:
         window._ble.shutdown()
         window.close()
@@ -567,7 +568,7 @@ def test_power_off_clears_aurora_accent() -> None:
         window._toggle_power()
 
         assert calls == [False]
-        assert window._aurora._accent.alpha() == 0
+        assert window._aurora._accent_enabled is False
     finally:
         window.close()
         app.processEvents()
@@ -579,6 +580,8 @@ def test_shortcuts_do_not_fire_while_text_input_has_focus() -> None:
     calls: list[str] = []
     try:
         window.show()
+        select_section(window, "profiles")  # profile name input lives on the Profiles page
+        app.processEvents()
         window.profile_name.setFocus()
         app.processEvents()
         window._activate_quick_mode = lambda mode_key: calls.append(mode_key)
@@ -652,6 +655,7 @@ def test_non_static_effect_shows_speed_controls() -> None:
     window = MainWindow()
     try:
         window.show()
+        select_section(window, "effects")  # speed controls live on the Effects page
         app.processEvents()
 
         for index in range(window.effect_combo.count()):
@@ -705,12 +709,8 @@ def test_quick_mode_updates_aurora_accent_immediately() -> None:
         window._activate_quick_mode("gaming")
 
         assert applied_payloads
-        assert (
-            window._aurora._accent.red(),
-            window._aurora._accent.green(),
-            window._aurora._accent.blue(),
-            window._aurora._accent.alpha(),
-        ) == (*mode.color, 38)
+        assert window._aurora._accent_rgb == tuple(mode.color)
+        assert window._aurora._accent_enabled is True
     finally:
         window.close()
         app.processEvents()
@@ -991,12 +991,17 @@ def test_layout_stays_constrained_on_large_desktop_resolutions() -> None:
             window.show()
             app.processEvents()
 
-            assert window.content_shell.width() <= 2360
-            assert window.content_shell.x() >= 0
-            assert window.body_scroll.width() <= window.content_shell.width()
+            # Content is width-capped (app shell), not stretched edge to edge.
+            select_section(window, "settings")
+            app.processEvents()
+            assert window._section_stack.width() <= window._sz(1120) + 8
+            assert window.body_scroll.width() <= window.width()
             assert window.device_card.width() > 0
-            assert window.configs_card.width() > 0
             assert window.diagnostics_card.width() > 0
+
+            select_section(window, "profiles")
+            app.processEvents()
+            assert window.configs_card.width() > 0
     finally:
         window._ble.shutdown()
         window.close()

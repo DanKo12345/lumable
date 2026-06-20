@@ -16,8 +16,9 @@ def paint_color_tile(
     *,
     border_color: QColor,
     selected: bool = False,
+    radius_ratio: float = 0.28,
 ) -> None:
-    radius = min(rect.width(), rect.height()) * 0.28
+    radius = min(rect.width(), rect.height()) * radius_ratio
     shell = QPainterPath()
     shell.addRoundedRect(rect, radius, radius)
 
@@ -33,7 +34,7 @@ def paint_color_tile(
     painter.drawPath(shell)
 
     inset = rect.adjusted(5.0, 5.0, -5.0, -5.0)
-    inner_radius = min(inset.width(), inset.height()) * 0.28
+    inner_radius = min(inset.width(), inset.height()) * radius_ratio
     inner = QPainterPath()
     inner.addRoundedRect(inset, inner_radius, inner_radius)
 
@@ -62,7 +63,7 @@ class ColorSwatch(QWidget):
         super().__init__(parent)
         self._theme_provider = theme_provider
         self._color = QColor(88, 182, 255)
-        self.setFixedSize(38, 30)
+        self.setFixedSize(32, 32)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("")
 
@@ -95,4 +96,5 @@ class ColorSwatch(QWidget):
             rect,
             self._color,
             border_color=border_color,
+            radius_ratio=0.5,
         )

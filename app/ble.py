@@ -66,6 +66,7 @@ class BleController(QObject):
         self._reconnect_address = ""
         self._ble_history: list[dict[str, str]] = []
         self._last_ble_error = ""
+        self._stream_busy = False
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -191,6 +192,45 @@ class BleController(QObject):
         self._last_green = clamp(green, 0, 255)
         self._last_blue = clamp(blue, 0, 255)
         self._submit(self._set_color(red, green, blue))
+
+    def set_color_stream(self, red: int, green: int, blue: int) -> None:
+        """Fast colour-only write for live streaming (ambient sync, etc.).
+
+        Drops the frame if a previous stream write is still in flight, so the
+        slow BLE link never backs up; writes colour only (no brightness, no
+        forced delay); and is logged quietly to avoid flooding the session log.
+        """
+        if self._stream_busy:
+            return
+        self._last_red = clamp(red, 0, 255)
+        self._last_green = clamp(green, 0, 255)
+        self._last_blue = clamp(blue, 0, 255)
+        self._stream_busy = True
+        self._submit_stream(self._set_color_stream(self._last_red, self._last_green, self._last_blue))
+
+    def _submit_stream(self, coroutine) -> None:
+        if self._shutdown_started or not self._loop.is_running():
+            coroutine.close()
+            self._stream_busy = False
+            return
+        wrapper = self._run_serialized(coroutine)
+        try:
+            future = asyncio.run_coroutine_threadsafe(wrapper, self._loop)
+        except RuntimeError:
+            wrapper.close()
+            coroutine.close()
+            self._stream_busy = False
+            return
+
+        def _done(completed) -> None:
+            self._stream_busy = False
+            try:
+                completed.result()
+            except Exception:
+                # Streaming frames are best-effort; never spam logs/errors.
+                pass
+
+        future.add_done_callback(_done)
 
     def set_brightness(self, value: int) -> None:
         self._last_brightness = clamp(value, 0, 100)
@@ -393,6 +433,10 @@ class BleController(QObject):
             localization_manager.status_ble_event("color_set", red=red, green=green, blue=blue),
         )
 
+    async def _set_color_stream(self, red: int, green: int, blue: int) -> None:
+        driver = self._require_driver()
+        await self._write_many(driver.color_payloads(red, green, blue), "", quiet=True)
+
     async def _set_brightness(self, value: int) -> None:
         driver = self._require_driver()
         payloads = driver.brightness_payloads(value)
@@ -432,6 +476,14 @@ class BleController(QObject):
         if payload is None:
             raise RuntimeError("Built-in effects are not supported by this controller yet.")
         await self._write(payload, localization_manager.status_ble_event("effect_applied", code=f"{code:02X}"))
+        # Some BLEDOM clones ignore the first effect command when switching from
+        # another running effect (e.g. fade → rainbow). A quiet re-send makes the
+        # switch reliable without spamming the log.
+        await asyncio.sleep(0.08)
+        try:
+            await self._write(payload, "", quiet=True)
+        except BLE_OPERATION_ERRORS:
+            pass
         self._current_effect_code = int(code)
 
     async def _set_effect_with_speed(self, code: int, speed: int) -> None:
@@ -612,7 +664,7 @@ class BleController(QObject):
             raise RuntimeError("Connect to the LED strip first.")
         return self._driver
 
-    async def _write(self, payload: bytes, description: str) -> None:
+    async def _write(self, payload: bytes, description: str, *, quiet: bool = False) -> None:
         if self._client is None or self._write_characteristic is None:
             raise RuntimeError("Connect to the LED strip first.")
         if not bool(getattr(self._client, "is_connected", True)):
@@ -633,11 +685,14 @@ class BleController(QObject):
         if not written_to:
             if last_error is not None:
                 self._set_last_ble_exception(last_error)
-                self.status_changed.emit(
-                    localization_manager.status_ble_event("write_failed", error=self._exception_message(last_error))
-                )
+                if not quiet:
+                    self.status_changed.emit(
+                        localization_manager.status_ble_event("write_failed", error=self._exception_message(last_error))
+                    )
             raise ProtocolCompatibilityError("Command could not be written to any compatible GATT characteristic.")
 
+        if quiet:
+            return
         self._record_ble_history(
             "command",
             description=description,
@@ -737,7 +792,7 @@ class BleController(QObject):
             seen.add(uuid)
         return ordered
 
-    async def _write_many(self, payloads: list[bytes], description: str) -> None:
+    async def _write_many(self, payloads: list[bytes], description: str, *, quiet: bool = False) -> None:
         if self._client is None or self._write_characteristic is None:
             raise RuntimeError("Connect to the LED strip first.")
 
@@ -758,7 +813,7 @@ class BleController(QObject):
         last_error: Exception | None = None
         for payload_index, payload in ordered_payloads:
             try:
-                await self._write(payload, description)
+                await self._write(payload, description, quiet=quiet)
                 self._preferred_payload_indices[cache_key] = payload_index
                 if self._driver is not None and hasattr(self._driver, "remember_working_payload"):
                     self._driver.remember_working_payload(payload)
@@ -774,9 +829,10 @@ class BleController(QObject):
                 raise last_error
             if isinstance(last_error, ProtocolCompatibilityError):
                 diagnostic = self._protocol_mismatch_diagnostic(payloads)
-                self._set_last_ble_error(diagnostic)
-                self._record_ble_history("protocol_mismatch", details=diagnostic)
-                self.status_changed.emit(diagnostic)
+                if not quiet:
+                    self._set_last_ble_error(diagnostic)
+                    self._record_ble_history("protocol_mismatch", details=diagnostic)
+                    self.status_changed.emit(diagnostic)
                 raise ProtocolCompatibilityError(diagnostic) from last_error
             raise RuntimeError("Command could not be sent with any known protocol.") from last_error
         raise RuntimeError("Command could not be sent with any known protocol.")

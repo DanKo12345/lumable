@@ -149,7 +149,10 @@ class TrayController:
                 self.show_window()
 
     def show_window(self) -> None:
-        self._host.showMaximized()
+        if self._host.isMinimized():
+            self._host.showNormal()
+        else:
+            self._host.show()
         self._host.raise_()
         self._host.activateWindow()
 

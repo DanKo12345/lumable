@@ -19,7 +19,9 @@ def restart_animation(animation: QPropertyAnimation, start, end) -> None:
 
 class ButtonAnimationMixin:
     def _init_button_motion(self) -> None:
-        self._scale_anim = make_property_animation(self, b"scaleValue", 160, QEasingCurve.OutCubic)
+        # Spring motion: the scale slightly overshoots and settles instead of a
+        # flat ease, giving presses/hovers the lively "bounce" feel of iOS.
+        self._scale_anim = make_property_animation(self, b"scaleValue", 240, QEasingCurve.OutBack)
         self._ripple_anim = make_property_animation(self, b"rippleValue", 420, QEasingCurve.OutCubic)
 
     def _animate_button_scale(self, end_value: float) -> None:

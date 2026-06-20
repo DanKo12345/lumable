@@ -2,6 +2,36 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.2.0] - 2026-06-20
+
+A full interface redesign. LumaBLE moves from a long scrolling card page to a focused, app-style layout with a premium dark look.
+
+### Added
+- New app-shell layout: a left navigation rail (Color · Effects · Screen sync · Profiles · Settings) that shows one focused section at a time.
+- "Lumen" background: a calm near-black canvas with a soft, slowly breathing glow in the current strip colour.
+- Persistent hero light bar that shows the live strip colour and brightness from every section.
+- Always-visible connection status in the sidebar — coloured dot, controller name, and a "click to connect" hint while disconnected.
+- Screen sync (Ambient): a Pro badge with locked controls until unlocked, plus a live "Capturing · N fps" status while running.
+- Profile rows now show a second line with the saved scene (RGB · brightness · static/effect).
+- A quiet "update available" pop-up shown by the daily background check — at most once per version, with Update / Later.
+
+### Changed
+- Reworked the visual language to a premium graphite theme; removed the heavy purple background and blue surfaces from cards, dropdowns and all overlays.
+- Flattened the sidebar items (active item: subtle highlight + left accent bar) and unified the accent colour for active navigation and presets.
+- Grouped device, schedule, diagnostics and the language / FPS / theme controls into a single Settings section; promoted Profiles to its own section; the power toggle carries the current strip colour.
+- The window now opens at a sensible centered size instead of maximised, with a ceiling so it never reopens oversized.
+- Tightened card padding, rounded the recent-colour swatches, compacted the quick-mode buttons and aligned the slider value boxes.
+- The live-light preview shows the true colour at any brightness (brightness is conveyed by the glow), so a dim strip is no longer a near-black bar.
+- Added spring motion to button presses and hovers.
+
+### Fixed
+- The colour glow now follows the applied colour reliably instead of depending on the power-toggle state.
+- Stopped identical error dialogs from stacking (e.g. repeated "connect first" while disconnected).
+- Fixed the effect-preview strip blending into the background and appearing to vanish.
+- Fixed the theme switch so a single click reaches the light theme.
+- Fixed the sidebar status text being clipped.
+- Synced the version number across project metadata, the Windows build info and the in-app diagnostics.
+
 ## [0.1.3] - 2026-06-16
 
 ### Added

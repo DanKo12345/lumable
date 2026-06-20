@@ -213,8 +213,8 @@ class _TimePickerPanel(QFrame):
 
         fill = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
         if theme_manager.is_dark:
-            fill.setColorAt(0.0, QColor(42, 58, 104, 246))
-            fill.setColorAt(1.0, QColor(18, 27, 58, 250))
+            fill.setColorAt(0.0, QColor(34, 38, 50, 250))
+            fill.setColorAt(1.0, QColor(18, 20, 28, 252))
         else:
             fill.setColorAt(0.0, QColor(248, 251, 255, 250))
             fill.setColorAt(1.0, QColor(219, 232, 255, 250))

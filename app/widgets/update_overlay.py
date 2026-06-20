@@ -1,24 +1,20 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
 from app.widgets.liquid_button import LiquidButton
 
-ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "icon.ico"
 
-
-class _AboutPanel(QFrame):
-    RADIUS = 24.0
+class _UpdatePanel(QFrame):
+    RADIUS = 22.0
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(580, 620)
+        self.setFixedWidth(460)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -43,20 +39,29 @@ class _AboutPanel(QFrame):
         shine.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillPath(path, shine)
 
+        # Soft accent glow strip along the top — quiet "something new" cue.
+        accent = qcolor_from_token(theme_manager.palette["accent_start"])
+        glow = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.top() + rect.height() * 0.5)
+        glow.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 40))
+        glow.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
+        painter.fillPath(path, glow)
+
         border = qcolor_from_token(theme_manager.palette["surface_border"])
         border.setAlpha(92 if theme_manager.is_dark else 104)
         painter.setPen(QPen(border, 1.0))
         painter.drawPath(path)
 
 
-class AboutOverlay(QWidget):
+class UpdateOverlay(QWidget):
+    """Quiet, modern 'update available' pop-up shown at most once per version."""
+
+    update_requested = Signal()
     closed = Signal()
 
     def __init__(self, labels: dict[str, str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
-        self._labels = labels
         self._fade_anim: QPropertyAnimation | None = None
         self._panel_anim: QPropertyAnimation | None = None
         if parent is not None:
@@ -70,88 +75,41 @@ class AboutOverlay(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addStretch(1)
-        self._panel = _AboutPanel(self)
+        self._panel = _UpdatePanel(self)
         layout.addWidget(self._panel, 0, Qt.AlignCenter)
         layout.addStretch(1)
 
         panel_layout = QVBoxLayout(self._panel)
-        panel_layout.setContentsMargins(28, 26, 28, 26)
-        panel_layout.setSpacing(12)
+        panel_layout.setContentsMargins(26, 24, 26, 22)
+        panel_layout.setSpacing(10)
 
-        header = QHBoxLayout()
-        header.setSpacing(12)
-        header.setContentsMargins(0, 0, 0, 2)
-        icon_label = QLabel(self._panel)
-        icon = QIcon(str(ICON_PATH))
-        icon_label.setPixmap(icon.pixmap(52, 52))
-        icon_label.setFixedSize(56, 56)
-        icon_label.setAlignment(Qt.AlignCenter)
-        header.addStretch(1)
-        header.addWidget(icon_label)
-
-        title_stack = QVBoxLayout()
-        title_stack.setSpacing(3)
         title = QLabel(labels["title"], self._panel)
-        title.setObjectName("aboutTitle")
-        meta = QLabel(labels["meta"], self._panel)
-        meta.setObjectName("aboutMuted")
-        title_stack.addWidget(title)
-        title_stack.addWidget(meta)
-        meta.setObjectName("aboutEditionPro" if "Pro" in labels["meta"] else "aboutMuted")
-        header.addLayout(title_stack)
-        header.addStretch(1)
-        panel_layout.addLayout(header)
+        title.setObjectName("updateTitle")
+        panel_layout.addWidget(title)
 
-        scroll = QScrollArea(self._panel)
-        scroll.setObjectName("aboutScroll")
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.viewport().setAutoFillBackground(False)
-        scroll.setMinimumHeight(360)
-        content = QWidget(scroll)
-        content.setObjectName("aboutScrollContent")
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 8)
-        content_layout.setSpacing(14)
-        content_layout.addWidget(self._section(content, labels["author_title"], labels["author_text"]))
-        content_layout.addWidget(self._section(content, labels["privacy_title"], labels["privacy_text"]))
-        content_layout.addWidget(self._section(content, labels["components_title"], labels["components_text"]))
-        content_layout.addStretch(1)
-        scroll.setWidget(content)
-        panel_layout.addWidget(scroll, 1)
-
-        ok_row = QHBoxLayout()
-        ok_row.setContentsMargins(0, 4, 0, 0)
-        ok_row.addStretch(1)
-        ok_button = LiquidButton(labels["ok"], "accent_soft", self._panel)
-        ok_button.setFixedSize(100, 38)
-        ok_button.clicked.connect(self.close_overlay)
-        ok_row.addWidget(ok_button, 0, Qt.AlignRight | Qt.AlignVCenter)
-        panel_layout.addLayout(ok_row)
-
-    def _section(self, parent: QWidget, title_text: str, body_text: str, *, min_height: int | None = None) -> QFrame:
-        section = QFrame(parent)
-        section.setObjectName("aboutSection")
-        if min_height is not None:
-            section.setMinimumHeight(min_height)
-        layout = QVBoxLayout(section)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(7)
-        title = QLabel(title_text, section)
-        title.setObjectName("aboutSectionTitle")
-        title.setMinimumHeight(20)
-        body = QLabel(body_text, section)
-        body.setObjectName("aboutBody")
+        body = QLabel(labels["body"], self._panel)
+        body.setObjectName("updateBody")
         body.setWordWrap(True)
-        body.setTextFormat(Qt.RichText)
-        lines = body_text.replace("&", "&amp;").replace("<", "&lt;").split("\n")
-        html = "<br>".join(lines)
-        body.setText(f"<div style='line-height: 145%;'>{html}</div>")
-        body.setContentsMargins(0, 2, 0, 0)
-        layout.addWidget(title)
-        layout.addWidget(body)
-        return section
+        panel_layout.addWidget(body)
+
+        panel_layout.addSpacing(6)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        buttons.addStretch(1)
+        later_button = LiquidButton(labels["later"], "ghost", self._panel)
+        later_button.setFixedSize(120, 40)
+        later_button.clicked.connect(self.close_overlay)
+        update_button = LiquidButton(labels["update"], "accent_soft", self._panel)
+        update_button.setFixedSize(150, 40)
+        update_button.clicked.connect(self._on_update)
+        buttons.addWidget(later_button, 0, Qt.AlignVCenter)
+        buttons.addWidget(update_button, 0, Qt.AlignVCenter)
+        panel_layout.addLayout(buttons)
+
+    def _on_update(self) -> None:
+        self.update_requested.emit()
+        self.close_overlay()
 
     def open(self) -> None:
         parent = self.parentWidget()
@@ -215,40 +173,16 @@ class AboutOverlay(QWidget):
         palette = theme_manager.palette
         self.setStyleSheet(
             f"""
-            #aboutTitle {{
+            #updateTitle {{
                 color: {palette["text"]};
-                font-size: 22px;
+                font-size: 19px;
                 font-weight: 800;
             }}
-            #aboutMuted {{
-                color: {palette["muted"]};
-                font-size: 12px;
-                font-weight: 600;
-            }}
-            #aboutEditionPro {{
-                color: #f0c060;
-                font-size: 12px;
-                font-weight: 700;
-            }}
-            #aboutSection {{
-                background: {palette["field"]};
-                border: 1px solid {palette["field_border"]};
-                border-radius: 16px;
-            }}
-            #aboutSectionTitle {{
-                color: {palette["text"]};
-                font-size: 13px;
-                font-weight: 800;
-            }}
-            #aboutBody {{
+            #updateBody {{
                 color: {palette["text_soft"]};
-                font-size: 12px;
+                font-size: 13px;
                 font-weight: 500;
-                line-height: 1.35em;
-            }}
-            #aboutScroll, #aboutScrollContent {{
-                background: transparent;
-                border: none;
+                line-height: 1.4em;
             }}
             """
         )
