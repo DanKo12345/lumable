@@ -33,7 +33,3 @@ aoh2_launcher_build/obj/
 # OS noise
 Thumbs.db
 Desktop.ini
-
-# Design mockups / local backups (not part of the product)
-design_*.html
-design_backups/
