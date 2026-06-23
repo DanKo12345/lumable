@@ -4,7 +4,8 @@ Windows-first desktop app for controlling BLE RGB LED strip controllers.
 
 LumaBLE scans nearby supported Bluetooth LED controllers, connects to a device, changes RGB color,
 brightness and power, applies built-in effects, tunes effect speed, and saves reusable lighting
-profiles.
+profiles. It also includes screen sync, tray controls, schedules, diagnostics, themes, and a Pro
+license flow for advanced features.
 
 Author: `dollza`
 
@@ -18,7 +19,20 @@ If you find a bug or your controller does not work, please open an
 Translations:
 
 - [Русский](README.ru.md)
+- [Español](README.es.md)
 - [中文](README.zh.md)
+
+## Highlights
+
+- RGB sliders, HEX/HSV color picker, brightness and power control.
+- Built-in BLE effects with speed support where the controller protocol allows it.
+- Reusable lighting profiles and quick modes.
+- Screen sync / Ambient mode for matching the strip to the average screen color.
+- Local schedules while the app is open or running in the tray.
+- Single-instance startup protection, so a second launch brings the existing window forward instead
+  of fighting over the Bluetooth connection.
+- Diagnostics export for unsupported controllers and BLE troubleshooting.
+- Interface languages: English, Russian, Spanish and Chinese, with first-run language detection.
 
 ## Supported Controllers
 

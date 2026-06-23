@@ -18,6 +18,7 @@ LumaBLE ищет поддерживаемые Bluetooth-контроллеры, 
 Другие языки:
 
 - [English](README.md)
+- [Español](README.es.md)
 - [中文](README.zh.md)
 
 ## Поддерживаемые Контроллеры

@@ -18,6 +18,7 @@ LumaBLE 可以扫描附近受支持的蓝牙灯带控制器、连接设备、调
 
 - [English](README.md)
 - [Русский](README.ru.md)
+- [Español](README.es.md)
 
 ## 支持的控制器
 
