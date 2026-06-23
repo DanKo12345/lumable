@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -42,6 +43,7 @@ from app.profile_controller import ProfileController
 from app.quick_mode_controller import QuickModeController
 from app.schedule_controller import ScheduleController
 from app.shortcut_controller import ShortcutController
+from app.single_instance import SingleInstance
 from app.storage import DEFAULT_START_COLOR, load_profiles, load_settings, save_settings
 from app.theme import theme_manager
 from app.theme_controller import ThemeController
@@ -157,7 +159,6 @@ class MainWindow(QMainWindow):
         self._license_refresher = LicenseRefresher(self)
         self._license_refresher.finished.connect(self._on_license_refreshed)
         self._aurora = AuroraBackground(self)
-        self._aurora.lower()
 
     def _init_timers(self) -> None:
         """Create and configure all QTimer instances."""
@@ -206,6 +207,11 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self):
         root = build_main_layout(self)
+        shell_layout = QGridLayout(self._aurora)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+        shell_layout.addWidget(root, 0, 0)
+        self._aurora.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         self._apply_localized_texts()
         self._install_smooth_scroll(self.profile_list, step=46, duration=105)
         self._install_smooth_scroll(self.diagnostics_output, step=54, duration=185)
@@ -215,7 +221,7 @@ class MainWindow(QMainWindow):
         self.log_output.setReadOnly(True)
         self.log_output.hide()
         self._ui_feedback = UiFeedback(self, self.log_output, lambda: self._theme_tokens, self._tr)
-        self.setCentralWidget(root)
+        self.setCentralWidget(self._aurora)
 
     def _apply_localized_texts(self):
         self._ui_localization.apply_texts()
@@ -474,7 +480,6 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._aurora.setGeometry(0, 0, self.width(), self.height())
 
     def _apply_windows_backdrop(self):
         self._window_state.apply_windows_backdrop()
@@ -486,11 +491,14 @@ class MainWindow(QMainWindow):
         self.preview.set_color(self._current_color())
 
     def _sync_aurora_accent(self, *, enabled: bool | None = None) -> None:
+        # Background mechanic (as in v0.2.0): the strip colour glows over the
+        # graphite base while the strip is on. An explicit power-off returns the
+        # backdrop to neutral graphite; changing a colour always re-lights it.
         color = self._current_color()
         active = self.power_button.isChecked() if enabled is None else bool(enabled)
         theme_manager.led_glow = QColor(color)
         self._aurora.set_accent_color(color.red(), color.green(), color.blue(), enabled=active)
-        self.power_button.update()
+        self.power_button.set_led_color(QColor(color))
 
     def _color_history(self) -> list[dict[str, int]]:
         history = self._settings.get("color_history", [])
@@ -615,7 +623,7 @@ class MainWindow(QMainWindow):
         # (_toggle_power) returns the backdrop to neutral.
         theme_manager.led_glow = QColor(color)
         self._aurora.set_accent_color(color.red(), color.green(), color.blue(), enabled=True)
-        self.power_button.update()
+        self.power_button.set_led_color(QColor(color))
         self._remember_current_color()
         if self.effect_combo.currentData() != 0:
             with self._suppress_signals():
@@ -865,6 +873,7 @@ class MainWindow(QMainWindow):
             self._ble.diagnostics_snapshot(),
             self._ui_feedback.raw_log_messages(),
             include_crashes=False,
+            ambient=self._ambient_ui.stats(),
         )
 
     def _refresh_diagnostics_view(self):
@@ -891,6 +900,7 @@ class MainWindow(QMainWindow):
             self._ble.diagnostics_snapshot(),
             self._ui_feedback.raw_log_messages(),
             include_crashes=True,
+            ambient=self._ambient_ui.stats(),
         )
         try:
             Path(path).write_text(report, encoding="utf-8")
@@ -988,9 +998,24 @@ def run():
     icon_path = Path(__file__).resolve().parent / "assets" / "icon.ico"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
+    # Single instance: a second launch bows out and surfaces the running window
+    # instead, so two copies never fight over the same Bluetooth controller.
+    single = SingleInstance()
+    if single.is_already_running():
+        sys.exit(0)
     window = MainWindow()
+    single.set_activate_callback(lambda: _surface_window(window))
     # Open at a sane windowed size (restore_startup_size sets ~1320x860 centred)
     # instead of maximised — a maximised window left the content floating in a
     # huge empty area on wide monitors.
     window.show()
     sys.exit(app.exec())
+
+
+def _surface_window(window: MainWindow) -> None:
+    if window.isMinimized():
+        window.showNormal()
+    else:
+        window.show()
+    window.raise_()
+    window.activateWindow()

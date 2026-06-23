@@ -561,9 +561,45 @@ def reset_profiles() -> list[dict[str, Any]]:
     return profiles
 
 
+def detect_system_language(default: str = "en") -> str:
+    """Best-effort map the OS UI language to a bundled app language.
+
+    Only used on the very first launch (no settings file yet) so the app opens
+    in the user's system language — e.g. English Windows -> English. Unknown
+    locales fall back to ``default`` (English, the safe lingua franca).
+    """
+    primary = ""
+    try:
+        from PySide6.QtCore import QLocale
+
+        primary = QLocale.system().name().split("_")[0].strip().lower()
+    except Exception:  # detection is best-effort; any failure -> fallback
+        primary = ""
+    if not primary:
+        try:
+            import locale
+
+            primary = (locale.getlocale()[0] or "").split("_")[0].strip().lower()
+        except Exception:
+            primary = ""
+    try:
+        from app.localization import localization_manager
+
+        available = set(localization_manager.available_languages())
+    except Exception:
+        available = {"ru", "en", "es", "zh"}
+    if primary in available:
+        return primary
+    return default if default in available else "en"
+
+
 def load_settings() -> dict[str, Any]:
+    _ensure_data_dir()
+    first_run = not SETTINGS_PATH.exists()
     raw_settings = _read_json(SETTINGS_PATH, DEFAULT_SETTINGS)
     settings = validate_settings(raw_settings)
+    if first_run:
+        settings["language"] = detect_system_language()
     if settings != raw_settings:
         save_settings(settings)
     return settings

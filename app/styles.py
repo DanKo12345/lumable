@@ -263,7 +263,7 @@ def _form_styles(T: dict, is_dark: bool) -> str:
             outline: none;
         }}
         QMenu {{
-            background: {T["field_alt"]};
+            background: {T["surface_strong"]};
             border: 1px solid {T["field_border"]};
             border-radius: 12px;
             padding: 6px;

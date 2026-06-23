@@ -94,6 +94,12 @@ class AmbientController(QObject):
             thread.join(timeout=1.5)
         self._engine.stop()
 
+    def stream_error_count(self) -> int:
+        return self._engine.error_count()
+
+    def last_stream_error(self) -> str:
+        return self._engine.last_error()
+
     def _run(self) -> None:
         try:
             import mss

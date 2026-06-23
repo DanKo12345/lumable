@@ -93,8 +93,8 @@ def build_configs_section(host: PanelHost) -> GlassCard:
     host.configs_menu_button.clicked.connect(
         lambda: host.configs_reset_menu.exec(host.configs_menu_button.mapToGlobal(QPoint(0, host.configs_menu_button.height())))
     )
-    actions_width = HEADER_ACTION_SIZE * 3 + HEADER_ACTION_SPACING * 2
-    host.configs_card.header_layout.insertSpacing(0, actions_width)
+    # Title stays left-aligned (matching the other cards); the action icons sit
+    # on the right after the header's stretch.
     host.configs_card.header_layout.addWidget(host.import_profiles_button, 0, Qt.AlignRight | Qt.AlignVCenter)
     host.configs_card.header_layout.addSpacing(HEADER_ACTION_SPACING)
     host.configs_card.header_layout.addWidget(host.export_profiles_button, 0, Qt.AlignRight | Qt.AlignVCenter)

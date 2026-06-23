@@ -115,6 +115,15 @@ def select_section(host, key: str) -> None:
         host._section_stack.setCurrentWidget(page)
 
 
+def _on_status_clicked(host) -> None:
+    # Disconnected → start a controller search right away; connected → open the
+    # device card so the user can manage/disconnect.
+    if getattr(host, "_is_connected", False):
+        select_section(host, "settings")
+    else:
+        host._ble_events.start_scan()
+
+
 def _build_sections(host) -> None:
     host._section_stack = QStackedWidget()
     host._section_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -164,12 +173,12 @@ def _build_sidebar(host) -> QWidget:
     # A QPushButton sizes to its (empty) text, not to the child layout, so it
     # would clip the two-line content — pin a height that fits both lines.
     status_card.setMinimumHeight(host._sz(56))
-    status_card.setToolTip(host._tr("nav.settings"))
+    status_card.setToolTip(host._tr("device.find"))
     status_card.setStyleSheet(
         "QPushButton#statusCard { border: none; background: transparent; text-align: left; }"
         "QPushButton#statusCard:hover { background: rgba(255, 255, 255, 0.05); border-radius: 14px; }"
     )
-    status_card.clicked.connect(lambda: select_section(host, "settings"))
+    status_card.clicked.connect(lambda: _on_status_clicked(host))
     status_outer = QVBoxLayout(status_card)
     status_outer.setContentsMargins(host._sz(12), host._sz(8), host._sz(12), host._sz(8))
     status_outer.setSpacing(host._sz(2))
@@ -195,6 +204,8 @@ def _build_sidebar(host) -> QWidget:
     host.device_status_hint = QLabel(host._tr("device.connect_hint"))
     host.device_status_hint.setObjectName("cardSubtitle")
     host.device_status_hint.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    # Indent so the second line aligns under the status text (past the dot).
+    host.device_status_hint.setContentsMargins(dot_size + host._sz(9), 0, 0, 0)
     status_outer.addWidget(host.device_status_hint)
     column.addWidget(status_card)
     return side
@@ -215,7 +226,7 @@ def _build_main_area(host) -> QWidget:
     column.setMaximumWidth(host._sz(1120))
     layout = QVBoxLayout(column)
     layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(host._sz(14))
+    layout.setSpacing(host._sz(10))
 
     # Hero "live light": the big bar that glows the current strip colour.
     host.preview = AccentPreview()

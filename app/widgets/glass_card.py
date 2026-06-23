@@ -72,8 +72,8 @@ class GlassCard(QFrame):
         if is_dark:
             # Neutral charcoal panel (not the blue surface token) so cards read as
             # premium dark cards on the near-black canvas, not blue boxes.
-            surface_top = QColor(28, 31, 41, 238)
-            surface_bottom = QColor(20, 22, 30, 242)
+            surface_top = QColor(27, 28, 31, 238)
+            surface_bottom = QColor(17, 18, 21, 242)
         else:
             surface_top = qcolor_from_token(palette["surface_soft"])
             surface_bottom = qcolor_from_token(palette["surface"])

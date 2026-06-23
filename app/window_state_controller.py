@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import ctypes
-import sys
 from typing import Protocol
 
 from PySide6.QtWidgets import QApplication
@@ -67,14 +65,9 @@ class WindowStateController:
         host.move(frame.topLeft())
 
     def apply_windows_backdrop(self) -> None:
-        host = self._host
-        if sys.platform != "win32":
-            return
-        if bool(host._settings.get("capture_compatibility", True)):
-            return
-        hwnd = int(host.winId())
-        value = ctypes.c_int(2)
-        try:
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 38, ctypes.byref(value), ctypes.sizeof(value))
-        except (AttributeError, OSError, ValueError, ctypes.ArgumentError):
-            pass
+        # LumaBLE paints its own graphite + live-colour background through
+        # AuroraBackground. Windows Mica/Acrylic is intentionally disabled here:
+        # it adds an OS-controlled blue/grey material behind transparent widgets,
+        # which makes the app look blue even when the selected strip colour is
+        # green, orange, or neutral graphite.
+        return

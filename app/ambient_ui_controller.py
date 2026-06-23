@@ -81,6 +81,13 @@ class AmbientUiController:
     def is_running(self) -> bool:
         return self._ambient.is_running()
 
+    def stats(self) -> dict:
+        return {
+            "running": self._ambient.is_running(),
+            "errors": self._ambient.stream_error_count(),
+            "last_error": self._ambient.last_stream_error(),
+        }
+
     def stop_if_running(self) -> None:
         if self._ambient.is_running():
             self._stop()

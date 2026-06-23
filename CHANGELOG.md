@@ -2,6 +2,22 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.2.1] - 2026-06-23
+
+A maintenance release: a fourth language, smarter first-run defaults, and a calmer, fully neutral dark theme.
+
+### Added
+- Spanish (Español) interface translation — a fourth language alongside Russian, English and Chinese.
+- Automatic language on first launch: LumaBLE now opens in your Windows system language when it recognises it (e.g. an English Windows opens in English), falling back to English otherwise. Your manual choice is always kept afterwards.
+- Single-instance guard: launching LumaBLE again no longer starts a second copy (which could fight over the Bluetooth connection); it brings the existing window to the front instead.
+- Screen-sync diagnostics: the diagnostics report now lists capture state, stream error count and the last stream error, making a misbehaving Ambient sync easier to troubleshoot.
+
+### Changed
+- Dark theme is now fully neutral graphite — removed the residual cold blue/slate tint from surfaces, cards, buttons and selection. The quick-mode accent no longer bleeds into the window background; the backdrop's only colour comes from the current strip colour.
+
+### Fixed
+- Configs panel header ("Configs") is now left-aligned and on-grid like every other card, instead of drifting to the centre.
+
 ## [0.2.0] - 2026-06-20
 
 A full interface redesign. LumaBLE moves from a long scrolling card page to a focused, app-style layout with a premium dark look.

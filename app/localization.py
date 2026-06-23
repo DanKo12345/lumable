@@ -11,7 +11,7 @@ from app.storage import DATA_DIR
 L10N_PREFIX = "__L10N__"
 L10N_SUFFIX = "__END__"
 
-LANGUAGE_ORDER: tuple[str, ...] = ("ru", "en", "zh")
+LANGUAGE_ORDER: tuple[str, ...] = ("ru", "en", "es", "zh")
 I18N_PACKAGE = "app.i18n"
 USER_I18N_DIR = DATA_DIR / "i18n"
 

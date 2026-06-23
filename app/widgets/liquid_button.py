@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Property, QEasingCurve, QRectF, Qt
+from PySide6.QtCore import Property, QEasingCurve, QRectF, Qt, QVariantAnimation
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -51,6 +51,32 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._anim = make_property_animation(self, b"hoverValue", 180, QEasingCurve.OutCubic)
         self._init_button_motion()
         self._impact_anim = make_property_animation(self, b"impactValue", 260, QEasingCurve.OutCubic)
+
+        # Smoothly eased fill colour for the "led" role (the power button) so it
+        # glides to the new strip colour instead of snapping.
+        self._led_color: QColor | None = None
+        self._led_anim = QVariantAnimation(self)
+        self._led_anim.setDuration(260)
+        self._led_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._led_anim.valueChanged.connect(self._on_led_value)
+
+    def set_led_color(self, color: QColor) -> None:
+        target = QColor(color)
+        start = QColor(self._led_color) if self._led_color is not None else target
+        self._led_anim.stop()
+        self._led_anim.setStartValue(start)
+        self._led_anim.setEndValue(target)
+        self._led_anim.start()
+
+    def _on_led_value(self, value) -> None:
+        self._led_color = QColor(value)
+        self.update()
+
+    def _led_paint_color(self) -> QColor:
+        if self._led_color is not None:
+            return QColor(self._led_color)
+        glow = getattr(theme_manager, "led_glow", None)
+        return QColor(glow) if glow is not None else QColor(120, 150, 255)
 
     def set_icon_kind(self, kind: str) -> None:
         self._icon_kind = kind
@@ -268,8 +294,8 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         bm, bb = lc["body_mid"], lc["body_bottom"]
         if theme_manager.is_dark:
             body.setColorAt(0.0,  QColor(255, 255, 255, 2))
-            body.setColorAt(0.42, QColor(156, 174, 204, 4 if enabled else 2))
-            body.setColorAt(1.0,  QColor(14, 20, 36,   6 if enabled else 3))
+            body.setColorAt(0.42, QColor(160, 160, 166, 4 if enabled else 2))
+            body.setColorAt(1.0,  QColor(12, 13, 16,   6 if enabled else 3))
         else:
             body.setColorAt(0.0,  QColor(255, 255, 255, 8 if enabled else 4))
             body.setColorAt(0.42, QColor(bm.red(), bm.green(), bm.blue(), 12 if enabled else 5))
@@ -346,7 +372,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         alpha = int((42 if theme_manager.is_dark else 34) * self._impact)
         glow = QRadialGradient(self._ripple_x, self._ripple_y, radius)
         glow.setColorAt(0.0, QColor(255, 255, 255, alpha))
-        glow.setColorAt(0.35, QColor(180, 210, 255, max(0, alpha // 3)))
+        glow.setColorAt(0.35, QColor(230, 230, 235, max(0, alpha // 3)))
         glow.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillRect(self.rect(), glow)
 
@@ -356,7 +382,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         ft, fb = lc["fill_top"], lc["fill_bottom"]
         role = self._role
         if role == "led":
-            glow = getattr(theme_manager, "led_glow", None) or QColor(120, 150, 255)
+            glow = self._led_paint_color()
             top = QColor(glow.red(), glow.green(), glow.blue())
             bot = QColor(glow.red(), glow.green(), glow.blue())
             if theme_manager.is_dark:
@@ -367,13 +393,13 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
                 bot.setAlpha(180)
             return top, bot
         if role == "mode":
-            return (QColor(255, 255, 255, 17), QColor(95, 110, 160, 10)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
+            return (QColor(255, 255, 255, 17), QColor(78, 79, 84, 10)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
         if role == "mode_active":
             return (QColor(251, 191, 146, 138), QColor(114, 73, 54, 94)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
         if role == "primary_warm":
             return (QColor(255, 218, 198, 58), QColor(118, 72, 66, 44)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
         if role == "accent_soft":
-            return (QColor(255, 255, 255, 18), QColor(220, 232, 250, 10)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
+            return (QColor(255, 255, 255, 18), QColor(222, 222, 228, 10)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
         if role == "accent":
             top = qcolor_from_token(palette["accent_start"])
             top.setAlpha(118 if theme_manager.is_dark else ft.alpha())
@@ -401,7 +427,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         glow_path = QPainterPath()
         glow_path.addRoundedRect(glow_rect, radius + 1.0, radius + 1.0)
         if is_led:
-            led = getattr(theme_manager, "led_glow", None) or QColor(120, 150, 255)
+            led = self._led_paint_color()
             glow_color = QColor(led.red(), led.green(), led.blue())
         elif is_warm or role == "mode_active":
             glow_color = QColor(255, 187, 140)
@@ -491,8 +517,8 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         body = QLinearGradient(0, rect.top(), 0, rect.bottom())
         if theme_manager.is_dark:
             body.setColorAt(0.0,  QColor(255, 255, 255,  1))
-            body.setColorAt(0.46, QColor(154, 174, 204,  4 if enabled else 2))
-            body.setColorAt(1.0,  QColor( 14,  20,  36,  6 if enabled else 3))
+            body.setColorAt(0.46, QColor(160, 160, 166,  4 if enabled else 2))
+            body.setColorAt(1.0,  QColor( 12,  13,  16,  6 if enabled else 3))
         else:
             body.setColorAt(0.0,  QColor(255, 255, 255,  8))
             body.setColorAt(0.46, QColor(bm.red(), bm.green(), bm.blue(), 12 if enabled else 5))

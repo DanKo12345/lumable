@@ -105,11 +105,27 @@ def sanitize_report_text(text: str) -> str:
     return sanitized
 
 
+def _ambient_section(ambient: dict[str, Any] | None) -> list[str]:
+    if not ambient or not (ambient.get("errors") or ambient.get("running")):
+        return []
+    lines = [
+        "",
+        _t("ambient_section"),
+        _line_key("ambient_running", _yes_no(ambient.get("running"))),
+        _line_key("ambient_errors", int(ambient.get("errors", 0) or 0)),
+    ]
+    error_text = sanitize_report_text(str(ambient.get("last_error", "") or ""))
+    if error_text.strip():
+        lines.append(_line_key("ambient_last_error", error_text))
+    return lines
+
+
 def build_diagnostics_report(
     snapshot: dict[str, Any],
     session_logs: Iterable[str],
     *,
     include_crashes: bool = True,
+    ambient: dict[str, Any] | None = None,
 ) -> str:
     device = snapshot.get("device") or {}
     driver = snapshot.get("driver") or {}
@@ -195,6 +211,8 @@ def build_diagnostics_report(
 
     if history_lines:
         sections.extend(["", _t("recent_ble_history_section"), *history_lines])
+
+    sections.extend(_ambient_section(ambient))
 
     sections.extend(["", _t("session_logs_section"), *(log_lines[-80:] if log_lines else ["-"])])
 

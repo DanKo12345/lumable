@@ -3,18 +3,18 @@ from __future__ import annotations
 from PySide6.QtGui import QColor
 
 DARK = {
-    "window_start": "#0a0b10",
-    "window_end": "#0d0e15",
-    "surface": "rgba(28, 31, 41, 0.94)",
-    "surface_soft": "rgba(40, 44, 55, 0.66)",
-    "surface_strong": "rgba(18, 20, 28, 0.94)",
+    "window_start": "#090a0c",
+    "window_end": "#07080a",
+    "surface": "rgba(28, 29, 32, 0.94)",
+    "surface_soft": "rgba(38, 39, 43, 0.66)",
+    "surface_strong": "rgba(17, 18, 21, 0.94)",
     "surface_border": "rgba(255, 255, 255, 0.10)",
     "surface_line": "rgba(255, 255, 255, 0.12)",
-    "text": "#f6f8ff",
-    "text_soft": "rgba(232, 238, 255, 0.82)",
-    "muted": "rgba(214, 224, 255, 0.58)",
-    "field": "rgba(255, 255, 255, 0.10)",
-    "field_alt": "rgba(255, 255, 255, 0.16)",
+    "text": "#f7f7f8",
+    "text_soft": "rgba(236, 237, 240, 0.82)",
+    "muted": "rgba(220, 222, 226, 0.58)",
+    "field": "rgba(255, 255, 255, 0.085)",
+    "field_alt": "rgba(255, 255, 255, 0.13)",
     "field_border": "rgba(255, 255, 255, 0.16)",
     "accent_start": "#8fbfff",
     "accent_end": "#6f9eff",
@@ -24,7 +24,7 @@ DARK = {
     "success_end": "#4ca88f",
     "chip": "rgba(255, 255, 255, 0.10)",
     "chip_border": "rgba(255, 255, 255, 0.14)",
-    "list_sel": "rgba(120, 182, 255, 0.22)",
+    "list_sel": "rgba(255, 255, 255, 0.12)",
     "list_hover": "rgba(255, 255, 255, 0.06)",
     "scroll": "rgba(255, 255, 255, 0.18)",
 }
@@ -98,12 +98,15 @@ class ThemeManager:
         if self._accent_override is None:
             return base
         accent = QColor(self._accent_override)
+        # The quick-mode accent only dyes small UI elements (active buttons,
+        # chips, selection). It must NOT touch window_start/window_end — the
+        # window background's only source of colour is the live strip colour,
+        # applied as a glow in AuroraBackground. Tinting the window here is what
+        # leaked a blue cast when "Спокойно" (accent #7fb7ff) was active.
         base["accent_start"] = self._mix_token(base["accent_start"], accent, 0.48, lift=1.1)
         base["accent_end"] = self._mix_token(base["accent_end"], accent, 0.42, lift=1.0)
         base["list_sel"] = self._mix_token(base["list_sel"], accent, 0.34)
         base["list_hover"] = self._mix_token(base["list_hover"], accent, 0.24)
-        base["window_start"] = self._mix_token(base["window_start"], accent, 0.12)
-        base["window_end"] = self._mix_token(base["window_end"], accent, 0.18)
         return base
 
     def set_dark(self, is_dark: bool) -> dict[str, str]:

@@ -9,9 +9,10 @@ from app import localization
 def test_packaged_languages_are_available() -> None:
     manager = localization.LocalizationManager()
 
-    assert manager.available_languages()[:3] == ["ru", "en", "zh"]
+    assert manager.available_languages()[:4] == ["ru", "en", "es", "zh"]
     assert manager.language_name("ru") == "Русский"
     assert manager.language_name("en") == "English"
+    assert manager.language_name("es") == "Español"
     assert manager.language_name("zh") == "中文"
 
 
@@ -127,7 +128,7 @@ def test_triones_effect_labels_are_human_readable() -> None:
         *[f"effect.triones_effect_{code:02x}" for code in range(0x26, 0x39)],
     ]
 
-    for language in ("ru", "en", "zh"):
+    for language in ("ru", "en", "es", "zh"):
         manager.set_language(language)
         for key in triones_keys:
             label = manager.t(key)
@@ -140,7 +141,7 @@ def test_banlanx_effect_labels_are_human_readable() -> None:
     manager = localization.LocalizationManager()
     banlanx_keys = [f"effect.banlanx_effect_{code:02x}" for code in range(0x01, 0x18)]
 
-    for language in ("ru", "en", "zh"):
+    for language in ("ru", "en", "es", "zh"):
         manager.set_language(language)
         for key in banlanx_keys:
             label = manager.t(key)
@@ -156,7 +157,7 @@ def test_magic_home_effect_labels_are_human_readable() -> None:
         *[f"effect.magic_home_effect_{code:02x}" for code in range(0x26, 0x39)],
     ]
 
-    for language in ("ru", "en", "zh"):
+    for language in ("ru", "en", "es", "zh"):
         manager.set_language(language)
         for key in magic_home_keys:
             label = manager.t(key)
@@ -266,7 +267,7 @@ def test_update_labels_are_translated() -> None:
         "diagnostics.report.targets",
     ]
 
-    for language in ("ru", "en", "zh"):
+    for language in ("ru", "en", "es", "zh"):
         manager.set_language(language)
         for key in update_keys:
             assert manager.t(key) != key

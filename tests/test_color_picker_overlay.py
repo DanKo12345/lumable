@@ -104,7 +104,7 @@ def test_color_picker_builds_for_all_languages_and_themes() -> None:
     original_language = localization_manager.language
     original_theme = theme_manager.is_dark
     try:
-        for language in ("ru", "en", "zh"):
+        for language in ("ru", "en", "es", "zh"):
             localization_manager.set_language(language)
             for is_dark in (True, False):
                 theme_manager.set_dark(is_dark)

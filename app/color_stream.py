@@ -68,6 +68,8 @@ class ColorStreamEngine(QObject):
         self._sink: Callable[[int, int, int], None] | None = None
         self._last_sent: RGB | None = None
         self._last_send_ms = 0
+        self._error_count = 0
+        self._last_error = ""
         self._elapsed = QElapsedTimer()
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.PreciseTimer)
@@ -83,11 +85,19 @@ class ColorStreamEngine(QObject):
     def is_running(self) -> bool:
         return self._timer.isActive()
 
+    def error_count(self) -> int:
+        return self._error_count
+
+    def last_error(self) -> str:
+        return self._last_error
+
     def start(self, sink: Callable[[int, int, int], None], initial: RGB = (0, 0, 0)) -> None:
         self._sink = sink
         self._smoother.reset(initial)
         self._last_sent = None
         self._last_send_ms = 0
+        self._error_count = 0
+        self._last_error = ""
         self._elapsed.restart()
         self._timer.start()
 
@@ -111,6 +121,8 @@ class ColorStreamEngine(QObject):
         self._last_send_ms = now
         try:
             self._sink(color[0], color[1], color[2])
-        except Exception:
-            # A failed BLE write must never kill the stream loop.
-            pass
+        except Exception as exc:
+            # A failed BLE write must never kill the stream loop, but record it
+            # so a persistently failing stream is visible in diagnostics.
+            self._error_count += 1
+            self._last_error = str(exc)
