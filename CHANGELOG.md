@@ -2,6 +2,34 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.2.2] - 2026-06-25
+
+App-driven lighting that works on any controller — react to your music and run smooth animations — plus a weekly schedule, a clearer Pro window, and a lot of UI polish.
+
+### Added
+- Music reactivity (Pro): the strip pulses to your system audio in real time. Per-band colours (bass / mids / treble) you can recolour, a Saturation control, and a Speed control that smooths how fast the colour follows the beat. Live colour preview.
+- App animations: Breathing, Heartbeat, Candle, Storm, Gradient, Lava and Aurora — computed by the app and streamed, so they work on any controller regardless of its firmware effects. Speed control and live preview.
+- Weekly schedule (Pro): choose which days of the week the on/off timer runs, using day-of-week chips. The Windows background tasks use matching weekly triggers, so it also fires when the app is closed.
+- Schedule now has its own section in the navigation.
+- "Available in Pro" badge on the Schedule card, matching Screen sync and Music — and every Pro badge is now clickable and opens the LumaBLE Pro window.
+- The LumaBLE Pro window now lists what Pro unlocks (screen sync, music reactivity, weekly schedule, all effects & scenes, unlimited profiles with import/export) before asking for a key.
+- Enabling a streaming mode (music / screen sync / animations) now turns the strip on automatically if it was off.
+
+### Changed
+- Connection status dot is now animated: a soft amber pulse while scanning, blue while connecting, green when connected; the scanning/connecting text shows an animated "…".
+- Dropdown lists are fully neutral now (removed the blue tint and blue selection highlight) and open with a subtle "pop" animation.
+- Redesigned the weekday chips — a glassy look with smooth select/hover animation.
+- License activation runs off the UI thread, so the window no longer freezes during the check; the button shows "Checking…" while the request is in flight.
+- About window: the open-source components list now includes mss, soundcard and numpy, and the panel got a matching accent halo so it reads as one family with the Pro window.
+- Card subtitles are left-aligned on the grid; Settings value controls share one width; section and header icons line up with their titles.
+- Music card dims/disables its controls while it's off (like the Schedule card).
+
+### Fixed
+- Device card no longer duplicates the MAC address or shows an empty "RSSI -" when the controller name is unavailable.
+
+### Internal
+- Test suite now runs in parallel (much faster); main-window logic split into focused controllers (diagnostics, colour).
+
 ## [0.2.1] - 2026-06-23
 
 A maintenance release: a fourth language, smarter first-run defaults, and a calmer, fully neutral dark theme.

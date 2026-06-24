@@ -16,6 +16,7 @@ PRO_FEATURES = frozenset(
     {
         "all_effects",
         "ambient_sync",
+        "music_sync",
         "color_history_full",
         "custom_quick_modes",
         "profile_import",

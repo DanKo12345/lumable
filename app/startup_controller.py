@@ -61,15 +61,24 @@ def _run_schtasks(args: list[str], *, allow_missing: bool = False) -> bool:
     raise OSError(message or f"schtasks failed with exit code {completed.returncode}")
 
 
-def _create_daily_task(name: str, action: str, time_text: str) -> None:
+_DAY_CODES = {0: "MON", 1: "TUE", 2: "WED", 3: "THU", 4: "FRI", 5: "SAT", 6: "SUN"}
+
+
+def _create_schedule_task(name: str, action: str, time_text: str, days: list[int]) -> None:
+    # All seven days -> a simple daily task; a subset -> a weekly task limited to
+    # those weekdays (schtasks /D MON,WED,...).
+    if len(set(days)) >= 7:
+        schedule_args = ["/SC", "DAILY"]
+    else:
+        codes = ",".join(_DAY_CODES[d] for d in sorted(set(days)) if d in _DAY_CODES)
+        schedule_args = ["/SC", "WEEKLY", "/D", codes]
     _run_schtasks(
         [
             "/Create",
             "/F",
             "/TN",
             name,
-            "/SC",
-            "DAILY",
+            *schedule_args,
             "/ST",
             time_text,
             "/TR",
@@ -94,7 +103,11 @@ def are_schedule_tasks_enabled() -> bool:
         return False
 
 
-def set_schedule_tasks_enabled(enabled: bool, *, on_time: str, off_time: str) -> None:
+def set_schedule_tasks_enabled(
+    enabled: bool, *, on_time: str, off_time: str, days: list[int] | None = None
+) -> None:
+    if days is None:
+        days = [0, 1, 2, 3, 4, 5, 6]
     if not is_supported():
         if not enabled:
             return
@@ -103,9 +116,10 @@ def set_schedule_tasks_enabled(enabled: bool, *, on_time: str, off_time: str) ->
         if not enabled:
             return
         raise OSError("Windows Task Scheduler is disabled for this process.")
-    if enabled:
-        _create_daily_task(SCHEDULE_TASK_ON, "on", on_time)
-        _create_daily_task(SCHEDULE_TASK_OFF, "off", off_time)
+    # With no day selected the schedule can never fire, so there's nothing to run.
+    if enabled and days:
+        _create_schedule_task(SCHEDULE_TASK_ON, "on", on_time, days)
+        _create_schedule_task(SCHEDULE_TASK_OFF, "off", off_time, days)
         return
     _delete_task(SCHEDULE_TASK_ON)
     _delete_task(SCHEDULE_TASK_OFF)

@@ -9,7 +9,7 @@ license flow for advanced features.
 
 Author: `dollza`
 
-Version: `0.2.1 beta`
+Version: `0.2.2 beta`
 
 Download the latest Windows build from the [Releases page](https://github.com/DanKo12345/lumable/releases).
 
@@ -58,12 +58,6 @@ Developer tools for tests and release builds:
 
 ```powershell
 .\run_app.bat
-```
-
-Free-mode run:
-
-```powershell
-.\run_free.bat
 ```
 
 ## Tests

@@ -22,7 +22,9 @@ from app.panels import (
     build_device_section,
     build_diagnostics_section,
     build_effects_section,
+    build_music_section,
     build_schedule_section,
+    build_software_effects_section,
 )
 from app.widgets import AccentPreview, LiquidButton
 
@@ -31,6 +33,10 @@ def _build_settings_card(host):
     """App settings (language / FPS / theme / about) as a tidy labelled list."""
     card = host._card(host._tr("settings.title"), host._tr("settings.subtitle"))
     build_chrome_controls(host)  # creates host.language_combo / performance_combo / theme_button / about_button
+    # Uniform width so the three value controls line up in one tidy column
+    # instead of each being a different size.
+    for control in (host.language_combo, host.performance_combo, host.theme_button):
+        control.setFixedWidth(host._sz(170))
     rows = [
         ("settings.language", host.language_combo),
         ("settings.fps", host.performance_combo),
@@ -64,16 +70,17 @@ def _build_settings_card(host):
 # rarely-touched setup (device, schedule, app settings, diagnostics).
 _NAV_SECTIONS = (
     ("color", "nav.color", (build_color_section,)),
-    ("effects", "nav.effects", (build_effects_section,)),
+    ("effects", "nav.effects", (build_effects_section, build_software_effects_section)),
     ("ambient", "nav.ambient", (build_ambient_section,)),
+    ("music", "nav.music", (build_music_section,)),
     ("profiles", "nav.profiles", (build_configs_section,)),
+    ("schedule", "nav.schedule", (build_schedule_section,)),
     (
         "settings",
         "nav.settings",
         (
             build_device_section,
             _build_settings_card,
-            build_schedule_section,
             build_diagnostics_section,
         ),
     ),

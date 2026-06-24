@@ -33,6 +33,13 @@ def _make_host(*, enabled: bool = False, on_time: str = "19:00", off_time: str =
     off.time.return_value = QTime.fromString(off_time, "HH:mm")
     host.schedule_off_time = off
 
+    # All seven day chips enabled by default, so the weekday guard always passes.
+    host.schedule_day_buttons = []
+    for _ in range(7):
+        chip = MagicMock()
+        chip.isChecked.return_value = True
+        host.schedule_day_buttons.append(chip)
+
     power = MagicMock()
     power.isChecked.return_value = power_on
     host.power_button = power

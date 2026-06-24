@@ -3,7 +3,17 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 
-from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QPropertyAnimation, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPointF,
+    QPropertyAnimation,
+    QRectF,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
@@ -11,6 +21,26 @@ from app.theme import qcolor_from_token, theme_manager
 from app.widgets.celebration_overlay import CelebrationOverlay
 from app.widgets.clickable_label import ClickableLabel
 from app.widgets.liquid_button import LiquidButton
+
+
+class _ActivateWorker(QThread):
+    """Runs the (network) license activation off the UI thread so the window
+    never freezes while the Lemon Squeezy request is in flight.
+    """
+
+    done = Signal(bool, str)
+
+    def __init__(self, callback: Callable[[str], tuple[bool, str]], key: str, parent=None) -> None:
+        super().__init__(parent)
+        self._callback = callback
+        self._key = key
+
+    def run(self) -> None:
+        try:
+            ok, message = self._callback(self._key)
+        except Exception as exc:  # network/parse failure -> a failed activation
+            ok, message = False, str(exc)
+        self.done.emit(bool(ok), str(message))
 
 
 class _LicensePanel(QFrame):
@@ -185,6 +215,7 @@ class LicenseOverlay(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self._labels = labels
         self._activate_callback = activate_callback
+        self._activate_worker: _ActivateWorker | None = None
         self._buy_callback = buy_callback
         self._deactivate_callback = deactivate_callback
         self._mode = mode
@@ -212,6 +243,9 @@ class LicenseOverlay(QWidget):
         self._panel = _LicensePanel(self)
         if self._is_active_mode():
             self._panel.setFixedSize(560, 460)
+        else:
+            # Free mode also lists what Pro unlocks, so it needs more room.
+            self._panel.setFixedSize(560, 556)
         layout.addWidget(self._panel, 0, Qt.AlignCenter)
         layout.addStretch(1)
 
@@ -249,12 +283,15 @@ class LicenseOverlay(QWidget):
             panel_layout.addWidget(status_card)
         else:
             panel_layout.addWidget(subtitle)
+            features_card = self._build_features_card()
+            if features_card is not None:
+                panel_layout.addWidget(features_card)
 
         field_box = QFrame(self._panel)
         self._field_box = field_box
         field_box.setObjectName("licenseFieldBox")
         field_layout = QVBoxLayout(field_box)
-        field_layout.setContentsMargins(16, 12, 16, 12)
+        field_layout.setContentsMargins(18, 12, 18, 12)
         field_layout.setSpacing(8)
         field_label = QLabel(labels["key_label"], field_box)
         field_label.setObjectName("licenseFieldLabel")
@@ -344,8 +381,52 @@ class LicenseOverlay(QWidget):
             return ""
         return f"{key[:4]} ···· {key[-4:]}"
 
+    def _build_features_card(self) -> QFrame | None:
+        """A short 'what Pro unlocks' list so the value is clear before buying."""
+        text = str(self._labels.get("features", "")).strip()
+        if not text:
+            return None
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        if not lines:
+            return None
+        card = QFrame(self._panel)
+        card.setObjectName("licenseFeatures")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(0)
+        label = QLabel(card)
+        label.setObjectName("licenseFeatureList")
+        label.setTextFormat(Qt.RichText)
+        accent = theme_manager.palette["accent_start"]
+        rows = "<br>".join(
+            f"<span style='color:{accent};'>✓</span>&nbsp;&nbsp;{line}" for line in lines
+        )
+        label.setText(f"<div style='line-height: 172%;'>{rows}</div>")
+        layout.addWidget(label)
+        return card
+
     def _activate(self) -> None:
-        ok, message = self._activate_callback(self.key_input.text())
+        if self._activate_worker is not None:
+            return  # an activation is already in flight
+        self._set_activating(True)
+        self.message_label.setText("")
+        worker = _ActivateWorker(self._activate_callback, self.key_input.text(), self)
+        self._activate_worker = worker
+        worker.done.connect(self._on_activate_done)
+        worker.start()
+
+    def _set_activating(self, busy: bool) -> None:
+        self.key_input.setEnabled(not busy)
+        self._activate_button.setEnabled(not busy)
+        self._cancel_button.setEnabled(not busy)
+        self.buy_button.setEnabled(not busy)
+        self._activate_button.setText(
+            self._labels.get("activating", "…") if busy else self._labels["activate"]
+        )
+
+    def _on_activate_done(self, ok: bool, message: str) -> None:
+        self._activate_worker = None
+        self._set_activating(False)
         self.message_label.setText("" if ok else message)
         self.message_label.setProperty("state", "success" if ok else "error")
         self.message_label.style().unpolish(self.message_label)
@@ -497,6 +578,16 @@ class LicenseOverlay(QWidget):
                 background: {palette["field"]};
                 border: 1px solid {palette["field_border"]};
                 border-radius: 18px;
+            }}
+            #licenseFeatures {{
+                background: {palette["field"]};
+                border: 1px solid {palette["field_border"]};
+                border-radius: 16px;
+            }}
+            #licenseFeatureList {{
+                color: {palette["text_soft"]};
+                font-size: 12.5px;
+                font-weight: 600;
             }}
             #licenseKeyChip {{
                 color: {palette["text"]};

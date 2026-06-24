@@ -8,7 +8,7 @@ LumaBLE ищет поддерживаемые Bluetooth-контроллеры, 
 
 Автор: `dollza`
 
-Версия: `0.2.1 beta`
+Версия: `0.2.2 beta`
 
 Скачать последнюю Windows-сборку можно на странице [Releases](https://github.com/DanKo12345/lumable/releases).
 
@@ -45,12 +45,6 @@ py -3.11 -m venv .venv
 
 ```powershell
 .\run_app.bat
-```
-
-Запуск в Free-режиме:
-
-```powershell
-.\run_free.bat
 ```
 
 ## Тесты

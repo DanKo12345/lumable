@@ -1,6 +1,0 @@
-@echo off
-set "ROOT=%~dp0"
-cd /d "%ROOT%"
-
-set "LUMABLE_FORCE_PRO="
-call "%ROOT%run_app.bat"

@@ -112,6 +112,16 @@ class AmbientUiController:
 
     def _start(self) -> None:
         host = self._host
+        # Music / app animations also own the strip — only one can drive it.
+        if getattr(host, "_music_ui", None) is not None:
+            host._music_ui.stop_if_running()
+        if getattr(host, "_software_fx_ui", None) is not None:
+            host._software_fx_ui.stop_if_running()
+        # If the strip is powered off the colour stream wouldn't show — turn it
+        # on first so enabling screen sync "just works".
+        if not host.power_button.isChecked():
+            host.power_button.setChecked(True)
+            host._toggle_power()
         self._apply_options()
 
         def sink(red: int, green: int, blue: int) -> None:

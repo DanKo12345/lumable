@@ -5,11 +5,11 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEasingCurve, QPropertyAnimation, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
-    QFileDialog,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
@@ -22,6 +22,7 @@ from app.ambient_ui_controller import AmbientUiController
 from app.app_info import APP_ORGANIZATION, APP_RELEASES_URL, APP_UPDATE_URL, APP_VERSION
 from app.ble import BleController
 from app.ble_event_handler import BleEventHandler
+from app.color_controller import ColorController
 from app.constants import (
     CHIP_HEIGHT,
     CONTROL_HEIGHT,
@@ -31,11 +32,12 @@ from app.constants import (
     WINDOW_MIN_HEIGHT,
     WINDOW_MIN_WIDTH,
 )
-from app.diagnostics import build_diagnostics_report
-from app.feature_gate import FREE_COLOR_HISTORY_COUNT, PRO_COLOR_HISTORY_COUNT, can_use, free_effect_limit
+from app.diagnostics_controller import DiagnosticsController
+from app.feature_gate import FREE_COLOR_HISTORY_COUNT, PRO_COLOR_HISTORY_COUNT, can_use
 from app.license_refresh import LicenseRefresher
 from app.localization import localization_manager
 from app.main_layout import build_main_layout
+from app.music_ui_controller import MusicUiController
 from app.overlay_controller import OverlayController
 from app.performance import resolve_ui_fps
 from app.profile_actions import ProfileActions
@@ -44,6 +46,7 @@ from app.quick_mode_controller import QuickModeController
 from app.schedule_controller import ScheduleController
 from app.shortcut_controller import ShortcutController
 from app.single_instance import SingleInstance
+from app.software_effect_ui_controller import SoftwareEffectUiController
 from app.storage import DEFAULT_START_COLOR, load_profiles, load_settings, save_settings
 from app.theme import theme_manager
 from app.theme_controller import ThemeController
@@ -63,7 +66,6 @@ from app.widgets import (
     SmoothScrollFilter,
     ValueChip,
 )
-from app.widgets.effect_swatch import effect_swatch_icon
 from app.widgets.styled_tooltip import TooltipManager
 from app.window_state_controller import WindowStateController
 
@@ -124,6 +126,7 @@ class MainWindow(QMainWindow):
         self._scan_in_progress = False
         self._connect_in_progress = False
         self._connection_status_phase = 0
+        self._status_pulsing = False
         self._active_mode_key: str | None = None
         self._theme_transition = None
         self._theme_transition_overlay = None
@@ -155,7 +158,11 @@ class MainWindow(QMainWindow):
         self._schedule_ctrl = ScheduleController(self)
         self._quick_mode_ctrl = QuickModeController(self)
         self._ambient_ui = AmbientUiController(self)
+        self._music_ui = MusicUiController(self)
+        self._software_fx_ui = SoftwareEffectUiController(self)
         self._window_state = WindowStateController(self)
+        self._diagnostics_ctrl = DiagnosticsController(self)
+        self._color_ctrl = ColorController(self)
         self._license_refresher = LicenseRefresher(self)
         self._license_refresher.finished.connect(self._on_license_refreshed)
         self._aurora = AuroraBackground(self)
@@ -244,21 +251,7 @@ class MainWindow(QMainWindow):
         self._log(self._tr("license.activated_log") if is_pro_now else self._tr("license.expired_log"))
 
     def _refresh_effect_names(self):
-        current_code = self.effect_combo.currentData()
-        effects = list(self._ble.effect_presets())
-        unlocked_count = len(effects) if can_use("all_effects") else free_effect_limit()
-        self.effect_combo.blockSignals(True)
-        self.effect_combo.clear()
-        self._effect_key_by_code = {effect.code: effect.key for effect in effects[:unlocked_count]}
-        for index, effect in enumerate(effects):
-            name = localization_manager.effect_name(effect.key)
-            locked = index >= unlocked_count
-            icon = effect_swatch_icon(effect.key, effect.code, is_dark=self._is_dark, locked=locked)
-            self.effect_combo.addItem(icon, name, None if locked else effect.code)
-        idx = self.effect_combo.findData(current_code)
-        self.effect_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self.effect_combo.blockSignals(False)
-        self._sync_speed_controls()
+        self._color_ctrl.refresh_effect_names()
 
     def _refresh_language_options(self):
         self._ui_localization.refresh_language_options()
@@ -328,6 +321,8 @@ class MainWindow(QMainWindow):
         self._wire_diagnostics_events()
         self._wire_schedule_events()
         self._ambient_ui.wire()
+        self._music_ui.wire()
+        self._software_fx_ui.wire()
         self._wire_shortcuts()
 
     def _wire_device_events(self):
@@ -501,70 +496,22 @@ class MainWindow(QMainWindow):
         self.power_button.set_led_color(QColor(color))
 
     def _color_history(self) -> list[dict[str, int]]:
-        history = self._settings.get("color_history", [])
-        return history if isinstance(history, list) else []
+        return self._color_ctrl.color_history()
 
     def _refresh_color_history(self) -> None:
-        visible_limit = PRO_COLOR_HISTORY_COUNT if can_use("color_history_full") else FREE_COLOR_HISTORY_COUNT
-        history = self._color_history()[:visible_limit]
-        # Hide the "Recent" label when there's nothing yet (no empty row on top).
-        self.color_history_label.setVisible(len(history) > 0)
-        for index, button in enumerate(self.color_history_buttons):
-            if index >= len(history):
-                button.hide()
-                continue
-            item = history[index]
-            button.set_color(QColor(int(item.get("r", 0)), int(item.get("g", 0)), int(item.get("b", 0))))
-            button.show()
+        self._color_ctrl.refresh_history()
 
     def _remember_current_color(self) -> None:
-        color = self._current_color()
-        rgb = {"r": color.red(), "g": color.green(), "b": color.blue()}
-        history = [
-            item
-            for item in self._color_history()
-            if not (
-                int(item.get("r", -1)) == rgb["r"]
-                and int(item.get("g", -1)) == rgb["g"]
-                and int(item.get("b", -1)) == rgb["b"]
-            )
-        ]
-        limit = PRO_COLOR_HISTORY_COUNT if can_use("color_history_full") else FREE_COLOR_HISTORY_COUNT
-        self._settings["color_history"] = [rgb, *history][:limit]
-        save_settings(self._settings)
-        self._refresh_color_history()
+        self._color_ctrl.remember_current()
 
     def _apply_color_history_item(self, index: int) -> None:
-        history = self._color_history()
-        if index < 0 or index >= len(history):
-            return
-        item = history[index]
-        with self._suppress_signals():
-            self.red_slider.setValue(int(item.get("r", 0)))
-            self.green_slider.setValue(int(item.get("g", 0)))
-            self.blue_slider.setValue(int(item.get("b", 0)))
-            self._update_preview()
-        self._apply_current_color()
+        self._color_ctrl.apply_history_item(index)
 
     def _sync_effect_preview(self, *, reset_phase: bool = False):
-        data = self.effect_combo.currentData()
-        code = int(data or 0)
-        self._sync_speed_controls()
-        self.effect_preview.set_effect(self._effect_key_by_code.get(code, "static_color"), code, reset_phase=reset_phase)
-        self.effect_preview.set_speed(self.speed_slider.value())
+        self._color_ctrl.sync_effect_preview(reset_phase=reset_phase)
 
     def _sync_speed_controls(self):
-        is_static = int(self.effect_combo.currentData() or 0) == 0
-        supports_speed = self._ble.supports_effect_speed()
-        visible = not is_static
-        enabled = visible and supports_speed
-        speed_label = self._slider_labels.get("effects.speed")
-        if speed_label is not None:
-            speed_label.setVisible(visible)
-        self.speed_slider.setVisible(visible)
-        self.speed_slider.setEnabled(enabled)
-        self.speed_value.setVisible(visible)
-        self.speed_value.setEnabled(enabled)
+        self._color_ctrl.sync_speed_controls()
 
     def _pick_color(self):
         if self._color_picker_overlay is not None:
@@ -645,6 +592,8 @@ class MainWindow(QMainWindow):
             return
         # Power is a manual override: leave ambient sync if it was running.
         self._ambient_ui.stop_if_running()
+        self._music_ui.stop_if_running()
+        self._software_fx_ui.stop_if_running()
         enabled = self.power_button.isChecked()
         self._ble.set_power(enabled)
         self._sync_aurora_accent(enabled=enabled)
@@ -661,13 +610,16 @@ class MainWindow(QMainWindow):
         connected = bool(self._is_connected)
         connecting = bool(self._connect_in_progress)
         has_devices = bool(self._devices)
-        if connecting and not connected:
+        # Animate the "…" on both the scanning and connecting status text.
+        active = (connecting or self._scan_in_progress) and not connected
+        if active:
             if not self._connection_status_timer.isActive():
                 self._connection_status_phase = 0
                 self._connection_status_timer.start()
             self.device_status.setText(self._connection_status_text())
         elif self._connection_status_timer.isActive():
             self._connection_status_timer.stop()
+        self._update_status_dot()
         self.scan_button.setEnabled(not connected and not connecting and not self._scan_in_progress)
         self.connect_button.setVisible(not connected)
         self.connect_button.setEnabled(not connected and not connecting and has_devices and not self._scan_in_progress)
@@ -679,62 +631,69 @@ class MainWindow(QMainWindow):
         self.logs_toggle_button.setText(self._tr("device.show_logs"))
 
     def _connection_status_text(self) -> str:
-        return f"{self._tr('device.status.connecting').rstrip('.')}{'.' * self._connection_status_phase}"
+        key = "device.status.connecting" if self._connect_in_progress else "device.status.scanning"
+        return f"{self._tr(key).rstrip('.…')}{'.' * self._connection_status_phase}"
 
     def _tick_connection_status_animation(self) -> None:
-        if not self._connect_in_progress or self._is_connected:
+        active = (self._connect_in_progress or self._scan_in_progress) and not self._is_connected
+        if not active:
             self._connection_status_timer.stop()
             self._sync_connect_buttons()
             return
         self._connection_status_phase = (self._connection_status_phase + 1) % 4
         self.device_status.setText(self._connection_status_text())
 
-    def _apply_speed(self):
-        if self._initializing:
+    def _ensure_status_pulse(self) -> None:
+        if getattr(self, "_status_dot_effect", None) is not None:
             return
-        self._ble.set_effect_speed(self.speed_slider.value())
-        self._sync_quick_mode_from_state()
+        dot = getattr(self, "device_status_dot", None)
+        if dot is None:
+            return
+        self._status_dot_effect = QGraphicsOpacityEffect(dot)
+        dot.setGraphicsEffect(self._status_dot_effect)
+        self._status_dot_effect.setOpacity(1.0)
+        self._status_pulse = QPropertyAnimation(self._status_dot_effect, b"opacity", self)
+        self._status_pulse.setDuration(1100)
+        self._status_pulse.setLoopCount(-1)
+        self._status_pulse.setKeyValueAt(0.0, 1.0)
+        self._status_pulse.setKeyValueAt(0.5, 0.4)
+        self._status_pulse.setKeyValueAt(1.0, 1.0)
+        self._status_pulse.setEasingCurve(QEasingCurve.InOutSine)
+
+    def _update_status_dot(self) -> None:
+        """Colour + soft pulse of the sidebar status dot for the current state:
+        amber while searching, blue while connecting, steady green when connected.
+        """
+        dot = getattr(self, "device_status_dot", None)
+        if dot is None:
+            return
+        self._ensure_status_pulse()
+        if self._is_connected:
+            color = "#46d39a"  # green
+        elif self._connect_in_progress:
+            color = "#6fa8ff"  # connecting (blue)
+        elif self._scan_in_progress:
+            color = "#f5b94a"  # searching (amber)
+        else:
+            color = "rgba(255, 255, 255, 0.30)"  # idle
+        dot.setStyleSheet(f"background: {color}; border-radius: {max(2, dot.width() // 2)}px;")
+        pulsing = (self._connect_in_progress or self._scan_in_progress) and not self._is_connected
+        if pulsing and not self._status_pulsing:
+            self._status_pulse.start()
+            self._status_pulsing = True
+        elif not pulsing and self._status_pulsing:
+            self._status_pulse.stop()
+            self._status_dot_effect.setOpacity(1.0)
+            self._status_pulsing = False
+
+    def _apply_speed(self):
+        self._color_ctrl.apply_speed()
 
     def _queue_selected_effect(self):
-        if self._initializing:
-            return
-        if self.effect_combo.currentData() is None:
-            self._effect_debounce.stop()
-            self._show_license_overlay()
-            with self._suppress_signals():
-                self.effect_combo.setCurrentIndex(self.effect_combo.findData(0))
-            self._sync_effect_preview(reset_phase=True)
-            return
-        self._sync_effect_preview(reset_phase=True)
-        self._sync_quick_mode_from_state()
-        self._effect_debounce.start()
+        self._color_ctrl.queue_selected_effect()
 
     def _apply_selected_effect(self):
-        if self._initializing:
-            return
-        data = self.effect_combo.currentData()
-        if data is None:
-            self._show_license_overlay()
-            with self._suppress_signals():
-                self.effect_combo.setCurrentIndex(self.effect_combo.findData(0))
-            self._sync_effect_preview(reset_phase=True)
-            return
-        code = int(data)
-        if code == 0:
-            self._ble.set_static_color(
-                self.red_slider.value(),
-                self.green_slider.value(),
-                self.blue_slider.value(),
-                self.brightness_slider.value(),
-            )
-            self._remember_current_color()
-            self._log(self._tr("status.static_color_mode"))
-            self._sync_effect_preview(reset_phase=True)
-            self._sync_quick_mode_from_state()
-            return
-        self._ble.set_effect_with_speed(code, self.speed_slider.value())
-        self._sync_effect_preview(reset_phase=True)
-        self._sync_quick_mode_from_state()
+        self._color_ctrl.apply_selected_effect()
 
     def _toggle_logs(self):
         self._show_logs_overlay()
@@ -869,45 +828,16 @@ class MainWindow(QMainWindow):
         self._refresh_diagnostics_view()
 
     def _diagnostics_text(self) -> str:
-        return build_diagnostics_report(
-            self._ble.diagnostics_snapshot(),
-            self._ui_feedback.raw_log_messages(),
-            include_crashes=False,
-            ambient=self._ambient_ui.stats(),
-        )
+        return self._diagnostics_ctrl.text()
 
     def _refresh_diagnostics_view(self):
-        if self.diagnostics_output is not None and self._ui_feedback is not None:
-            self.diagnostics_output.setPlainText(self._diagnostics_text())
+        self._diagnostics_ctrl.refresh_view()
 
     def _copy_diagnostics_report(self):
-        QApplication.clipboard().setText(self._diagnostics_text())
-        self._log(self._tr("diagnostics.copied"))
+        self._diagnostics_ctrl.copy_report()
 
     def _export_diagnostics_report(self):
-        default_name = f"lumable-diagnostics-{APP_VERSION}.txt"
-        path, _selected_filter = QFileDialog.getSaveFileName(
-            self,
-            self._tr("diagnostics.export_title"),
-            str(Path.home() / "Desktop" / default_name),
-            self._tr("diagnostics.file_filter"),
-        )
-        if not path:
-            return
-        if not path.lower().endswith(".txt"):
-            path += ".txt"
-        report = build_diagnostics_report(
-            self._ble.diagnostics_snapshot(),
-            self._ui_feedback.raw_log_messages(),
-            include_crashes=True,
-            ambient=self._ambient_ui.stats(),
-        )
-        try:
-            Path(path).write_text(report, encoding="utf-8")
-        except OSError as exc:
-            self._show_error(self._tr("diagnostics.export_error", error=str(exc)))
-            return
-        self._log(self._tr("diagnostics.exported", path=Path(path).name))
+        self._diagnostics_ctrl.export_report()
 
     def _save_window_settings(self):
         self._settings["window_width"] = self.width()
@@ -972,6 +902,8 @@ class MainWindow(QMainWindow):
         if self._close_after_ble_shutdown:
             self._tray_controller.hide_icon()
             self._ambient_ui.shutdown()
+            self._music_ui.shutdown()
+            self._software_fx_ui.shutdown()
             self._shutdown_tooltip_manager()
             super().closeEvent(event)
             app = QApplication.instance()

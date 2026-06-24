@@ -130,10 +130,9 @@ class BleEventHandler:
         host._is_connected = connected
         host._connect_in_progress = False
         host.device_status.setText(host._tr("device.status.connected") if connected else host._tr("device.status.not_connected"))
-        dot = getattr(host, "device_status_dot", None)
-        if dot is not None:
-            dot_color = "#46d39a" if connected else "rgba(255, 255, 255, 0.30)"
-            dot.setStyleSheet(f"background: {dot_color}; border-radius: {max(2, dot.width() // 2)}px;")
+        update_dot = getattr(host, "_update_status_dot", None)
+        if callable(update_dot):
+            update_dot()
         hint = getattr(host, "device_status_hint", None)
         if hint is not None:
             if connected:
@@ -174,10 +173,19 @@ class BleEventHandler:
         return str(self._host._settings.get("last_device_name", "")).strip()
 
     def _device_label(self, device: dict[str, Any]) -> str:
-        name = str(device.get("name", "")).strip() or str(device.get("address", "")).strip()
+        name = str(device.get("name", "")).strip()
         address = str(device.get("address", "")).strip()
-        rssi = str(device.get("rssi", "")).strip() or "-"
-        return f"{name}  |  {address}  |  RSSI {rssi}"
+        rssi = str(device.get("rssi", "")).strip()
+        parts: list[str] = []
+        # Skip the name when it's just the address again (avoids "MAC | MAC").
+        if name and name != address:
+            parts.append(name)
+        if address:
+            parts.append(address)
+        # Only show RSSI when there's a real reading (not the "-" placeholder).
+        if rssi and rssi != "-":
+            parts.append(f"RSSI {rssi}")
+        return "  |  ".join(parts) if parts else address
 
     def _sync_last_device_hint(
         self,
@@ -196,9 +204,14 @@ class BleEventHandler:
             label.setText(host._tr("device.last.none"))
             self._sync_device_onboarding_hint()
             return
-        display_name = resolved_name or resolved_address
-        key = "device.last.autoconnecting" if autoconnecting else "device.last"
-        label.setText(host._tr(key, name=display_name, address=resolved_address))
+        # When there's no distinct name (it equals the address), use the plain
+        # variant so the line isn't "MAC / MAC".
+        has_name = bool(resolved_name) and resolved_name != resolved_address
+        if autoconnecting:
+            key = "device.last.autoconnecting" if has_name else "device.last.autoconnecting_plain"
+        else:
+            key = "device.last" if has_name else "device.last_plain"
+        label.setText(host._tr(key, name=resolved_name, address=resolved_address))
         self._sync_device_onboarding_hint()
 
     def _sync_device_onboarding_hint(self) -> None:

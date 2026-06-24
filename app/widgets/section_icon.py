@@ -15,6 +15,9 @@ LUCIDE_ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons" / 
 class SectionIcon(QWidget):
     ICON_BOX = 26
     GLYPH_SIZE = 21
+    # Bold card titles sit optically a touch lower than their geometric centre
+    # (descender slack), so nudge the glyph down slightly to line up with them.
+    GLYPH_Y_BIAS = 1.5
 
     def __init__(self, kind: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -32,7 +35,7 @@ class SectionIcon(QWidget):
         icon_size = self.GLYPH_SIZE
         icon_rect = QRectF(
             (self.width() - icon_size) / 2,
-            (self.height() - icon_size) / 2,
+            (self.height() - icon_size) / 2 + self.GLYPH_Y_BIAS,
             icon_size,
             icon_size,
         )

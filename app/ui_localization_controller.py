@@ -35,6 +35,8 @@ class UiLocalizationController:
         self._apply_config_texts()
         self._apply_schedule_texts()
         self._apply_ambient_texts()
+        self._apply_music_texts()
+        self._apply_software_fx_texts()
         self._apply_diagnostics_texts()
 
         host._refresh_diagnostics_view()
@@ -139,6 +141,10 @@ class UiLocalizationController:
         host.schedule_startup_button.setToolTip(host._tr("schedule.startup_hint"))
         host.schedule_on_label.setText(host._tr("schedule.on"))
         host.schedule_off_label.setText(host._tr("schedule.off"))
+        for index, chip in enumerate(getattr(host, "schedule_day_buttons", [])):
+            chip.setText(host._tr(f"schedule.day_{index}"))
+        if getattr(host, "schedule_lock_label", None) is not None:
+            host.schedule_lock_label.setText(host._tr("schedule.pro_locked"))
         host.schedule_on_time.set_picker_title(host._tr("schedule.pick_on"))
         host.schedule_off_time.set_picker_title(host._tr("schedule.pick_off"))
         time_picker_labels = {
@@ -203,6 +209,47 @@ class UiLocalizationController:
             monitor_index = monitor_combo.findData(selected)
             monitor_combo.setCurrentIndex(monitor_index if monitor_index >= 0 else 0)
             monitor_combo.blockSignals(False)
+
+    def _apply_music_texts(self) -> None:
+        host = self._host
+        host.music_card.title_label.setText(host._tr("music.title"))
+        if host.music_card.subtitle_label is not None:
+            host.music_card.subtitle_label.setText(host._tr("music.subtitle"))
+        host._set_slider_label_text("music.speed", host._tr("music.speed"))
+        host._set_slider_label_text("music.saturation", host._tr("music.saturation"))
+        host._set_slider_label_text("music.smoothing", host._tr("music.smoothing"))
+        running = host._music_ui.is_running()
+        host.music_toggle_button.setText(host._tr("music.toggle_on" if running else "music.toggle_off"))
+        if getattr(host, "music_lock_label", None) is not None:
+            host.music_lock_label.setText(host._tr("music.pro_locked"))
+        if running and getattr(host, "music_status_label", None) is not None:
+            host.music_status_label.setText(host._tr("music.listening"))
+        captions = getattr(host, "music_band_captions", {})
+        for band, label_key in (("bass", "music.band_bass"), ("mid", "music.band_mid"), ("treble", "music.band_treble")):
+            caption = captions.get(band)
+            if caption is not None:
+                caption.setText(host._tr(label_key))
+        host._music_ui.refresh_lock()
+
+    def _apply_software_fx_texts(self) -> None:
+        from app.software_effects import EFFECT_KEYS
+
+        host = self._host
+        host.software_fx_card.title_label.setText(host._tr("software_fx.title"))
+        if host.software_fx_card.subtitle_label is not None:
+            host.software_fx_card.subtitle_label.setText(host._tr("software_fx.subtitle"))
+        host._set_slider_label_text("software_fx.speed", host._tr("software_fx.speed"))
+        running = host._software_fx_ui.is_running()
+        host.software_fx_toggle.setText(host._tr("software_fx.toggle_on" if running else "software_fx.toggle_off"))
+        combo = host.software_fx_combo
+        current = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        for key in EFFECT_KEYS:
+            combo.addItem(host._tr(f"software_fx.effect_{key}"), key)
+        index = combo.findData(current)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
 
     def _apply_diagnostics_texts(self) -> None:
         host = self._host

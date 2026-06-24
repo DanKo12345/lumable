@@ -91,27 +91,31 @@ class StaticPopupComboBox(QComboBox):
             base.setAlpha(255)
             surface_soft = qcolor_from_token(tokens["surface_soft"])
             surface_soft.setAlpha(255)
-            bottom = QColor(10, 18, 44, 255)
+            bottom = QColor(12, 13, 16, 255)  # neutral graphite, not navy blue
         else:
             surface_soft = QColor(255, 255, 255, 255)
-            base = QColor(235, 243, 255, 255)
-            bottom = QColor(214, 228, 250, 255)
+            base = QColor(245, 246, 249, 255)
+            bottom = QColor(231, 232, 236, 255)
         border = qcolor_from_token(tokens["field_border"])
         border.setAlpha(130 if is_dark else 118)
-        accent = qcolor_from_token(tokens["accent_start"])
 
-        def _accent(alpha: int) -> QColor:
-            return QColor(accent.red(), accent.green(), accent.blue(), alpha)
-
-        # Tint the current selection with the theme accent so the active effect
-        # reads clearly in both light and dark modes.
-        selected = _accent(74 if is_dark else 92)
-        selected_bottom = _accent(30 if is_dark else 44)
-        hover = QColor(255, 255, 255, 7 if is_dark else 24)
+        # Neutral graphite selection (no blue accent): a soft light highlight in
+        # dark mode, a soft dark tint in light mode — matches the rest of the UI.
+        if is_dark:
+            top_light = QColor(255, 255, 255, 44)
+            selected = QColor(255, 255, 255, 30)
+            selected_bottom = QColor(255, 255, 255, 16)
+            selected_border = QColor(255, 255, 255, 64)
+            hover = QColor(255, 255, 255, 10)
+            hover_border = QColor(255, 255, 255, 12)
+        else:
+            top_light = QColor(22, 26, 34, 34)
+            selected = QColor(22, 26, 34, 22)
+            selected_bottom = QColor(22, 26, 34, 12)
+            selected_border = QColor(22, 26, 34, 48)
+            hover = QColor(22, 26, 34, 16)
+            hover_border = QColor(22, 26, 34, 22)
         text = qcolor_from_token(tokens["text"]).name()
-        selected_border = _accent(150)
-        hover_border = QColor(255, 255, 255, 8 if is_dark else 34)
-        top_light = _accent(34 if is_dark else 60)
 
         self._popup.setStyleSheet(
             f"""
@@ -281,9 +285,14 @@ class StaticPopupComboBox(QComboBox):
         self._open_fade.setStartValue(0.0)
         self._open_fade.setEndValue(1.0)
         self._open_fade.setEasingCurve(QEasingCurve.OutCubic)
+        # Subtle "pop": grow from ~94% (centred on the final spot) + a small drop,
+        # while fading in — a lively, modern open instead of a flat appear.
+        start = QRect(0, 0, int(target.width() * 0.94), int(target.height() * 0.94))
+        start.moveCenter(target.center())
+        start.translate(0, -6)
         self._open_slide = QPropertyAnimation(self._popup, b"geometry", self._popup)
-        self._open_slide.setDuration(190)
-        self._open_slide.setStartValue(target.translated(0, -8))
+        self._open_slide.setDuration(185)
+        self._open_slide.setStartValue(start)
         self._open_slide.setEndValue(target)
         self._open_slide.setEasingCurve(QEasingCurve.OutCubic)
         self._open_fade.start()

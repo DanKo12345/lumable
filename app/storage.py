@@ -168,6 +168,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "on_time": "19:00",
         "off_time": "23:00",
         "startup_enabled": False,
+        "days": [0, 1, 2, 3, 4, 5, 6],  # 0 = Monday .. 6 = Sunday
     },
     "theme_mode": "auto",
     "theme": "dark",
@@ -175,6 +176,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ui_fps": "auto",
     "language": "ru",
     "ambient": {"region": "full", "saturation": 55, "smoothing": 65, "monitor": 0},
+    "music": {
+        "saturation": 60,
+        "smoothing": 50,
+        "speed": 30,
+        "colors": {
+            "bass": {"r": 255, "g": 80, "b": 70},
+            "mid": {"r": 180, "g": 90, "b": 255},
+            "treble": {"r": 60, "g": 190, "b": 255},
+        },
+    },
+    "software_fx": {"effect": "breathing", "speed": 30},
     "quick_mode": "",
     "custom_quick_modes": [],
     "updates_last_auto_check_at": 0,
@@ -387,6 +399,52 @@ def validate_ambient(data: Any) -> dict[str, Any]:
     }
 
 
+def _coerce_rgb(value: Any, default: dict[str, int]) -> dict[str, int]:
+    if not isinstance(value, dict):
+        value = {}
+    return {
+        "r": _coerce_int(value.get("r"), int(default["r"]), 0, 255),
+        "g": _coerce_int(value.get("g"), int(default["g"]), 0, 255),
+        "b": _coerce_int(value.get("b"), int(default["b"]), 0, 255),
+    }
+
+
+def validate_music(data: Any) -> dict[str, Any]:
+    defaults = DEFAULT_SETTINGS["music"]
+    if not isinstance(data, dict):
+        data = {}
+    colors = data.get("colors") if isinstance(data.get("colors"), dict) else {}
+    default_colors = defaults["colors"]
+    return {
+        "saturation": _coerce_int(data.get("saturation"), int(defaults["saturation"]), 0, 100),
+        "smoothing": _coerce_int(data.get("smoothing"), int(defaults["smoothing"]), 0, 100),
+        "speed": _coerce_int(data.get("speed"), int(defaults["speed"]), 0, 100),
+        "colors": {
+            band: _coerce_rgb(colors.get(band), default_colors[band])
+            for band in ("bass", "mid", "treble")
+        },
+    }
+
+
+def validate_software_fx(data: Any) -> dict[str, Any]:
+    defaults = DEFAULT_SETTINGS["software_fx"]
+    if not isinstance(data, dict):
+        data = {}
+    effect = _coerce_str(data.get("effect"), str(defaults["effect"]))
+    if effect not in {"breathing", "heartbeat", "rainbow", "candle", "storm", "gradient", "lava", "aurora"}:
+        effect = str(defaults["effect"])
+    return {
+        "effect": effect,
+        "speed": _coerce_int(data.get("speed"), int(defaults["speed"]), 0, 100),
+    }
+
+
+def _coerce_days(value: Any, default: list[int]) -> list[int]:
+    if not isinstance(value, list):
+        return list(default)
+    return sorted({int(d) for d in value if isinstance(d, (int, float)) and 0 <= int(d) <= 6})
+
+
 def validate_schedule(data: Any) -> dict[str, Any]:
     defaults = DEFAULT_SETTINGS["schedule"]
     if not isinstance(data, dict):
@@ -396,6 +454,7 @@ def validate_schedule(data: Any) -> dict[str, Any]:
         "on_time": _coerce_time_text(data.get("on_time"), str(defaults["on_time"])),
         "off_time": _coerce_time_text(data.get("off_time"), str(defaults["off_time"])),
         "startup_enabled": _coerce_bool(data.get("startup_enabled"), bool(defaults["startup_enabled"])),
+        "days": _coerce_days(data.get("days"), list(defaults["days"])),
     }
 
 
@@ -451,6 +510,8 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "ui_fps": ui_fps,
         "language": language,
         "ambient": validate_ambient(data.get("ambient", DEFAULT_SETTINGS["ambient"])),
+        "music": validate_music(data.get("music", DEFAULT_SETTINGS["music"])),
+        "software_fx": validate_software_fx(data.get("software_fx", DEFAULT_SETTINGS["software_fx"])),
         "quick_mode": quick_mode,
         "custom_quick_modes": custom_quick_modes,
         "updates_last_auto_check_at": _coerce_int(

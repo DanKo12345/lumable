@@ -6,7 +6,7 @@ from PySide6.QtCore import QDate, Qt, QTime, QTimer
 
 from app.constants import SCHEDULE_MISSED_WINDOW_MINUTES
 from app.feature_gate import can_use
-from app.schedule import should_fire_schedule_time
+from app.schedule import is_scheduled_day, should_fire_schedule_time
 from app.startup_controller import (
     are_schedule_tasks_enabled,
     is_startup_enabled,
@@ -26,6 +26,7 @@ class ScheduleHost(Protocol):
     schedule_startup_button: Any
     schedule_on_time: Any
     schedule_off_time: Any
+    schedule_day_buttons: Any
     power_button: Any
 
     def _log(self, message: str) -> None: ...
@@ -61,6 +62,8 @@ class ScheduleController:
         host.schedule_startup_button.clicked.connect(self.toggle_startup)
         host.schedule_on_time.timeChanged.connect(self.save_settings)
         host.schedule_off_time.timeChanged.connect(self.save_settings)
+        for chip in host.schedule_day_buttons:
+            chip.clicked.connect(self.save_settings)
 
     def load_state(self) -> None:
         self.apply_settings(self._host._settings.get("schedule", {}), save=False, run_check=False)
@@ -79,6 +82,9 @@ class ScheduleController:
             )
             host.schedule_on_time.setTime(self.time_from_text(str(normalized.get("on_time", "19:00")), QTime(19, 0)))
             host.schedule_off_time.setTime(self.time_from_text(str(normalized.get("off_time", "23:00")), QTime(23, 0)))
+            days = set(normalized.get("days", []))
+            for index, chip in enumerate(host.schedule_day_buttons):
+                chip.setChecked(index in days)
         self.sync_controls()
         if save and not host._initializing:
             host._settings["schedule"] = self.settings()
@@ -98,7 +104,11 @@ class ScheduleController:
             "on_time": host.schedule_on_time.time().toString("HH:mm"),
             "off_time": host.schedule_off_time.time().toString("HH:mm"),
             "startup_enabled": host.schedule_startup_button.isChecked() and can_use("schedule"),
+            "days": self._selected_days(),
         }
+
+    def _selected_days(self) -> list[int]:
+        return [index for index, chip in enumerate(self._host.schedule_day_buttons) if chip.isChecked()]
 
     def save_settings(self, *_args: object) -> None:
         host = self._host
@@ -150,6 +160,9 @@ class ScheduleController:
 
     def sync_controls(self) -> None:
         host = self._host
+        lock_label = getattr(host, "schedule_lock_label", None)
+        if lock_label is not None:
+            lock_label.setVisible(not can_use("schedule"))
         enabled = host.schedule_toggle_button.isChecked()
         startup_enabled = host.schedule_startup_button.isChecked() and enabled
         host.schedule_toggle_button.setText(host._tr("schedule.toggle_on") if enabled else host._tr("schedule.toggle_off"))
@@ -161,6 +174,8 @@ class ScheduleController:
         host.schedule_startup_button.setEnabled(enabled)
         host.schedule_on_time.setEnabled(enabled)
         host.schedule_off_time.setEnabled(enabled)
+        for chip in host.schedule_day_buttons:
+            chip.setEnabled(enabled)
 
     def _sync_background_schedule_tasks(self, *, force_enabled: bool | None = None) -> None:
         host = self._host
@@ -176,6 +191,7 @@ class ScheduleController:
                 enabled and can_use("schedule"),
                 on_time=host.schedule_on_time.time().toString("HH:mm"),
                 off_time=host.schedule_off_time.time().toString("HH:mm"),
+                days=self._selected_days(),
             )
         except OSError as exc:
             if enabled:
@@ -184,6 +200,9 @@ class ScheduleController:
     def _check_schedule(self) -> None:
         host = self._host
         if host._initializing or not hasattr(host, "schedule_toggle_button") or not host.schedule_toggle_button.isChecked():
+            return
+        # Qt: dayOfWeek() is 1=Mon..7=Sun; our days are 0=Mon..6=Sun.
+        if not is_scheduled_day(QDate.currentDate().dayOfWeek() - 1, self._selected_days()):
             return
         now_time = QTime.currentTime()
         today = QDate.currentDate().toString("yyyy-MM-dd")

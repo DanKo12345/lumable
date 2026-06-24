@@ -212,7 +212,7 @@ def _card_styles(T: dict) -> str:
             margin: 0;
             padding: 0;
             line-height: 1.25em;
-            qproperty-alignment: 'AlignHCenter | AlignTop';
+            qproperty-alignment: 'AlignLeft | AlignTop';
         }}
     """
 

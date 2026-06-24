@@ -6,19 +6,27 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy
 from app.constants import ACTION_SPACING, ROW_SPACING_TIGHT
 from app.panels.types import PanelHost
 from app.widgets import GlassCard, TimeButton
+from app.widgets.clickable_label import ClickableLabel
+from app.widgets.day_toggle import DayToggle
 
 
 def build_schedule_section(host: PanelHost) -> GlassCard:
-    host.schedule_card = host._card(host._tr("schedule.title"), icon="schedule")
-    host.schedule_card.setMinimumHeight(host._sz(118))
-    host.schedule_card.layout().setContentsMargins(host._sz(24), host._sz(4), host._sz(24), host._sz(18))
-    host.schedule_card.header_widget.setMinimumHeight(host._sz(38))
-    host.schedule_card.header_widget.setMaximumHeight(host._sz(38))
-    host.schedule_card.title_label.setMinimumHeight(host._sz(38))
-    host.schedule_card.title_label.setMaximumHeight(host._sz(38))
-    host.schedule_card.title_label.setContentsMargins(0, 0, 0, 0)
-    host.schedule_card.content_layout.setSpacing(8)
-    host.schedule_card.content_layout.setContentsMargins(0, 12, 0, 0)
+    host.schedule_card = host._card(host._tr("schedule.title"), host._tr("schedule.subtitle"), icon="schedule")
+    host.schedule_card.setMinimumHeight(host._sz(180))
+
+    # Pro badge shown when scheduling isn't unlocked (toggled by the controller).
+    # Clicking it opens the Pro/license window, same as clicking the toggle.
+    host.schedule_lock_label = ClickableLabel(host._tr("schedule.pro_locked"))
+    host.schedule_lock_label.setObjectName("proBadge")
+    host.schedule_lock_label.setStyleSheet(
+        "QLabel#proBadge { background: rgba(143, 191, 255, 0.16); color: #9fc0ff;"
+        " padding: 5px 12px; border-radius: 11px; }"
+        "QLabel#proBadge:hover { background: rgba(143, 191, 255, 0.26); }"
+    )
+    host.schedule_lock_label.setCursor(Qt.PointingHandCursor)
+    host.schedule_lock_label.clicked.connect(host._show_license_overlay)
+    host.schedule_lock_label.hide()
+    host.schedule_card.content_layout.addWidget(host.schedule_lock_label, 0, Qt.AlignLeft)
 
     row = QHBoxLayout()
     row.setSpacing(0)
@@ -49,6 +57,20 @@ def build_schedule_section(host: PanelHost) -> GlassCard:
     row.addLayout(times, 1)
     row.addStretch(1)
     host.schedule_card.content_layout.addLayout(row)
+
+    # Day-of-week chips (Mon..Sun) — the schedule only fires on the selected days.
+    days_row = QHBoxLayout()
+    days_row.setContentsMargins(0, host._sz(4), 0, 0)
+    days_row.setSpacing(host._sz(6))
+    days_row.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    host.schedule_day_buttons = []
+    for index in range(7):
+        chip = DayToggle(host._tr(f"schedule.day_{index}"), lambda: host._theme_tokens)
+        chip.setFixedSize(host._sz(44), host._sz(34))
+        host.schedule_day_buttons.append(chip)
+        days_row.addWidget(chip)
+    days_row.addStretch(1)
+    host.schedule_card.content_layout.addLayout(days_row)
 
     host.schedule_runtime_note = QLabel(host._tr("schedule.runtime_note"))
     host.schedule_runtime_note.setObjectName("scheduleNote")

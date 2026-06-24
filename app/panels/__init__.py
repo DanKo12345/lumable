@@ -4,7 +4,9 @@ from .configs_panel import build_configs_section
 from .device_panel import build_device_section
 from .diagnostics_panel import build_diagnostics_section
 from .effects_panel import build_effects_section
+from .music_panel import build_music_section
 from .schedule_panel import build_schedule_section
+from .software_effects_panel import build_software_effects_section
 
 __all__ = [
     "build_ambient_section",
@@ -13,5 +15,7 @@ __all__ = [
     "build_device_section",
     "build_diagnostics_section",
     "build_effects_section",
+    "build_music_section",
     "build_schedule_section",
+    "build_software_effects_section",
 ]

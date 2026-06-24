@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
@@ -42,6 +42,14 @@ class _AboutPanel(QFrame):
         shine.setColorAt(0.42, QColor(255, 255, 255, 5 if theme_manager.is_dark else 16))
         shine.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillPath(path, shine)
+
+        # Soft accent halo behind the title — matches the License window so the
+        # two dialogs read as one family.
+        halo = QRadialGradient(rect.center().x(), rect.top() + rect.height() * 0.13, rect.width() * 0.6)
+        accent = qcolor_from_token(theme_manager.palette["accent_start"])
+        halo.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 52 if theme_manager.is_dark else 40))
+        halo.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
+        painter.fillPath(path, halo)
 
         border = qcolor_from_token(theme_manager.palette["surface_border"])
         border.setAlpha(92 if theme_manager.is_dark else 104)

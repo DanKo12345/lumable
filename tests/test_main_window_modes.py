@@ -69,6 +69,7 @@ def test_collected_scene_state_includes_schedule(monkeypatch) -> None:
             "on_time": "20:15",
             "off_time": "23:45",
             "startup_enabled": False,
+            "days": [0, 1, 2, 3, 4, 5, 6],
         }
     finally:
         window._ble.shutdown()
@@ -409,6 +410,9 @@ def test_tray_notice_is_shown_once() -> None:
 
         def showMessage(self, title, message, icon, timeout) -> None:
             self.messages.append((title, message, icon, timeout))
+
+        def hide(self) -> None:
+            pass
 
     try:
         fake_tray = FakeTrayIcon()

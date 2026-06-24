@@ -45,6 +45,7 @@ def test_validate_profile_keeps_scene_schedule_when_present() -> None:
         "on_time": "21:05",
         "off_time": "23:00",
         "startup_enabled": True,
+        "days": [0, 1, 2, 3, 4, 5, 6],
     }
 
 
@@ -112,6 +113,7 @@ def test_validate_settings_normalizes_broken_payload() -> None:
         "on_time": "07:05",
         "off_time": "23:00",
         "startup_enabled": True,
+        "days": [0, 1, 2, 3, 4, 5, 6],
     }
     assert settings["window_width"] == 1320
     assert settings["window_height"] == 600
@@ -170,6 +172,7 @@ def test_validate_settings_keeps_custom_quick_modes_as_scene_payloads() -> None:
                 "on_time": "20:00",
                 "off_time": "23:00",
                 "startup_enabled": False,
+                "days": [0, 1, 2, 3, 4, 5, 6],
             },
             "accent": "#3366cc",
         }

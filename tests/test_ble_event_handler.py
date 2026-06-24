@@ -227,7 +227,7 @@ def test_start_autoconnect_connects_to_saved_address() -> None:
     assert host.device_status.text == "device.status.connecting"
     assert host.last_device_label.text == "device.last.autoconnecting:name=Desk strip,address=AA:BB:CC:DD:EE:FF"
     assert host._devices == [{"name": "Desk strip", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-"}]
-    assert host.device_combo.items == [("Desk strip  |  AA:BB:CC:DD:EE:FF  |  RSSI -", "AA:BB:CC:DD:EE:FF")]
+    assert host.device_combo.items == [("Desk strip  |  AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF")]
     assert host.device_combo.currentIndex() == 0
     assert host._connect_in_progress is True
     assert host.scan_button.enabled is False
@@ -371,7 +371,7 @@ def test_connected_changed_fills_combo_when_connected_without_scan(monkeypatch) 
 
     handler.on_connected_changed(True, "AA:BB:CC:DD:EE:FF")
 
-    assert host.device_combo.items == [("Desk strip  |  AA:BB:CC:DD:EE:FF  |  RSSI -", "AA:BB:CC:DD:EE:FF")]
+    assert host.device_combo.items == [("Desk strip  |  AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF")]
     assert host.device_combo.currentIndex() == 0
     assert host._devices == [{"name": "Desk strip", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-"}]
 
@@ -408,3 +408,17 @@ def test_show_error_clears_connection_in_progress() -> None:
     assert host.connect_button.text == "device.connect"
     assert host.last_device_label.text == "device.last:name=Desk strip,address=AA:BB:CC:DD:EE:FF"
     assert host._ui_feedback.errors == ["boom"]
+
+
+def test_device_label_skips_duplicate_address_and_empty_rssi() -> None:
+    handler = BleEventHandler(FakeHost())
+    # Unresolved name (equals the address) -> shown once, no "RSSI -" tail.
+    assert (
+        handler._device_label({"name": "AA:BB:CC:DD:EE:FF", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-"})
+        == "AA:BB:CC:DD:EE:FF"
+    )
+    # Distinct name + a real RSSI reading -> all three parts.
+    assert (
+        handler._device_label({"name": "Desk strip", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-42"})
+        == "Desk strip  |  AA:BB:CC:DD:EE:FF  |  RSSI -42"
+    )

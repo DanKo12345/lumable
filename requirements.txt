@@ -12,3 +12,5 @@ winrt-Windows.Storage.Streams==3.2.1
 darkdetect==0.8.0
 platformdirs==4.5.0
 mss==9.0.1
+soundcard==0.4.6
+numpy==2.4.6
