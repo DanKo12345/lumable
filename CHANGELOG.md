@@ -25,6 +25,7 @@ App-driven lighting that works on any controller — react to your music and run
 - Music card dims/disables its controls while it's off (like the Schedule card).
 
 ### Fixed
+- Packaged build crashed on startup with `ModuleNotFoundError: No module named 'PySide6.QtNetwork'` — the build script excluded QtNetwork, which the single-instance guard now needs. The build no longer excludes it or strips `Qt6Network.dll`.
 - Device card no longer duplicates the MAC address or shows an empty "RSSI -" when the controller name is unavailable.
 
 ### Internal

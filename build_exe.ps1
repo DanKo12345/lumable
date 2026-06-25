@@ -28,7 +28,6 @@ if ([version]$version -lt [version]"3.11") {
     --add-data "app\i18n;app\i18n" `
     --add-data "THIRD_PARTY_NOTICES.txt;." `
     --collect-all "soundcard" `
-    --exclude-module "PySide6.QtNetwork" `
     --exclude-module "PySide6.QtQml" `
     --exclude-module "PySide6.QtQmlMeta" `
     --exclude-module "PySide6.QtQmlModels" `
@@ -46,7 +45,6 @@ if ($LASTEXITCODE -ne 0) {
 
 $unusedQtFiles = @(
     "dist\LumaBLE\_internal\PySide6\opengl32sw.dll",
-    "dist\LumaBLE\_internal\PySide6\Qt6Network.dll",
     "dist\LumaBLE\_internal\PySide6\Qt6OpenGL.dll",
     "dist\LumaBLE\_internal\PySide6\Qt6Pdf.dll",
     "dist\LumaBLE\_internal\PySide6\Qt6PdfWidgets.dll",
