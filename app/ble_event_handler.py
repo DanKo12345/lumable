@@ -113,11 +113,14 @@ class BleEventHandler:
             self._sync_last_device_hint()
         self._sync_device_onboarding_hint()
         host._sync_connect_buttons()
-        # Auto-connect only a lone *supported* controller. Unknown ones are never
-        # auto-connected: the user picks one to probe it on purpose.
-        if len(devices) == 1 and devices[0].get("supported", True):
-            device = devices[0]
-            host.device_status.setText(host._tr("device.status.found_one", name=device["name"]))
+        # Auto-connect when exactly one *supported* controller is found, even if
+        # unrecognised BLE devices are also nearby (there usually are several).
+        # Unknown devices are never auto-connected — the user picks one to probe.
+        if len(supported) == 1:
+            device = supported[0]
+            index = host.device_combo.findData(device["address"])
+            if index >= 0:
+                host.device_combo.setCurrentIndex(index)
             self.log(host._tr("status.autofound_connecting", name=device["name"], address=device["address"]))
             host._connect_in_progress = True
             host.device_status.setText(host._tr("device.status.connecting"))

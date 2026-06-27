@@ -2,6 +2,14 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.2.3.1] - 2026-06-27
+
+### Fixed
+- Auto-connect regression from 0.2.3: a single supported controller now connects automatically again even when unrecognised BLE devices are nearby. (0.2.3 started listing unknown devices in the scan results, which broke the "exactly one device found" auto-connect check, so the app would say "1 controller found" but not connect.)
+
+### Changed
+- The "update available" pop-up shows a small accent download icon next to the title, matching the Pro/About windows.
+
 ## [0.2.3] - 2026-06-27
 
 A reliability, music and device-support pass: stronger reconnection, beat-reactive music with an audio-source picker, a way to add support for unknown controllers, smarter screen-sync colour, and a safer build pipeline.

@@ -313,6 +313,37 @@ def test_populate_devices_uses_preferred_device_without_autoconnecting_many() ->
     assert host._ble.connected_to == []
 
 
+def test_populate_devices_autoconnects_single_supported_among_unknowns() -> None:
+    # A lone supported controller should auto-connect even when unrecognised BLE
+    # devices are also in the list (there usually are several nearby).
+    host = FakeHost()
+    handler = BleEventHandler(host)
+    devices = [
+        {"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF", "rssi": -50, "supported": True},
+        {"name": "Unknown BLE Device", "address": "11:22:33:44:55:66", "rssi": -70, "supported": False},
+        {"name": "net", "address": "AC:93:C4:1B:B9:1D", "rssi": -90, "supported": False},
+    ]
+
+    handler.populate_devices(devices)
+
+    assert host._connect_in_progress is True
+    assert host.device_status.text == "device.status.connecting"
+    assert host._ble.connected_to == ["AA:BB:CC:DD:EE:FF"]
+
+
+def test_populate_devices_only_unknown_does_not_autoconnect() -> None:
+    host = FakeHost()
+    handler = BleEventHandler(host)
+    devices = [
+        {"name": "Unknown BLE Device", "address": "11:22:33:44:55:66", "rssi": -70, "supported": False},
+    ]
+
+    handler.populate_devices(devices)
+
+    assert host._ble.connected_to == []
+    assert host.device_status.text == "device.status.found_unknown"
+
+
 def test_populate_devices_handles_empty_result() -> None:
     host = FakeHost()
     handler = BleEventHandler(host)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPointF, QPropertyAnimation, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
@@ -52,6 +52,54 @@ class _UpdatePanel(QFrame):
         painter.drawPath(path)
 
 
+class _UpdateBadge(QWidget):
+    """A small accent download glyph shown beside the title, matching the
+    emblem treatment of the License/About windows."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setFixedSize(40, 40)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        start = qcolor_from_token(theme_manager.palette["accent_start"])
+        end = qcolor_from_token(theme_manager.palette["accent_end"])
+
+        glow_radius = 20.0
+        glow = QRadialGradient(cx, cy, glow_radius)
+        glow.setColorAt(0.0, QColor(start.red(), start.green(), start.blue(), 130))
+        glow.setColorAt(0.6, QColor(start.red(), start.green(), start.blue(), 40))
+        glow.setColorAt(1.0, QColor(start.red(), start.green(), start.blue(), 0))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(glow)
+        painter.drawEllipse(QPointF(cx, cy), glow_radius, glow_radius)
+
+        radius = 15.0
+        fill = QLinearGradient(cx - radius, cy - radius, cx + radius, cy + radius)
+        fill.setColorAt(0.0, start)
+        fill.setColorAt(1.0, end)
+        painter.setBrush(fill)
+        painter.drawEllipse(QPointF(cx, cy), radius, radius)
+
+        pen = QPen(QColor(255, 255, 255), 2.4)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        # Download glyph: a downward arrow over a short tray line.
+        painter.drawLine(QPointF(cx, cy - 6.0), QPointF(cx, cy + 3.5))
+        head = QPainterPath()
+        head.moveTo(cx - 4.5, cy - 0.5)
+        head.lineTo(cx, cy + 4.5)
+        head.lineTo(cx + 4.5, cy - 0.5)
+        painter.drawPath(head)
+        painter.drawLine(QPointF(cx - 5.5, cy + 8.0), QPointF(cx + 5.5, cy + 8.0))
+
+
 class UpdateOverlay(QWidget):
     """Quiet, modern 'update available' pop-up shown at most once per version."""
 
@@ -83,9 +131,14 @@ class UpdateOverlay(QWidget):
         panel_layout.setContentsMargins(26, 24, 26, 22)
         panel_layout.setSpacing(10)
 
+        header = QHBoxLayout()
+        header.setSpacing(12)
+        header.addWidget(_UpdateBadge(self._panel), 0, Qt.AlignVCenter)
         title = QLabel(labels["title"], self._panel)
         title.setObjectName("updateTitle")
-        panel_layout.addWidget(title)
+        header.addWidget(title, 0, Qt.AlignVCenter)
+        header.addStretch(1)
+        panel_layout.addLayout(header)
 
         body = QLabel(labels["body"], self._panel)
         body.setObjectName("updateBody")
