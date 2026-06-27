@@ -261,6 +261,8 @@ class LocalizationManager:
             return t("status.ble.scan_finished_none") + remainder
         if event == "scan_finished_found":
             return t("status.ble.scan_finished_found", count=int(payload.get("count", 0))) + remainder
+        if event == "scan_finished_unknown":
+            return t("status.ble.scan_finished_unknown", count=int(payload.get("count", 0))) + remainder
         if event == "already_connected":
             return t("status.ble.already_connected", address=addr()) + remainder
         if event == "connecting":

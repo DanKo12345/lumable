@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.panels.types import PanelHost
-from app.widgets import GlassCard
+from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.ambient_preview import AmbientPreview
 from app.widgets.clickable_label import ClickableLabel
 from app.widgets.color_swatch import ColorSwatch
@@ -36,6 +36,14 @@ def build_music_section(host: PanelHost) -> GlassCard:
     host.music_toggle_button.setCheckable(True)
     host.music_toggle_button.setFixedSize(host._sz(104), host._sz(42))
     row.addWidget(host.music_toggle_button)
+
+    # Which audio output to listen to (its loopback). Populated by the controller;
+    # the first item is always the system default.
+    host.music_source_combo = StaticPopupComboBox(lambda: host._theme_tokens, lambda: host._is_dark)
+    host.music_source_combo.setMinimumHeight(host._control_height)
+    host.music_source_combo.setMinimumWidth(host._sz(190))
+    host.music_source_combo.setToolTip(host._tr("music.source_hint"))
+    row.addWidget(host.music_source_combo)
     row.addStretch(1)
     host.music_card.content_layout.addLayout(row)
 
@@ -68,6 +76,18 @@ def build_music_section(host: PanelHost) -> GlassCard:
             host.music_speed_slider,
             host.music_speed_value,
             "music.speed",
+        )
+    )
+
+    host.music_beat_slider = host._slider("green")
+    host.music_beat_slider.setRange(0, 100)
+    host.music_beat_value = host._pill("40%")
+    controls.addLayout(
+        host._slider_row(
+            host._tr("music.beat"),
+            host.music_beat_slider,
+            host.music_beat_value,
+            "music.beat",
         )
     )
 

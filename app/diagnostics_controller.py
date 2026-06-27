@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +37,9 @@ class DiagnosticsController:
 
     def copy_report(self) -> None:
         host = self._host
-        QApplication.clipboard().setText(self.text())
+        # Include crash logs in the copy too: pasting into a support chat is the
+        # most common path, and it should carry the same detail as the export.
+        QApplication.clipboard().setText(self.text(include_crashes=True))
         host._log(host._tr("diagnostics.copied"))
 
     def export_report(self) -> None:
@@ -58,3 +62,18 @@ class DiagnosticsController:
             host._show_error(host._tr("diagnostics.export_error", error=str(exc)))
             return
         host._log(host._tr("diagnostics.exported", path=Path(path).name))
+        # Reveal the saved file so it's ready to drag into an email or chat.
+        self._reveal_in_explorer(Path(path))
+
+    @staticmethod
+    def _reveal_in_explorer(path: Path) -> None:
+        """Open the file manager with the report selected (best-effort)."""
+        try:
+            if sys.platform.startswith("win"):
+                subprocess.run(["explorer", f"/select,{path}"], check=False)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", "-R", str(path)], check=False)
+            else:
+                subprocess.run(["xdg-open", str(path.parent)], check=False)
+        except OSError:
+            pass

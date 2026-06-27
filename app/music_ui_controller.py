@@ -7,11 +7,11 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QGraphicsOpacityEffect
 
 from app.feature_gate import can_use
-from app.music_controller import MusicController
+from app.music_controller import MusicController, list_audio_outputs
 from app.storage import save_settings
 from app.widgets import ColorPickerOverlay
 
-_DEFAULTS = {"saturation": 60, "smoothing": 50, "speed": 30}
+_DEFAULTS = {"saturation": 60, "smoothing": 50, "speed": 30, "beat": 40}
 _BANDS = ("bass", "mid", "treble")
 _DEFAULT_BAND_RGB = {"bass": (255, 80, 70), "mid": (180, 90, 255), "treble": (60, 190, 255)}
 
@@ -27,11 +27,15 @@ class MusicUiController:
     def __init__(self, host: Any) -> None:
         self._host = host
         self._music = MusicController(host)
+        self._sink = None
 
     def wire(self) -> None:
         host = self._host
         host.music_toggle_button.clicked.connect(self._toggle)
+        self._populate_sources()
+        host.music_source_combo.currentIndexChanged.connect(self._on_source_changed)
         host.music_speed_slider.valueChanged.connect(self._on_options_changed)
+        host.music_beat_slider.valueChanged.connect(self._on_options_changed)
         host.music_saturation_slider.valueChanged.connect(self._on_options_changed)
         host.music_smoothing_slider.valueChanged.connect(self._on_options_changed)
         for band in _BANDS:
@@ -152,9 +156,18 @@ class MusicUiController:
         saturation = int(saved.get("saturation", _DEFAULTS["saturation"]))
         smoothing = int(saved.get("smoothing", _DEFAULTS["smoothing"]))
         speed = int(saved.get("speed", _DEFAULTS["speed"]))
+        beat = int(saved.get("beat", _DEFAULTS["beat"]))
         host.music_speed_slider.jump_to(speed)
+        host.music_beat_slider.jump_to(beat)
         host.music_saturation_slider.jump_to(saturation)
         host.music_smoothing_slider.jump_to(smoothing)
+        combo = getattr(host, "music_source_combo", None)
+        if combo is not None:
+            device = str(saved.get("device", ""))
+            index = combo.findData(device)
+            combo.blockSignals(True)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+            combo.blockSignals(False)
         colors = saved.get("colors", {}) if isinstance(saved.get("colors"), dict) else {}
         for band in _BANDS:
             swatch = getattr(host, f"music_{band}_swatch", None)
@@ -170,6 +183,32 @@ class MusicUiController:
                 )
             )
         self._refresh_value_labels()
+
+    def _populate_sources(self) -> None:
+        host = self._host
+        combo = getattr(host, "music_source_combo", None)
+        if combo is None:
+            return
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(host._tr("music.source_default"), "")
+        for name in list_audio_outputs():
+            combo.addItem(name, name)
+        combo.blockSignals(False)
+
+    def _on_source_changed(self) -> None:
+        self._persist()
+        # Switching output device means re-opening the loopback recorder, so
+        # restart the capture in place if music is currently running.
+        if self._music.is_running():
+            self._restart_capture()
+
+    def _restart_capture(self) -> None:
+        if self._sink is None:
+            return
+        self._music.stop()
+        self._apply_options()
+        self._music.start(self._sink)
 
     def _colors_dict(self) -> dict:
         host = self._host
@@ -273,6 +312,7 @@ class MusicUiController:
             # while a BLE write is in flight, and stays out of the session log.
             host._ble.set_color_stream(red, green, blue)
 
+        self._sink = sink
         self._music.start(sink)
         self._set_manual_controls_enabled(False)
         self._apply_enabled_state()
@@ -309,10 +349,15 @@ class MusicUiController:
         smoothing = max(0.05, 1.0 - host.music_smoothing_slider.value() / 100.0)
         # Speed slider -> EMA reactivity: 0 = very calm/slow, 100 = instant.
         reactivity = 0.05 + (host.music_speed_slider.value() / 100.0) * 0.95
+        # Beat slider -> brightness pop strength (0 disables the beat punch).
+        beat_strength = host.music_beat_slider.value() / 100.0
+        device_name = host.music_source_combo.currentData() or ""
         self._music.configure(
             saturation=saturation,
             smoothing=smoothing,
             reactivity=reactivity,
+            beat_strength=beat_strength,
+            device_name=device_name,
             band_colors=self._band_colors_tuple(),
         )
 
@@ -325,6 +370,7 @@ class MusicUiController:
     def _refresh_value_labels(self) -> None:
         host = self._host
         host.music_speed_value.setText(f"{host.music_speed_slider.value()}%")
+        host.music_beat_value.setText(f"{host.music_beat_slider.value()}%")
         host.music_saturation_value.setText(f"{host.music_saturation_slider.value()}%")
         host.music_smoothing_value.setText(f"{host.music_smoothing_slider.value()}%")
 
@@ -336,6 +382,8 @@ class MusicUiController:
             "saturation": int(host.music_saturation_slider.value()),
             "smoothing": int(host.music_smoothing_slider.value()),
             "speed": int(host.music_speed_slider.value()),
+            "beat": int(host.music_beat_slider.value()),
+            "device": str(host.music_source_combo.currentData() or ""),
             "colors": self._colors_dict(),
         }
         save_settings(host._settings)

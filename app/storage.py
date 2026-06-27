@@ -180,6 +180,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "saturation": 60,
         "smoothing": 50,
         "speed": 30,
+        "beat": 40,
+        "device": "",
         "colors": {
             "bass": {"r": 255, "g": 80, "b": 70},
             "mid": {"r": 180, "g": 90, "b": 255},
@@ -419,6 +421,8 @@ def validate_music(data: Any) -> dict[str, Any]:
         "saturation": _coerce_int(data.get("saturation"), int(defaults["saturation"]), 0, 100),
         "smoothing": _coerce_int(data.get("smoothing"), int(defaults["smoothing"]), 0, 100),
         "speed": _coerce_int(data.get("speed"), int(defaults["speed"]), 0, 100),
+        "beat": _coerce_int(data.get("beat"), int(defaults["beat"]), 0, 100),
+        "device": _coerce_str(data.get("device"), str(defaults["device"])),
         "colors": {
             band: _coerce_rgb(colors.get(band), default_colors[band])
             for band in ("bass", "mid", "treble")

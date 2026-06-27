@@ -25,6 +25,15 @@ def test_average_color_empty_is_black() -> None:
     assert average_color(b"", channels=4) == (0, 0, 0)
 
 
+def test_average_color_favours_colourful_pixels() -> None:
+    # A mostly-grey screen with one saturated red region should lean clearly red,
+    # not collapse to grey like a plain mean would.
+    buffer = _bgra([(128, 128, 128)] * 8 + [(255, 0, 0)])
+    r, g, b = average_color(buffer, channels=4, sample_step=1)
+    assert r > g and r > b
+    assert (r - g) > 100  # plain mean would only give a ~29 gap
+
+
 def test_shape_color_boosts_saturation_but_keeps_grey_grey() -> None:
     # Grey has no saturation, so boosting it changes nothing.
     assert shape_color((120, 120, 120), saturation=2.0, gamma=1.0) == (120, 120, 120)

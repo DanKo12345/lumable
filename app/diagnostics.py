@@ -120,6 +120,23 @@ def _ambient_section(ambient: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def _nearby_unknown_section(snapshot: dict[str, Any]) -> list[str]:
+    raw = snapshot.get("nearby_unknown")
+    items = raw if isinstance(raw, list) else []
+    if not items:
+        return []
+    lines = ["", _t("nearby_unknown_section")]
+    for item in items[:12]:
+        if not isinstance(item, dict):
+            continue
+        name = sanitize_report_text(str(item.get("name", "")).strip()) or "-"
+        address = str(item.get("address", "")).strip() or "-"
+        services = sanitize_report_text(str(item.get("services", "")).strip()) or "-"
+        rssi = str(item.get("rssi", "")).strip() or "-"
+        lines.append(f"- {name} ({address}) | {_t('services')} {services} | RSSI {rssi}")
+    return lines
+
+
 def build_diagnostics_report(
     snapshot: dict[str, Any],
     session_logs: Iterable[str],
@@ -213,6 +230,7 @@ def build_diagnostics_report(
         sections.extend(["", _t("recent_ble_history_section"), *history_lines])
 
     sections.extend(_ambient_section(ambient))
+    sections.extend(_nearby_unknown_section(snapshot))
 
     sections.extend(["", _t("session_logs_section"), *(log_lines[-80:] if log_lines else ["-"])])
 

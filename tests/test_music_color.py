@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb, normalize_level
+import pytest
+
+from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb, normalize_level, update_beat
 
 
 def test_custom_band_colors_recolor_bands() -> None:
@@ -62,3 +64,29 @@ def test_bands_to_rgb_always_clamped() -> None:
     ):
         for channel in color:
             assert 0 <= channel <= 255
+
+
+def test_update_beat_warmup_seeds_average_without_firing() -> None:
+    avg, env, is_beat = update_beat(1.0, 0.0, 0.0)
+    assert avg == 1.0
+    assert env == 0.0
+    assert is_beat is False
+
+
+def test_update_beat_fires_on_spike() -> None:
+    # Average settled low, then a loud bass block jumps above the threshold.
+    _avg, env, is_beat = update_beat(5.0, 1.0, 0.0, sensitivity=1.3)
+    assert is_beat is True
+    assert env == 1.0
+
+
+def test_update_beat_does_not_retrigger_while_pulse_high() -> None:
+    # Right after a beat (env=1.0) another loud block must not fire again.
+    _avg, _env, is_beat = update_beat(5.0, 1.0, 1.0, sensitivity=1.3)
+    assert is_beat is False
+
+
+def test_update_beat_envelope_decays_without_a_beat() -> None:
+    _avg, env, is_beat = update_beat(0.5, 1.0, 0.8, sensitivity=1.3, decay=0.5)
+    assert is_beat is False  # 0.5 is below 1.3x the average
+    assert env == pytest.approx(0.4)  # 0.8 * 0.5

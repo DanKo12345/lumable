@@ -6,7 +6,13 @@ RGB = tuple[int, int, int]
 
 
 def average_color(buffer: bytes, *, channels: int = 4, sample_step: int = 1) -> RGB:
-    """Average the visible colour of a raw pixel buffer.
+    """Saturation-weighted average colour of a raw pixel buffer.
+
+    A plain mean of a busy screen collapses toward grey/white, which makes the strip
+    look permanently washed out. Weighting each pixel by its chroma (how colourful it
+    is) lets vivid regions drive the result while large flat grey/white areas barely
+    count, so the strip reflects the screen's actual mood. A fully grey frame has no
+    chroma to weight by, so it falls back to the plain mean.
 
     Defaults assume the BGRA layout produced by ``mss`` screen grabs. ``sample_step``
     skips pixels for speed (e.g. 4 = sample every 4th pixel), which is plenty for an
@@ -14,17 +20,31 @@ def average_color(buffer: bytes, *, channels: int = 4, sample_step: int = 1) -> 
     """
     step = max(1, channels * max(1, sample_step))
     length = len(buffer)
+    weighted_r = weighted_g = weighted_b = 0
+    weight_sum = 0
     total_r = total_g = total_b = 0
     count = 0
     index = 0
     while index + channels <= length:
-        total_b += buffer[index]
-        total_g += buffer[index + 1]
-        total_r += buffer[index + 2]
+        b = buffer[index]
+        g = buffer[index + 1]
+        r = buffer[index + 2]
+        total_r += r
+        total_g += g
+        total_b += b
         count += 1
+        # Chroma: 0 for grey/white/black, up to 255 for a fully vivid pixel.
+        weight = max(r, g, b) - min(r, g, b)
+        if weight:
+            weighted_r += r * weight
+            weighted_g += g * weight
+            weighted_b += b * weight
+            weight_sum += weight
         index += step
     if count == 0:
         return (0, 0, 0)
+    if weight_sum > 0:
+        return (weighted_r // weight_sum, weighted_g // weight_sum, weighted_b // weight_sum)
     return (total_r // count, total_g // count, total_b // count)
 
 

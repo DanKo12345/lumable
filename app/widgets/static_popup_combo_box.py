@@ -295,8 +295,18 @@ class StaticPopupComboBox(QComboBox):
         self._open_slide.setStartValue(start)
         self._open_slide.setEndValue(target)
         self._open_slide.setEasingCurve(QEasingCurve.OutCubic)
+        # While the popup grows from 94% it's briefly shorter than its content,
+        # which flashes a scrollbar. Hide it during the animation and restore the
+        # as-needed policy once it settles (so long lists still get a scrollbar).
+        if self._list is not None:
+            self._list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._open_slide.finished.connect(self._restore_scrollbar_policy)
         self._open_fade.start()
         self._open_slide.start()
+
+    def _restore_scrollbar_policy(self) -> None:
+        if self._list is not None:
+            self._list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
     def hidePopup(self) -> None:
         if self._popup is not None:

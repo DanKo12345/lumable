@@ -2,6 +2,26 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.2.3] - 2026-06-27
+
+A reliability, music and device-support pass: stronger reconnection, beat-reactive music with an audio-source picker, a way to add support for unknown controllers, smarter screen-sync colour, and a safer build pipeline.
+
+### Added
+- Beat detection for music: a bass-onset detector punches the strip's brightness on the beat instead of only tracking volume, with a new "Beat" slider to set how hard it hits (0 turns it off).
+- Audio source for music: choose which output device's sound the music reactivity listens to, instead of always the system default. (Tip in the picker's tooltip: route a specific player or streaming app to its own output device in Windows to make the strip react to just that app.)
+- Unsupported controllers are no longer invisible: a scan now also lists nearby unrecognised devices that look like LED controllers, tagged "unsupported". You can select one and hit Connect to capture its GATT details, and the diagnostics report lists those nearby unknown devices (name, address, service UUIDs) so support can be added for them. If a scan finds nothing supported but spots unknown ones, a hint points you to Diagnostics.
+
+### Changed
+- BLE auto-reconnect keeps trying with escalating back-off (about 3 minutes) instead of giving up after a few seconds, so a strip switched off and back on re-pairs on its own. After reconnecting it restores the last colour/brightness (and effect), so the strip returns to how you left it.
+- Screen sync no longer looks permanently washed out: the colour is now a saturation-weighted average, so vivid parts of the screen drive the strip while large grey/white areas barely count (fully grey frames stay grey).
+- Connecting to an unsupported controller now shows a friendly "not supported yet — send diagnostics" message instead of a raw technical error (the technical GATT detail is still saved in the diagnostics history).
+- Music uses less CPU: the FFT window and frequency masks are cached between blocks and the analysis runs in float32.
+- Diagnostics: the Copy button now includes recent crash logs too (not just Export), and Export reveals the saved file in your file manager so it's ready to send.
+- Dropdown lists no longer flash a scrollbar during their open animation.
+
+### Build
+- The build runs a startup smoke test on the packaged exe and fails if it crashes on launch (the kind of regression that shipped a non-starting 0.2.1). Added an optional code-signing step.
+
 ## [0.2.2] - 2026-06-25
 
 App-driven lighting that works on any controller — react to your music and run smooth animations — plus a weekly schedule, a clearer Pro window, and a lot of UI polish.

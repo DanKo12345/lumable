@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Iterable
 from concurrent.futures import CancelledError
 
 from bleak import BleakClient, BleakScanner
@@ -19,8 +20,11 @@ FIND_DEVICE_TIMEOUT_SECONDS = 8.0
 WRITE_TIMEOUT_SECONDS = 3.0
 WRITE_RETRY_ATTEMPTS = 2
 WRITE_RETRY_DELAY_SECONDS = 0.12
-RECONNECT_ATTEMPTS = 3
-RECONNECT_DELAY_SECONDS = 2.0
+# Reconnect with escalating back-off instead of giving up after a few seconds,
+# so a strip that was switched off at the wall for a while still re-pairs when
+# it comes back. Delays (seconds) per attempt; the last value repeats.
+RECONNECT_ATTEMPTS = 12
+RECONNECT_BACKOFF_SECONDS = (2.0, 3.0, 5.0, 8.0, 12.0, 20.0)
 
 
 class ProtocolCompatibilityError(RuntimeError):
@@ -33,6 +37,30 @@ class ConnectionLostError(RuntimeError):
 
 BLE_OPERATION_ERRORS = (asyncio.TimeoutError, BleakError, ConnectionLostError, OSError, ProtocolCompatibilityError, RuntimeError)
 DRIVER_CAPABILITY_ERRORS = (AttributeError, LookupError, NotImplementedError, TypeError, ValueError)
+
+# Name fragments that strongly suggest a cheap BLE LED controller, used to flag
+# unrecognised-but-plausible devices during a scan so the user can report them.
+_LED_NAME_HINTS = (
+    "led", "rgb", "ble", "strip", "light", "lamp", "neon", "glow",
+    "triones", "ledble", "lednet", "elk", "melk", "magic", "banlanx",
+    "ihoment", "govee", "minger", "wled", "sp1", "sp6", "qhm", "isp",
+)
+
+
+def _looks_like_led_controller(name: str, service_uuids: Iterable[str]) -> bool:
+    """Heuristic: does this unrecognised device look like an LED controller?
+
+    Matches on common name fragments or the 0xFFxx vendor service range these
+    clones use, so we surface likely controllers without listing every phone.
+    """
+    lowered = (name or "").strip().lower()
+    if lowered and any(hint in lowered for hint in _LED_NAME_HINTS):
+        return True
+    for uuid in service_uuids:
+        text = str(uuid).lower()
+        if text.startswith("0000ff") or (len(text) == 4 and text.startswith("ff")):
+            return True
+    return False
 
 
 class BleController(QObject):
@@ -58,6 +86,9 @@ class BleController(QObject):
         self._last_blue = 255
         self._last_brightness = 100
         self._current_effect_code = 0
+        # Tracks whether the user wants the strip on, so a scene can be restored
+        # after an unexpected reconnect (e.g. the strip was power-cycled).
+        self._desired_power_on = False
         self._shutdown_started = False
         self._manual_disconnect_requested = False
         self._operation_lock = asyncio.Lock()
@@ -67,6 +98,9 @@ class BleController(QObject):
         self._ble_history: list[dict[str, str]] = []
         self._last_ble_error = ""
         self._stream_busy = False
+        # Unrecognised-but-plausible LED controllers seen in the last scan, kept
+        # so the diagnostics report can list them for adding driver support.
+        self._unknown_devices: list[dict[str, str]] = []
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -185,12 +219,14 @@ class BleController(QObject):
         self._submit(self._disconnect())
 
     def set_power(self, enabled: bool, *, restore_state: bool = True) -> None:
+        self._desired_power_on = bool(enabled)
         self._submit(self._set_power(enabled, restore_state=restore_state))
 
     def set_color(self, red: int, green: int, blue: int) -> None:
         self._last_red = clamp(red, 0, 255)
         self._last_green = clamp(green, 0, 255)
         self._last_blue = clamp(blue, 0, 255)
+        self._desired_power_on = True
         self._submit(self._set_color(red, green, blue))
 
     def set_color_stream(self, red: int, green: int, blue: int) -> None:
@@ -205,6 +241,7 @@ class BleController(QObject):
         self._last_red = clamp(red, 0, 255)
         self._last_green = clamp(green, 0, 255)
         self._last_blue = clamp(blue, 0, 255)
+        self._desired_power_on = True
         self._stream_busy = True
         self._submit_stream(self._set_color_stream(self._last_red, self._last_green, self._last_blue))
 
@@ -234,6 +271,7 @@ class BleController(QObject):
 
     def set_brightness(self, value: int) -> None:
         self._last_brightness = clamp(value, 0, 100)
+        self._desired_power_on = True
         if self._driver is not None:
             self._driver.remember_brightness(self._last_brightness)
         self._submit(self._set_brightness(value))
@@ -243,6 +281,7 @@ class BleController(QObject):
         self._last_green = clamp(green, 0, 255)
         self._last_blue = clamp(blue, 0, 255)
         self._last_brightness = clamp(brightness, 0, 100)
+        self._desired_power_on = True
         if self._driver is not None:
             self._driver.remember_brightness(self._last_brightness)
         self._submit(
@@ -255,9 +294,11 @@ class BleController(QObject):
         )
 
     def set_effect(self, code: int) -> None:
+        self._desired_power_on = True
         self._submit(self._set_effect(code))
 
     def set_effect_with_speed(self, code: int, speed: int) -> None:
+        self._desired_power_on = True
         self._submit(self._set_effect_with_speed(code, speed))
 
     def set_effect_speed(self, value: int) -> None:
@@ -316,6 +357,7 @@ class BleController(QObject):
                 "last_command": self._last_history_item("command"),
                 "events": list(getattr(self, "_ble_history", [])),
             },
+            "nearby_unknown": list(getattr(self, "_unknown_devices", [])),
         }
 
     def _record_ble_history(self, event: str, **details: object) -> None:
@@ -381,6 +423,7 @@ class BleController(QObject):
     async def _scan(self) -> None:
         devices = await BleakScanner.discover(timeout=5.0, return_adv=True)
         results: list[dict[str, str]] = []
+        unknown: list[dict[str, str]] = []
         self._scan_driver_hints.clear()
         for _, (device, advertisement) in devices.items():
             name = device.name or advertisement.local_name or "Unknown BLE Device"
@@ -394,12 +437,31 @@ class BleController(QObject):
                         "address": device.address,
                         "rssi": str(advertisement.rssi),
                         "driver": driver.display_name,
+                        "supported": True,
+                    }
+                )
+            elif _looks_like_led_controller(name, service_uuids):
+                unknown.append(
+                    {
+                        "name": name,
+                        "address": device.address,
+                        "rssi": str(advertisement.rssi),
+                        "services": ", ".join(service_uuids) or "-",
+                        "supported": False,
                     }
                 )
 
-        self.devices_discovered.emit(results)
+        self._unknown_devices = unknown[:12]
+        # Surface unknown-but-plausible controllers in the same list so the user
+        # can pick one and try to connect; a failed connect yields a full GATT
+        # diagnostic that makes adding a driver possible.
+        self.devices_discovered.emit(results + self._unknown_devices)
         if results:
             self.status_changed.emit(localization_manager.status_ble_event("scan_finished_found", count=len(results)))
+        elif self._unknown_devices:
+            self.status_changed.emit(
+                localization_manager.status_ble_event("scan_finished_unknown", count=len(self._unknown_devices))
+            )
         else:
             self.status_changed.emit(localization_manager.status_ble_event("scan_finished_none"))
 
@@ -535,7 +597,12 @@ class BleController(QObject):
         driver = detect_connected_driver(device.name or "", services, preferred_id=preferred_driver_id)
         if driver is None:
             await client.disconnect()
-            raise ProtocolCompatibilityError(self._protocol_detection_diagnostic(device, services, preferred_driver_id))
+            # Keep the full technical detail (services + characteristics) in the
+            # diagnostics history for driver work, but show the user a friendly,
+            # actionable line instead of the raw GATT dump.
+            diagnostic = self._protocol_detection_diagnostic(device, services, preferred_driver_id)
+            self._record_ble_history("protocol_mismatch", details=diagnostic)
+            raise ProtocolCompatibilityError(localization_manager.t("error.controller_unsupported"))
         driver.reset_runtime_state()
         if hasattr(driver, "configure_for_device"):
             driver.configure_for_device(device.name or "")
@@ -625,11 +692,16 @@ class BleController(QObject):
             self._reconnect_address = address
             self._reconnect_task = self._loop.create_task(self._reconnect(address))
 
+    @staticmethod
+    def _reconnect_delay(attempt: int) -> float:
+        index = min(attempt - 1, len(RECONNECT_BACKOFF_SECONDS) - 1)
+        return RECONNECT_BACKOFF_SECONDS[index]
+
     async def _reconnect(self, address: str) -> None:
         for attempt in range(1, RECONNECT_ATTEMPTS + 1):
             if self._shutdown_started or self._manual_disconnect_requested:
                 return
-            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+            await asyncio.sleep(self._reconnect_delay(attempt))
             if self._shutdown_started or self._manual_disconnect_requested:
                 return
             self.status_changed.emit(
@@ -656,8 +728,27 @@ class BleController(QObject):
                 )
                 continue
             self.status_changed.emit(localization_manager.status_ble_event("reconnect_success", address=address))
+            await self._restore_state_after_reconnect()
             return
         self.status_changed.emit(localization_manager.status_ble_event("reconnect_give_up", address=address))
+
+    async def _restore_state_after_reconnect(self) -> None:
+        """After re-pairing, put the strip back the way the user left it.
+
+        A power-cycled controller comes back in its own default state, so we
+        re-apply the last power/brightness/colour (and effect, if one was
+        running) to match what the app shows.
+        """
+        try:
+            if not self._desired_power_on:
+                await self._set_power(False)
+                return
+            await self._set_power(True, restore_state=True)
+            if self._current_effect_code:
+                await asyncio.sleep(0.08)
+                await self._set_effect(self._current_effect_code)
+        except BLE_OPERATION_ERRORS as exc:
+            self._set_last_ble_exception(exc)
 
     def _require_driver(self) -> LedBleDriver:
         if self._driver is None:

@@ -3,11 +3,30 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import lru_cache
 
 from PySide6.QtCore import QObject, Signal
 
 from app.color_stream import ColorStreamEngine
-from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb, normalize_level
+from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb, normalize_level, update_beat
+
+
+@lru_cache(maxsize=8)
+def _analysis_kernels(n: int, samplerate: int):
+    """Hann window + per-band frequency masks for a given block size/rate.
+
+    Cached because they only depend on ``(n, samplerate)`` — which are fixed for
+    a capture session — so we build them once instead of every audio block. This
+    is the bulk of the per-block CPU saving.
+    """
+    import numpy as np
+
+    window = np.hanning(n).astype(np.float32)
+    freqs = np.fft.rfftfreq(n, d=1.0 / samplerate)
+    bass_mask = (freqs >= 20.0) & (freqs < 250.0)
+    mid_mask = (freqs >= 250.0) & (freqs < 2000.0)
+    treble_mask = (freqs >= 2000.0) & (freqs < 16000.0)
+    return window, bass_mask, mid_mask, treble_mask
 
 
 def analyze_block(samples, samplerate: int) -> tuple[float, float, float, float]:
@@ -16,32 +35,47 @@ def analyze_block(samples, samplerate: int) -> tuple[float, float, float, float]
     ``samples`` is a 1-D mono or 2-D (frames, channels) array of floats in
     roughly ``[-1, 1]``; stereo is downmixed. A Hann window + real FFT split the
     magnitude spectrum into bass (20-250 Hz), mid (250-2000 Hz) and treble
-    (2-16 kHz) sums, alongside the block RMS. numpy is imported lazily so the
-    module loads even where numpy isn't installed (matching the ambient/mss
-    pattern); the function itself is pure given numpy, so it's unit-testable.
+    (2-16 kHz) sums, alongside the block RMS. Computation is float32 and reuses
+    cached window/masks to keep CPU low. numpy is imported lazily so the module
+    loads even where numpy isn't installed (matching the ambient/mss pattern);
+    the function is pure given numpy, so it's unit-testable.
     """
     import numpy as np
 
-    arr = np.asarray(samples, dtype=np.float64)
+    arr = np.asarray(samples, dtype=np.float32)
     mono = arr.mean(axis=1) if arr.ndim == 2 else arr.reshape(-1)
     n = mono.size
     if n == 0:
         return (0.0, 0.0, 0.0, 0.0)
     rms = float(np.sqrt(np.mean(mono * mono)))
-    spectrum = np.abs(np.fft.rfft(mono * np.hanning(n)))
-    freqs = np.fft.rfftfreq(n, d=1.0 / samplerate)
+    window, bass_mask, mid_mask, treble_mask = _analysis_kernels(n, samplerate)
+    spectrum = np.abs(np.fft.rfft(mono * window))
+    return (
+        float(spectrum[bass_mask].sum()),
+        float(spectrum[mid_mask].sum()),
+        float(spectrum[treble_mask].sum()),
+        rms,
+    )
 
-    def band(low: float, high: float) -> float:
-        mask = (freqs >= low) & (freqs < high)
-        return float(spectrum[mask].sum()) if mask.any() else 0.0
 
-    return (band(20.0, 250.0), band(250.0, 2000.0), band(2000.0, 16000.0), rms)
+def list_audio_outputs() -> list[str]:
+    """Names of the system's audio output devices (speakers), or [] if audio
+    capture isn't available. Used to let the user pick which output's loopback
+    the music reactivity listens to."""
+    try:
+        import soundcard as sc
+
+        return [speaker.name for speaker in sc.all_speakers()]
+    except Exception:
+        return []
 
 
 @dataclass(frozen=True)
 class MusicOptions:
     samplerate: int = 48000
     blocksize: int = 1024
+    # Output device to capture (loopback). Empty = the system default speaker.
+    device_name: str = ""
     saturation: float = 1.4
     smoothing: float = 0.5
     floor_brightness: float = 0.06
@@ -53,6 +87,13 @@ class MusicOptions:
     # Reaction speed: how fast the band/level energies follow the audio (EMA
     # factor, 0..1). Low = slow, calm glide; high = snappy/instant.
     reactivity: float = 0.35
+    # Beat detection: a bass-energy onset briefly pops the brightness so the
+    # strip punches on the beat instead of only tracking volume. ``beat_strength``
+    # 0 disables it; sensitivity is how far above the running average counts as a
+    # beat; decay is how fast the pop fades.
+    beat_strength: float = 0.4
+    beat_sensitivity: float = 1.3
+    beat_decay: float = 0.82
 
 
 class MusicController(QObject):
@@ -78,6 +119,9 @@ class MusicController(QObject):
         self._stop = threading.Event()
         self._band_peak = 1e-6
         self._ema: list[float] | None = None
+        # Beat detector state (running bass average + decaying pulse envelope).
+        self._bass_avg = 0.0
+        self._beat_env = 0.0
         self.color_sampled.connect(self._engine.set_target)
 
     def options(self) -> MusicOptions:
@@ -96,6 +140,8 @@ class MusicController(QObject):
             return
         self._band_peak = 1e-6
         self._ema = None
+        self._bass_avg = 0.0
+        self._beat_env = 0.0
         self._engine.set_smoothing(self._options.smoothing)
         self._engine.start(sink, initial=(0, 0, 0))
         self._stop.clear()
@@ -117,6 +163,19 @@ class MusicController(QObject):
     def last_stream_error(self) -> str:
         return self._engine.last_error()
 
+    @staticmethod
+    def _resolve_speaker(sc, device_name: str):
+        """Pick the chosen output device, falling back to the system default."""
+        name = (device_name or "").strip()
+        if name:
+            try:
+                return sc.get_speaker(name)
+            except Exception:
+                for speaker in sc.all_speakers():
+                    if name in (getattr(speaker, "id", ""), speaker.name):
+                        return speaker
+        return sc.default_speaker()
+
     def _run(self) -> None:
         try:
             import soundcard as sc
@@ -124,7 +183,7 @@ class MusicController(QObject):
             self.failed.emit(f"audio_capture_unavailable: {exc}")
             return
         try:
-            speaker = sc.default_speaker()
+            speaker = self._resolve_speaker(sc, self._options.device_name)
             loopback = sc.get_microphone(speaker.name, include_loopback=True)
             options = self._options
             with loopback.recorder(samplerate=options.samplerate, blocksize=options.blocksize) as recorder:
@@ -132,6 +191,15 @@ class MusicController(QObject):
                     options = self._options
                     block = recorder.record(numframes=options.blocksize)
                     bass, mid, treble, rms = analyze_block(block, options.samplerate)
+                    # Detect beats from the *raw* bass (before smoothing, so the
+                    # transient survives) — the envelope pulses brightness below.
+                    self._bass_avg, self._beat_env, _is_beat = update_beat(
+                        bass,
+                        self._bass_avg,
+                        self._beat_env,
+                        sensitivity=options.beat_sensitivity,
+                        decay=options.beat_decay,
+                    )
                     # Ease the raw energies toward each new reading (EMA) so the
                     # colour glides instead of jumping on every block. The factor
                     # is the user's "speed": low = calm/slow, high = snappy.
@@ -143,6 +211,9 @@ class MusicController(QObject):
                             self._ema[i] += (value - self._ema[i]) * factor
                     bass, mid, treble, rms = self._ema
                     level = normalize_level(rms)
+                    # Punch the brightness up on a beat, then let it decay.
+                    if options.beat_strength > 0.0:
+                        level = min(1.0, level + self._beat_env * options.beat_strength)
                     # Auto-gain the bands against a slowly decaying running peak so
                     # the hue reflects the *balance* of frequencies, not absolute volume.
                     current = max(bass, mid, treble, 1e-6)

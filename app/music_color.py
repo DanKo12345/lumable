@@ -26,6 +26,33 @@ def normalize_level(rms: float, *, noise_floor: float = 0.0025, ceiling: float =
     return linear**0.5
 
 
+def update_beat(
+    energy: float,
+    avg: float,
+    env: float,
+    *,
+    sensitivity: float = 1.3,
+    avg_rate: float = 0.1,
+    decay: float = 0.82,
+) -> tuple[float, float, bool]:
+    """Update a simple bass-energy beat detector.
+
+    Tracks a slow running average of the bass energy and fires a beat when a
+    block jumps well above it. Returns ``(new_avg, new_env, is_beat)`` where
+    ``env`` is a 0..1 envelope that snaps to 1 on a beat and decays each call —
+    multiply brightness by it to pulse the strip. The first call just seeds the
+    average (no beat), and a beat won't retrigger until the envelope has faded,
+    so sustained loud bass doesn't strobe. Pure, so it's unit-testable.
+    """
+    if avg <= 0.0:
+        # Warm-up: seed the average from the first reading, never fire on it.
+        return (energy, max(0.0, env * decay), False)
+    is_beat = energy > avg * sensitivity and env < 0.35
+    new_avg = avg + (energy - avg) * avg_rate
+    new_env = 1.0 if is_beat else max(0.0, env * decay)
+    return (new_avg, new_env, is_beat)
+
+
 def bands_to_rgb(
     bass: float,
     mid: float,

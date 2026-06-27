@@ -216,6 +216,11 @@ class UiLocalizationController:
         if host.music_card.subtitle_label is not None:
             host.music_card.subtitle_label.setText(host._tr("music.subtitle"))
         host._set_slider_label_text("music.speed", host._tr("music.speed"))
+        host._set_slider_label_text("music.beat", host._tr("music.beat"))
+        source_combo = getattr(host, "music_source_combo", None)
+        if source_combo is not None and source_combo.count() > 0:
+            source_combo.setItemText(0, host._tr("music.source_default"))
+            source_combo.setToolTip(host._tr("music.source_hint"))
         host._set_slider_label_text("music.saturation", host._tr("music.saturation"))
         host._set_slider_label_text("music.smoothing", host._tr("music.smoothing"))
         running = host._music_ui.is_running()

@@ -98,7 +98,8 @@ class BleEventHandler:
             host._sync_connect_buttons()
             return
         for device in devices:
-            host.device_combo.addItem(f"{device['name']}  |  {device['address']}  |  RSSI {device['rssi']}", device["address"])
+            host.device_combo.addItem(self._device_label(device), device["address"])
+        supported = [device for device in devices if device.get("supported", True)]
         preferred = host._settings.get("last_device_address", "")
         preferred_index = host.device_combo.findData(preferred) if preferred else -1
         host.device_combo.setCurrentIndex(preferred_index if preferred_index >= 0 else 0)
@@ -112,7 +113,9 @@ class BleEventHandler:
             self._sync_last_device_hint()
         self._sync_device_onboarding_hint()
         host._sync_connect_buttons()
-        if len(devices) == 1:
+        # Auto-connect only a lone *supported* controller. Unknown ones are never
+        # auto-connected: the user picks one to probe it on purpose.
+        if len(devices) == 1 and devices[0].get("supported", True):
             device = devices[0]
             host.device_status.setText(host._tr("device.status.found_one", name=device["name"]))
             self.log(host._tr("status.autofound_connecting", name=device["name"], address=device["address"]))
@@ -122,8 +125,11 @@ class BleEventHandler:
             self._sync_device_onboarding_hint()
             host._sync_connect_buttons()
             host._ble.connect_to_address(device["address"])
+        elif supported:
+            host.device_status.setText(host._tr("device.status.found_many", count=len(supported)))
         else:
-            host.device_status.setText(host._tr("device.status.found_many", count=len(devices)))
+            # Only unrecognised devices nearby — invite the user to probe one.
+            host.device_status.setText(host._tr("device.status.found_unknown"))
 
     def on_connected_changed(self, connected: bool, address: str) -> None:
         host = self._host
@@ -185,7 +191,11 @@ class BleEventHandler:
         # Only show RSSI when there's a real reading (not the "-" placeholder).
         if rssi and rssi != "-":
             parts.append(f"RSSI {rssi}")
-        return "  |  ".join(parts) if parts else address
+        label = "  |  ".join(parts) if parts else address
+        # Flag controllers we don't recognise yet so the choice is clear.
+        if device.get("supported", True) is False:
+            label = f"{label}  ·  {self._host._tr('device.unsupported_tag')}"
+        return label
 
     def _sync_last_device_hint(
         self,
