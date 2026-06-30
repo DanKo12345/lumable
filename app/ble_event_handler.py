@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
+
 from app.storage import save_settings
 from app.types import BleEventHost
 
@@ -20,6 +22,7 @@ def _is_plausible_ble_address(address: str) -> bool:
 class BleEventHandler:
     def __init__(self, host: BleEventHost) -> None:
         self._host = host
+        self._mirror_scan_pending = False
 
     def start_scan(self) -> None:
         host = self._host
@@ -88,6 +91,12 @@ class BleEventHandler:
     def populate_devices(self, devices: list[dict[str, Any]]) -> None:
         host = self._host
         host._scan_in_progress = False
+        if getattr(self, "_mirror_scan_pending", False):
+            # This scan was triggered by "Add strip" while already connected —
+            # don't touch the primary connect flow, just add the found mirror.
+            self._mirror_scan_pending = False
+            self._handle_mirror_scan_result(devices)
+            return
         host._devices = devices
         host.device_combo.clear()
         if not devices:
@@ -138,6 +147,9 @@ class BleEventHandler:
         host = self._host
         host._is_connected = connected
         host._connect_in_progress = False
+        add_mirror = getattr(host, "add_mirror_button", None)
+        if add_mirror is not None:
+            add_mirror.setEnabled(connected)
         host.device_status.setText(host._tr("device.status.connected") if connected else host._tr("device.status.not_connected"))
         update_dot = getattr(host, "_update_status_dot", None)
         if callable(update_dot):
@@ -254,3 +266,99 @@ class BleEventHandler:
 
     def log(self, message: str) -> None:
         self._host._ui_feedback.log(message)
+
+    def add_selected_as_mirror(self) -> None:
+        host = self._host
+        if not host._is_connected:
+            return
+        primary = str(host._settings.get("last_device_address", "")).strip()
+        mirrors = set(host._ble.mirror_addresses())
+
+        def is_candidate(device: dict[str, Any]) -> bool:
+            address = str(device.get("address", "")).strip()
+            return bool(address) and bool(device.get("supported", True)) and address != primary and address not in mirrors
+
+        candidates = [device for device in host._devices if is_candidate(device)]
+        if not candidates:
+            # Nothing else to mirror — guide the user to scan with the other strip on.
+            self.show_error(host._tr("device.mirror_none"))
+            return
+        # Respect an explicit pick in the list; otherwise auto-pick when there's
+        # only one other strip, or ask the user to choose when several.
+        index = host.device_combo.currentIndex()
+        if 0 <= index < len(host._devices) and is_candidate(host._devices[index]):
+            chosen = host._devices[index]
+        elif len(candidates) == 1:
+            chosen = candidates[0]
+        else:
+            self.show_error(host._tr("device.mirror_pick_first"))
+            return
+        host._ble.add_mirror_device(str(chosen.get("address", "")).strip())
+
+    def request_add_mirror(self) -> None:
+        """Entry point for the 'Add strip' button: add a known second strip, or
+        scan for one first (the scan button is disabled while connected)."""
+        host = self._host
+        if not host._is_connected:
+            return
+        if self._has_mirror_candidate():
+            self.add_selected_as_mirror()
+            return
+        self.start_mirror_scan()
+
+    def _has_mirror_candidate(self) -> bool:
+        host = self._host
+        primary = str(host._settings.get("last_device_address", "")).strip()
+        mirrors = set(host._ble.mirror_addresses())
+        for device in host._devices:
+            address = str(device.get("address", "")).strip()
+            if address and device.get("supported", True) and address != primary and address not in mirrors:
+                return True
+        return False
+
+    def start_mirror_scan(self) -> None:
+        host = self._host
+        if not host._is_connected or host._connect_in_progress or host._scan_in_progress:
+            return
+        self._mirror_scan_pending = True
+        self.log(host._tr("device.mirror_scanning"))
+        host._ble.scan()
+
+    def _handle_mirror_scan_result(self, devices: list[dict[str, Any]]) -> None:
+        host = self._host
+        host._devices = devices
+        host.device_combo.clear()
+        for device in devices:
+            host.device_combo.addItem(self._device_label(device), device["address"])
+        host._sync_connect_buttons()
+        self.add_selected_as_mirror()
+
+    def refresh_mirror_list(self, addresses: list[str]) -> None:
+        host = self._host
+        container = getattr(host, "mirror_list_container", None)
+        layout = getattr(host, "mirror_list_layout", None)
+        if container is None or layout is None:
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for address in addresses:
+            name = address
+            for device in host._devices:
+                if str(device.get("address", "")).strip() == address:
+                    name = str(device.get("name", "")).strip() or address
+                    break
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            label = QLabel(host._tr("device.mirror_item", name=name, address=address))
+            label.setObjectName("lastDeviceHint")
+            remove = host._button(host._tr("device.mirror_remove"), "ghost")
+            remove.clicked.connect(lambda _checked=False, a=address: host._ble.remove_mirror_device(a))
+            row_layout.addWidget(label, 1)
+            row_layout.addWidget(remove)
+            layout.addWidget(row)
+        container.setVisible(bool(addresses))

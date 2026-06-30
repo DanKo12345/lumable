@@ -263,6 +263,12 @@ class LocalizationManager:
             return t("status.ble.scan_finished_found", count=int(payload.get("count", 0))) + remainder
         if event == "scan_finished_unknown":
             return t("status.ble.scan_finished_unknown", count=int(payload.get("count", 0))) + remainder
+        if event == "mirror_added":
+            return t("status.ble.mirror_added", name=str(payload.get("name", "")).strip(), address=addr()) + remainder
+        if event == "mirror_removed":
+            return t("status.ble.mirror_removed", address=addr()) + remainder
+        if event == "mirror_lost":
+            return t("status.ble.mirror_lost", address=addr()) + remainder
         if event == "already_connected":
             return t("status.ble.already_connected", address=addr()) + remainder
         if event == "connecting":

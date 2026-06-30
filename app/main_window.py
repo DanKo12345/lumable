@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
 
 from app.ambient_ui_controller import AmbientUiController
 from app.app_info import APP_ORGANIZATION, APP_RELEASES_URL, APP_UPDATE_URL, APP_VERSION
+from app.app_trigger_controller import AppTriggerController
+from app.app_trigger_ui_controller import AppTriggerUiController
 from app.ble import BleController
 from app.ble_event_handler import BleEventHandler
 from app.color_controller import ColorController
@@ -43,6 +45,7 @@ from app.performance import resolve_ui_fps
 from app.profile_actions import ProfileActions
 from app.profile_controller import ProfileController
 from app.quick_mode_controller import QuickModeController
+from app.scene_presets import get_scene_preset
 from app.schedule_controller import ScheduleController
 from app.shortcut_controller import ShortcutController
 from app.single_instance import SingleInstance
@@ -96,6 +99,7 @@ class MainWindow(QMainWindow):
             app.installEventFilter(self._tooltip_manager)
         self._start_deferred(500, self._ble_events.start_autoconnect)
         self._start_deferred(900, self._license_refresher.refresh)
+        self._start_deferred(1300, self._app_triggers.start)
         self._start_deferred(1600, self._update_controller.check_silent)
 
     def _sz(self, value: float) -> int:
@@ -160,6 +164,8 @@ class MainWindow(QMainWindow):
         self._ambient_ui = AmbientUiController(self)
         self._music_ui = MusicUiController(self)
         self._software_fx_ui = SoftwareEffectUiController(self)
+        self._app_trigger_ui = AppTriggerUiController(self)
+        self._app_triggers = AppTriggerController(self)
         self._window_state = WindowStateController(self)
         self._diagnostics_ctrl = DiagnosticsController(self)
         self._color_ctrl = ColorController(self)
@@ -323,12 +329,14 @@ class MainWindow(QMainWindow):
         self._ambient_ui.wire()
         self._music_ui.wire()
         self._software_fx_ui.wire()
+        self._app_trigger_ui.wire()
         self._wire_shortcuts()
 
     def _wire_device_events(self):
         self.scan_button.clicked.connect(self._ble_events.start_scan)
         self.connect_button.clicked.connect(self._ble_events.handle_connect)
         self.disconnect_button.clicked.connect(self._ble.disconnect)
+        self.add_mirror_button.clicked.connect(self._ble_events.request_add_mirror)
         self.logs_toggle_button.clicked.connect(self._show_logs_overlay)
 
     def _wire_shortcuts(self):
@@ -420,6 +428,7 @@ class MainWindow(QMainWindow):
         self._ble.status_changed.connect(self._log)
         self._ble.devices_discovered.connect(self._ble_events.populate_devices)
         self._ble.connected_changed.connect(self._ble_events.on_connected_changed)
+        self._ble.mirrors_changed.connect(self._ble_events.refresh_mirror_list)
         self._ble.error_occurred.connect(self._show_error)
         self._ble.shutdown_finished.connect(self._finish_close_after_ble_shutdown)
 
@@ -543,6 +552,30 @@ class MainWindow(QMainWindow):
         self.blue_slider.setValue(color.blue())
         self._apply_current_color()
 
+    def _apply_scene_preset(self, key: str) -> None:
+        preset = get_scene_preset(key)
+        if preset is None:
+            return
+        red, green, blue = preset.rgb
+        with self._suppress_signals():
+            self.red_slider.setValue(red)
+            self.green_slider.setValue(green)
+            self.blue_slider.setValue(blue)
+            self.brightness_slider.setValue(preset.brightness)
+            static_index = self.effect_combo.findData(0)
+            if static_index >= 0:
+                self.effect_combo.setCurrentIndex(static_index)
+            self._update_preview()
+        # Turn the strip on so the scene is visible, then apply (the colour glides
+        # in via the fade path).
+        if self._is_connected and not self.power_button.isChecked():
+            self.power_button.setChecked(True)
+            self._toggle_power()
+        self._apply_current_color()
+        self._remember_current_color()
+        self._sync_quick_mode_from_state()
+        self._log(self._tr("presets.applied", name=self._tr(f"scene.{key}")))
+
     def _apply_current_color(self):
         if self._initializing:
             return
@@ -554,7 +587,12 @@ class MainWindow(QMainWindow):
         if not self._is_connected:
             self._apply_local_color_state(color)
             return
-        self._ble.set_static_color(color.red(), color.green(), color.blue(), self.brightness_slider.value())
+        brightness = self.brightness_slider.value()
+        if bool(self._settings.get("fade", True)):
+            # Big scene jumps glide; the BLE layer snaps small slider nudges.
+            self._ble.set_color_fade(color.red(), color.green(), color.blue(), brightness)
+        else:
+            self._ble.set_static_color(color.red(), color.green(), color.blue(), brightness)
         self._apply_local_color_state(color)
 
     def _apply_local_current_color(self):

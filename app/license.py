@@ -65,12 +65,14 @@ def _age_hours(checked_at: str) -> float | None:
 
 def _needs_revalidation(checked_at: str) -> bool:
     age_hours = _age_hours(checked_at)
-    return age_hours is None or age_hours >= _REVALIDATE_HOURS
+    # Missing, in the future (a forged timestamp), or simply old -> re-check.
+    return age_hours is None or age_hours < 0 or age_hours >= _REVALIDATE_HOURS
 
 
 def _is_within_grace(checked_at: str) -> bool:
     age_hours = _age_hours(checked_at)
-    return age_hours is not None and age_hours <= LICENSE_GRACE_DAYS * 24
+    # A future timestamp (negative age) is forged, so it never earns grace.
+    return age_hours is not None and 0 <= age_hours <= LICENSE_GRACE_DAYS * 24
 
 
 def _is_expected_variant(resp: dict[str, Any]) -> bool:
@@ -132,16 +134,18 @@ def is_license_active(settings: dict[str, Any], *, allow_network: bool = True) -
         return False
 
     checked_at = str(lic.get("checked_at", ""))
-    if not _needs_revalidation(checked_at):
-        _mark_pro(lic)
-        return True
-
     if not allow_network:
-        if _is_within_grace(checked_at):
+        # UI thread / offline: trust a recent server-verified check, or stay
+        # alive within the offline grace window. Never blocks on the network.
+        if not _needs_revalidation(checked_at) or _is_within_grace(checked_at):
             _mark_pro(lic)
             return True
         return False
 
+    # Authoritative path (off the UI thread): always re-check with the server, so
+    # a forged local state — a fake key, or a hand-edited recent/future
+    # "checked_at" — can't grant Pro. Grace applies only when the server is
+    # genuinely unreachable.
     try:
         resp = _ls_post("validate", {"license_key": key, "instance_id": instance_id})
     except (URLError, OSError, ValueError):

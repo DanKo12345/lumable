@@ -109,8 +109,11 @@ class ProfileListDelegate(QStyledItemDelegate):
             effect_code = int(profile.get("effect_code", 0) or 0)
         except (TypeError, ValueError):
             return ""
-        mode_key = "profile.mode_static" if effect_code == 0 else "profile.mode_effect"
-        return f"RGB {r}, {g}, {b} · {brightness}% · {localization_manager.t(mode_key)}"
+        subtitle = f"RGB {r}, {g}, {b} · {brightness}%"
+        # Only call out the mode when it's an effect — "static" on every row is noise.
+        if effect_code != 0:
+            subtitle += f" · {localization_manager.t('profile.mode_effect')}"
+        return subtitle
 
     def _is_action_hovered(self, index, action: str) -> bool:
         view = self.parent()
@@ -121,7 +124,7 @@ class ProfileListDelegate(QStyledItemDelegate):
 
     def action_rect(self, option: QStyleOptionViewItem, action: str) -> QRectF:
         row = QRectF(option.rect).adjusted(6.0, 5.0, -8.0, -5.0)
-        tile_left = row.right() - 42.0 - 17.0
+        tile_left = row.right() - 36.0 - 17.0
         delete_left = tile_left - self.ACTION_GAP - self.ACTION_SIZE
         rename_left = delete_left - self.ACTION_GAP - self.ACTION_SIZE
         left = rename_left if action == "rename" else delete_left
@@ -131,35 +134,23 @@ class ProfileListDelegate(QStyledItemDelegate):
         renderer = QSvgRenderer(str(LUCIDE_ICON_DIR / f"{kind}.svg"))
         if not renderer.isValid():
             return
-        background = qcolor_from_token(theme_manager.palette["surface_soft"])
-        background.setAlpha(140 if hovered and theme_manager.is_dark else 178 if hovered else 92 if theme_manager.is_dark else 135)
-        border = qcolor_from_token(theme_manager.palette["surface_border"])
-        if hovered:
-            border = qcolor_from_token(theme_manager.palette["accent_start"])
-        border.setAlpha(132 if hovered else 72 if theme_manager.is_dark else 98)
-        path = QPainterPath()
-        path.addRoundedRect(rect, 8.0, 8.0)
-        painter.fillPath(path, background)
-        painter.setPen(QPen(border, 0.8))
-        painter.drawPath(path)
-        if hovered:
-            glow = qcolor_from_token(theme_manager.palette["accent_start"])
-            glow.setAlpha(42 if theme_manager.is_dark else 34)
-            painter.fillPath(path, glow)
-
-        icon_size = 14.0
+        # No filled box behind the glyph — a background tile would pick up the
+        # blue selected-row fill and read as a coloured button. Just the glyph,
+        # brighter on hover, so it stays a neutral icon in any theme.
+        icon_size = 16.0
+        inset = (rect.width() - icon_size) / 2.0
         image = QPixmap(rect.size().toSize())
         image.fill(Qt.transparent)
         icon_painter = QPainter(image)
         icon_painter.setRenderHint(QPainter.Antialiasing)
-        renderer.render(icon_painter, QRectF(4.0, 4.0, icon_size, icon_size))
+        renderer.render(icon_painter, QRectF(inset, inset, icon_size, icon_size))
         icon_painter.end()
 
         tint = QPixmap(image.size())
         tint.fill(Qt.transparent)
         tint_painter = QPainter(tint)
         color = qcolor_from_token(theme_manager.palette["text"])
-        color.setAlpha(220)
+        color.setAlpha(255 if hovered else 190)
         tint_painter.fillRect(tint.rect(), color)
         tint_painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
         tint_painter.drawPixmap(0, 0, image)
@@ -174,8 +165,8 @@ class ProfileListDelegate(QStyledItemDelegate):
             int(color_data.get("b", 236)),
         )
 
-        tile_width = 42
-        tile_height = 30
+        tile_width = 36
+        tile_height = 24
         tile = QRectF(
             row.right() - tile_width - 17.0,
             row.center().y() - tile_height / 2.0,
@@ -190,7 +181,7 @@ class ProfileListDelegate(QStyledItemDelegate):
         painter.drawPixmap(tile.toRect(), pixmap)
 
     def _build_tile_pixmap(self, color: QColor, selected: bool) -> QPixmap:
-        pixmap = QPixmap(42, 30)
+        pixmap = QPixmap(36, 24)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -198,6 +189,10 @@ class ProfileListDelegate(QStyledItemDelegate):
         if selected:
             border = qcolor_from_token(theme_manager.palette["accent_start"])
             border.setAlpha(118 if theme_manager.is_dark else 136)
-        paint_color_tile(painter, QRectF(1.0, 1.0, 40.0, 28.0), color, border_color=border, selected=selected)
+        # radius_ratio 0.5 → fully rounded pill, so it reads as a colour sample
+        # rather than another button.
+        paint_color_tile(
+            painter, QRectF(1.0, 1.0, 34.0, 22.0), color, border_color=border, selected=selected, radius_ratio=0.5
+        )
         painter.end()
         return pixmap

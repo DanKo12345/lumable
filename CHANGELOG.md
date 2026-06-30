@@ -2,6 +2,31 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.2.4] - 2026-06-30
+
+Drive several strips at once, smoother colour transitions, auto-scenes that follow the app you're using (now free), plus licence-tamper hardening and a tidier Configs list.
+
+### Added
+- Mirror across multiple controllers: add several strips in the Device card and control them together — every colour, brightness, power and effect change fans out to all connected controllers, so a multi-strip setup stays in sync from one window. ("Add strip" runs its own scan; single-strip behaviour is unchanged.)
+- Auto-scenes by app (free): the strip automatically switches to a scene based on the app or game in the foreground. Map an app to a scene (e.g. `chrome` → Cool white, a game → Red), set a default scene for everything else, and it quietly steps aside while music, screen sync or animations are running.
+
+### Changed
+- Smooth colour & brightness fade: the strip now glides between colours and brightness levels instead of snapping, for a calmer look. Rapid changes stay responsive (the newest target always wins).
+- Scenes are unified into Quick modes: the separate scene gallery is gone. The built-in quick modes (Chill / Gaming / Night / Rainbow) plus your own saved ones are now the single place for one-tap looks, with the colour wheel and sliders for fine-tuning — no more duplicate "presets vs saved scenes" split.
+- Configs list polish: the edit/delete icons are now neutral graphite (no blue tint bleeding through), the colour sample is a slim pill so it clearly reads as a swatch rather than a button, and rows no longer label every plain colour as "Static" (the mode is shown only for effects).
+
+### Fixed
+- Live-light preview: the glow no longer clips at the card's edge.
+
+### Security
+- Licence-tamper hardening: a forged key or activation timestamp written into the local settings is cleared on the first online launch, and timestamps dated in the future are rejected, so the offline grace period can't be extended by editing the config.
+
+### Install
+- The installer now requires Windows 10 or newer (older Windows versions are blocked up front instead of installing a build that can't run).
+
+### Internal
+- Diagnostics no longer surfaces stale crash logs from older versions: logs left by a previous build are cleared on the first launch after an upgrade, and the crash-log history is kept tighter (shorter age window, fewer files).
+
 ## [0.2.3.1] - 2026-06-27
 
 ### Fixed

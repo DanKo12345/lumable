@@ -4,9 +4,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import app.crash_logging as crash_logging
+from app.app_info import APP_NAME, APP_VERSION
 from app.constants import CRASH_LOG_MAX_FILES, FATAL_LOG_MAX_BYTES
 from app.crash_logging import (
     _cleanup_exception_logs,
+    _cleanup_old_version_logs,
     _display_path,
     _exception_log_path,
     _trim_fatal_log,
@@ -149,6 +151,35 @@ def test_cleanup_removes_excess_files_beyond_max(tmp_path, monkeypatch) -> None:
 
     remaining = [f for f in tmp_path.glob("*.log") if f.name != "fatal-crashes.log"]
     assert len(remaining) <= CRASH_LOG_MAX_FILES
+
+
+# ── _cleanup_old_version_logs ─────────────────────────────────────────
+
+def test_cleanup_removes_logs_from_previous_version(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(crash_logging, "CRASH_LOG_DIR", tmp_path)
+    monkeypatch.setattr(crash_logging, "FATAL_LOG_PATH", tmp_path / "fatal-crashes.log")
+
+    old = tmp_path / "20260101-120000-startup.log"
+    old.write_text(f"Application: {APP_NAME} 0.2.1\nContext: startup\n", encoding="utf-8")
+    current = tmp_path / "20260102-120000-startup.log"
+    current.write_text(f"Application: {APP_NAME} {APP_VERSION}\nContext: startup\n", encoding="utf-8")
+
+    _cleanup_old_version_logs()
+
+    assert not old.exists()
+    assert current.exists()
+
+
+def test_cleanup_keeps_unclassifiable_logs(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(crash_logging, "CRASH_LOG_DIR", tmp_path)
+    monkeypatch.setattr(crash_logging, "FATAL_LOG_PATH", tmp_path / "fatal-crashes.log")
+
+    mystery = tmp_path / "20260101-120000-startup.log"
+    mystery.write_text("no version header here\n", encoding="utf-8")
+
+    _cleanup_old_version_logs()
+
+    assert mystery.exists()
 
 
 # ── _trim_fatal_log ───────────────────────────────────────────────────
