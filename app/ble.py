@@ -4,6 +4,7 @@ import asyncio
 import threading
 from collections.abc import Iterable
 from concurrent.futures import CancelledError
+from dataclasses import dataclass, field
 
 from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
@@ -13,6 +14,7 @@ from PySide6.QtCore import QObject, Signal
 
 from app.ble_drivers import EFFECTS, detect_connected_driver, detect_scan_driver
 from app.ble_drivers.base import LedBleDriver, clamp
+from app.color_fade import color_distance, fade_frames
 from app.localization import localization_manager
 
 CONNECT_TIMEOUT_SECONDS = 10.0
@@ -25,6 +27,13 @@ WRITE_RETRY_DELAY_SECONDS = 0.12
 # it comes back. Delays (seconds) per attempt; the last value repeats.
 RECONNECT_ATTEMPTS = 12
 RECONNECT_BACKOFF_SECONDS = (2.0, 3.0, 5.0, 8.0, 12.0, 20.0)
+
+# Smooth colour transitions: number of intermediate frames written when applying
+# a new scene, and the minimum jump (per colour channel, or in brightness %) that
+# triggers a fade — smaller changes, like nudging a slider, apply instantly.
+FADE_STEPS = 7
+FADE_MIN_DELTA = 36
+FADE_MIN_BRIGHTNESS_DELTA = 6
 
 
 class ProtocolCompatibilityError(RuntimeError):
@@ -63,12 +72,33 @@ def _looks_like_led_controller(name: str, service_uuids: Iterable[str]) -> bool:
     return False
 
 
+@dataclass
+class DeviceConnection:
+    """One live BLE controller connection: the client plus the driver and the
+    write characteristic(s) chosen for it.
+
+    Each connected controller owns its own driver (different clones speak
+    different protocols), so commands are turned into payloads per connection.
+    This is the unit a future multi-device list is built from; today there is
+    exactly one.
+    """
+
+    address: str
+    client: BleakClient
+    device: BLEDevice
+    driver: LedBleDriver
+    write_characteristic: BleakGATTCharacteristic
+    write_characteristics: list[BleakGATTCharacteristic] = field(default_factory=list)
+    preferred_payload_indices: dict = field(default_factory=dict)
+
+
 class BleController(QObject):
     status_changed = Signal(str)
     devices_discovered = Signal(list)
     connected_changed = Signal(bool, str)
     error_occurred = Signal(str)
     shutdown_finished = Signal()
+    mirrors_changed = Signal(list)
 
     def __init__(self) -> None:
         super().__init__()
@@ -101,6 +131,12 @@ class BleController(QObject):
         # Unrecognised-but-plausible LED controllers seen in the last scan, kept
         # so the diagnostics report can list them for adding driver support.
         self._unknown_devices: list[dict[str, str]] = []
+        # Extra controllers driven in mirror with the primary (multi-device).
+        # The primary write path is untouched; commands fan out to these too.
+        self._mirror_connections: list[DeviceConnection] = []
+        # Bumped by every colour/brightness command so an in-flight fade can tell
+        # it was superseded and stop (latest target wins, no laggy backlog).
+        self._fade_seq = 0
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -218,11 +254,23 @@ class BleController(QObject):
         self._cancel_reconnect()
         self._submit(self._disconnect())
 
+    def add_mirror_device(self, address: str) -> None:
+        """Connect an extra controller driven in mirror with the primary."""
+        self._submit(self._add_mirror(address))
+
+    def remove_mirror_device(self, address: str) -> None:
+        self._submit(self._remove_mirror(address))
+
+    def mirror_addresses(self) -> list[str]:
+        return [conn.address for conn in self._mirror_connections]
+
     def set_power(self, enabled: bool, *, restore_state: bool = True) -> None:
+        self._fade_seq = getattr(self, "_fade_seq", 0) + 1
         self._desired_power_on = bool(enabled)
         self._submit(self._set_power(enabled, restore_state=restore_state))
 
     def set_color(self, red: int, green: int, blue: int) -> None:
+        self._fade_seq = getattr(self, "_fade_seq", 0) + 1
         self._last_red = clamp(red, 0, 255)
         self._last_green = clamp(green, 0, 255)
         self._last_blue = clamp(blue, 0, 255)
@@ -236,6 +284,7 @@ class BleController(QObject):
         slow BLE link never backs up; writes colour only (no brightness, no
         forced delay); and is logged quietly to avoid flooding the session log.
         """
+        self._fade_seq = getattr(self, "_fade_seq", 0) + 1
         if self._stream_busy:
             return
         self._last_red = clamp(red, 0, 255)
@@ -277,6 +326,7 @@ class BleController(QObject):
         self._submit(self._set_brightness(value))
 
     def set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
+        self._fade_seq = getattr(self, "_fade_seq", 0) + 1
         self._last_red = clamp(red, 0, 255)
         self._last_green = clamp(green, 0, 255)
         self._last_blue = clamp(blue, 0, 255)
@@ -293,11 +343,36 @@ class BleController(QObject):
             )
         )
 
+    def set_color_fade(self, red: int, green: int, blue: int, brightness: int) -> None:
+        """Apply a static colour with a short smooth transition from the current
+        colour. Small changes (a slider nudge) snap instantly; bigger scene jumps
+        animate. Falls back to an instant apply when the change is tiny.
+        """
+        red, green, blue = clamp(red, 0, 255), clamp(green, 0, 255), clamp(blue, 0, 255)
+        brightness = clamp(brightness, 0, 100)
+        self._fade_seq = getattr(self, "_fade_seq", 0) + 1
+        start = (self._last_red, self._last_green, self._last_blue)
+        end = (red, green, blue)
+        start_brightness = self._last_brightness
+        color_jump = color_distance(start, end) >= FADE_MIN_DELTA
+        brightness_jump = abs(start_brightness - brightness) >= FADE_MIN_BRIGHTNESS_DELTA
+        if not color_jump and not brightness_jump:
+            self.set_static_color(red, green, blue, brightness)
+            return
+        self._last_red, self._last_green, self._last_blue = end
+        self._last_brightness = brightness
+        self._desired_power_on = True
+        if self._driver is not None:
+            self._driver.remember_brightness(brightness)
+        self._submit(self._fade_to(start, end, start_brightness, brightness, self._fade_seq))
+
     def set_effect(self, code: int) -> None:
+        self._fade_seq = getattr(self, "_fade_seq", 0) + 1
         self._desired_power_on = True
         self._submit(self._set_effect(code))
 
     def set_effect_with_speed(self, code: int, speed: int) -> None:
+        self._fade_seq = getattr(self, "_fade_seq", 0) + 1
         self._desired_power_on = True
         self._submit(self._set_effect_with_speed(code, speed))
 
@@ -471,12 +546,14 @@ class BleController(QObject):
             driver.power_payloads(enabled),
             localization_manager.status_ble_event("power", enabled=enabled),
         )
+        await self._fan_out(lambda d: d.power_payloads(enabled))
         if enabled and restore_state:
             await asyncio.sleep(0.12)
             await self._write_many(
                 driver.brightness_payloads(self._last_brightness),
                 localization_manager.status_ble_event("brightness_restore", value=self._last_brightness),
             )
+            await self._fan_out(lambda d: d.brightness_payloads(self._last_brightness))
             await asyncio.sleep(0.08)
             await self._write_many(
                 driver.color_payloads(self._last_red, self._last_green, self._last_blue),
@@ -487,6 +564,7 @@ class BleController(QObject):
                     blue=self._last_blue,
                 ),
             )
+            await self._fan_out(lambda d: d.color_payloads(self._last_red, self._last_green, self._last_blue))
 
     async def _set_color(self, red: int, green: int, blue: int) -> None:
         driver = self._require_driver()
@@ -494,10 +572,12 @@ class BleController(QObject):
             driver.color_payloads(red, green, blue),
             localization_manager.status_ble_event("color_set", red=red, green=green, blue=blue),
         )
+        await self._fan_out(lambda d: d.color_payloads(red, green, blue))
 
     async def _set_color_stream(self, red: int, green: int, blue: int) -> None:
         driver = self._require_driver()
         await self._write_many(driver.color_payloads(red, green, blue), "", quiet=True)
+        await self._fan_out(lambda d: d.color_payloads(red, green, blue))
 
     async def _set_brightness(self, value: int) -> None:
         driver = self._require_driver()
@@ -506,6 +586,11 @@ class BleController(QObject):
             await self._write_many(
                 payloads,
                 localization_manager.status_ble_event("brightness_set", value=value),
+            )
+            # Mirror brightness, falling back to colour for drivers without it.
+            await self._fan_out(
+                lambda d: d.brightness_payloads(value)
+                or d.color_payloads(self._last_red, self._last_green, self._last_blue)
             )
             return
         await self._write_many(
@@ -517,6 +602,7 @@ class BleController(QObject):
                 blue=self._last_blue,
             ),
         )
+        await self._fan_out(lambda d: d.color_payloads(self._last_red, self._last_green, self._last_blue))
 
     async def _set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
         self._current_effect_code = 0
@@ -529,6 +615,52 @@ class BleController(QObject):
             pass
         await self._set_color(red, green, blue)
 
+    async def _fade_to(
+        self,
+        start: tuple[int, int, int],
+        end: tuple[int, int, int],
+        start_brightness: int,
+        end_brightness: int,
+        seq: int,
+    ) -> None:
+        """Stream a short interpolation of colour (and brightness, when it also
+        changes) from start to end, then lock in the final scene. Aborts early if
+        a newer command bumped ``_fade_seq`` (latest target wins). The BLE write
+        rate paces the fade; mirrors follow the per-frame colour writes.
+        """
+        self._current_effect_code = 0
+        fade_brightness = start_brightness != end_brightness
+        if not fade_brightness:
+            # Brightness isn't changing — set it once, then fade only the colour.
+            try:
+                await self._set_brightness(end_brightness)
+                await asyncio.sleep(0.04)
+            except RuntimeError:
+                pass
+        frames = fade_frames(start, end, FADE_STEPS)
+        total = len(frames)
+        for index, frame in enumerate(frames[:-1], start=1):
+            if seq != self._fade_seq:
+                return  # a newer colour/brightness command superseded this fade
+            try:
+                if fade_brightness and self._driver is not None:
+                    value = round(start_brightness + (end_brightness - start_brightness) * (index / total))
+                    payloads = self._driver.brightness_payloads(value)
+                    if payloads:
+                        await self._write_many(payloads, "", quiet=True)
+                await self._set_color_stream(*frame)
+            except BLE_OPERATION_ERRORS:
+                break
+        if seq != self._fade_seq:
+            return
+        if fade_brightness:
+            try:
+                await self._set_brightness(end_brightness)
+                await asyncio.sleep(0.03)
+            except RuntimeError:
+                pass
+        await self._set_color(*end)
+
     async def _set_effect(self, code: int) -> None:
         if code == 0:
             self._current_effect_code = 0
@@ -538,6 +670,8 @@ class BleController(QObject):
         if payload is None:
             raise RuntimeError("Built-in effects are not supported by this controller yet.")
         await self._write(payload, localization_manager.status_ble_event("effect_applied", code=f"{code:02X}"))
+        # Mirror the same effect code (best-effort; identical controllers match).
+        await self._fan_out(lambda d: d.effect_payload(code))
         # Some BLEDOM clones ignore the first effect command when switching from
         # another running effect (e.g. fade → rainbow). A quiet re-send makes the
         # switch reliable without spamming the log.
@@ -581,9 +715,11 @@ class BleController(QObject):
             raise RuntimeError("Built-in effects are not supported by this controller yet.")
         await self._write(payload, localization_manager.status_ble_event("effect_speed_set", value=value))
 
-    async def _connect(self, address: str, *, from_reconnect: bool = False) -> None:
-        await self._disconnect(cancel_reconnect=not from_reconnect)
-        preferred_driver_id = self._scan_driver_hints.get(address)
+    async def _establish_connection(self, address: str, preferred_driver_id: str | None) -> DeviceConnection:
+        """Find, connect to and identify a controller, returning a ready
+        DeviceConnection. Shared by the primary connect path and (later)
+        additional mirror devices. Raises on any failure (the caller cleans up).
+        """
         device = await asyncio.wait_for(
             BleakScanner.find_device_by_address(address, timeout=FIND_DEVICE_TIMEOUT_SECONDS),
             timeout=FIND_DEVICE_TIMEOUT_SECONDS + 2.0,
@@ -611,12 +747,147 @@ class BleController(QObject):
         if characteristic is None:
             await client.disconnect()
             raise RuntimeError("No writable GATT characteristic was found on this device.")
+        return DeviceConnection(
+            address=address,
+            client=client,
+            device=device,
+            driver=driver,
+            write_characteristic=characteristic,
+            write_characteristics=driver.collect_write_characteristics(services),
+        )
 
-        self._client = client
-        self._device = device
-        self._driver = driver
-        self._write_characteristic = characteristic
-        self._write_characteristics = driver.collect_write_characteristics(services)
+    # --- Mirror (multi-device) -------------------------------------------
+    async def _add_mirror(self, address: str) -> None:
+        if self._client is None:
+            self.error_occurred.emit(localization_manager.t("error.mirror_no_primary"))
+            return
+        primary_address = self._device.address if self._device is not None else ""
+        if address == primary_address or any(conn.address == address for conn in self._mirror_connections):
+            return
+        hint = self._scan_driver_hints.get(address)
+        conn = await self._establish_connection(address, hint)
+        self._mirror_connections.append(conn)
+        self.status_changed.emit(
+            localization_manager.status_ble_event(
+                "mirror_added",
+                name=(conn.device.name or "").strip() or address,
+                address=address,
+            )
+        )
+        self.mirrors_changed.emit(self.mirror_addresses())
+        await self._sync_mirror(conn)
+
+    async def _remove_mirror(self, address: str) -> None:
+        conn = next((c for c in self._mirror_connections if c.address == address), None)
+        if conn is None:
+            return
+        self._mirror_connections.remove(conn)
+        try:
+            await conn.client.disconnect()
+        except BLE_OPERATION_ERRORS:
+            pass
+        self.status_changed.emit(localization_manager.status_ble_event("mirror_removed", address=address))
+        self.mirrors_changed.emit(self.mirror_addresses())
+
+    async def _disconnect_all_mirrors(self) -> None:
+        mirrors = getattr(self, "_mirror_connections", None) or []
+        self._mirror_connections = []
+        for conn in mirrors:
+            try:
+                await conn.client.disconnect()
+            except BLE_OPERATION_ERRORS:
+                pass
+        if mirrors:
+            self.mirrors_changed.emit([])
+
+    async def _sync_mirror(self, conn: DeviceConnection) -> None:
+        """Bring a freshly added mirror in line with the current strip state."""
+        try:
+            if not self._desired_power_on:
+                await self._mirror_write_payloads(conn, conn.driver.power_payloads(False))
+                return
+            await self._mirror_write_payloads(conn, conn.driver.power_payloads(True))
+            await asyncio.sleep(0.1)
+            await self._mirror_write_payloads(conn, conn.driver.brightness_payloads(self._last_brightness))
+            await asyncio.sleep(0.06)
+            if self._current_effect_code:
+                payload = conn.driver.effect_payload(self._current_effect_code)
+                if payload is not None:
+                    await self._mirror_write_payloads(conn, [payload])
+                    return
+            await self._mirror_write_payloads(
+                conn, conn.driver.color_payloads(self._last_red, self._last_green, self._last_blue)
+            )
+        except BLE_OPERATION_ERRORS + DRIVER_CAPABILITY_ERRORS:
+            pass
+
+    async def _fan_out(self, build) -> None:
+        """Run ``build(driver)`` for each mirror and write the result. No-op (and
+        zero cost) when there are no mirrors, so the single-device path is
+        unaffected. ``build`` returns a payload, a list of variants, or None.
+        """
+        mirrors = getattr(self, "_mirror_connections", None)
+        if not mirrors:
+            return
+        for conn in list(mirrors):
+            try:
+                result = build(conn.driver)
+            except DRIVER_CAPABILITY_ERRORS:
+                continue
+            if result is None:
+                continue
+            if isinstance(result, (bytes, bytearray)):
+                payloads = [bytes(result)]
+            elif isinstance(result, (list, tuple)):
+                payloads = [payload for payload in result if payload is not None]
+            else:
+                continue
+            try:
+                await self._mirror_write_payloads(conn, payloads)
+            except BLE_OPERATION_ERRORS:
+                continue
+
+    async def _mirror_write_payloads(self, conn: DeviceConnection, payloads) -> None:
+        """Best-effort write of one payload variant to a mirror; failures swallowed."""
+        if not payloads:
+            return
+        for payload in payloads:
+            for characteristic in self._connection_candidates(conn):
+                properties = {prop.lower() for prop in characteristic.properties}
+                prefer_response = "write" in properties and "write-without-response" not in properties
+                if await self._write_attempt(characteristic, payload, prefer_response, client=conn.client) is None:
+                    return
+                if await self._write_attempt(characteristic, payload, not prefer_response, client=conn.client) is None:
+                    return
+
+    @staticmethod
+    def _connection_candidates(conn: DeviceConnection) -> list:
+        raw = conn.write_characteristics or ([conn.write_characteristic] if conn.write_characteristic is not None else [])
+        ordered: list = []
+        seen: set[str] = set()
+        for characteristic in raw:
+            if characteristic is None:
+                continue
+            properties = {prop.lower() for prop in characteristic.properties}
+            if not {"write", "write-without-response"} & properties:
+                continue
+            uuid = str(characteristic.uuid)
+            if uuid in seen:
+                continue
+            ordered.append(characteristic)
+            seen.add(uuid)
+        return ordered
+
+    async def _connect(self, address: str, *, from_reconnect: bool = False) -> None:
+        await self._disconnect(cancel_reconnect=not from_reconnect)
+        preferred_driver_id = self._scan_driver_hints.get(address)
+        connection = await self._establish_connection(address, preferred_driver_id)
+
+        self._client = connection.client
+        self._device = connection.device
+        self._driver = connection.driver
+        self._write_characteristic = connection.write_characteristic
+        self._write_characteristics = connection.write_characteristics
         self._reconnect_address = address
         self._manual_disconnect_requested = False
         self._clear_last_ble_error()
@@ -624,14 +895,14 @@ class BleController(QObject):
         self.status_changed.emit(
             localization_manager.status_ble_event(
                 "driver_selected",
-                driver=driver.display_name,
+                driver=connection.driver.display_name,
             )
         )
         self.status_changed.emit(
             localization_manager.status_ble_event(
                 "connected_via",
-                    name=(device.name or "").strip() or address,
-                uuid=str(characteristic.uuid),
+                name=(connection.device.name or "").strip() or address,
+                uuid=str(connection.write_characteristic.uuid),
             )
         )
         if self._write_characteristics:
@@ -641,6 +912,7 @@ class BleController(QObject):
     async def _disconnect(self, *, cancel_reconnect: bool = True) -> None:
         if cancel_reconnect:
             self._cancel_reconnect()
+        await self._disconnect_all_mirrors()
         if self._client is not None:
             try:
                 await self._client.disconnect()
@@ -671,9 +943,20 @@ class BleController(QObject):
         self._loop.call_soon_threadsafe(self._on_unexpected_disconnect, client)
 
     def _on_unexpected_disconnect(self, client) -> None:
-        if self._shutdown_started or self._manual_disconnect_requested or client is not self._client:
+        if self._shutdown_started:
             return
-        self._start_reconnect_after_connection_loss()
+        if client is self._client:
+            if self._manual_disconnect_requested:
+                return
+            self._start_reconnect_after_connection_loss()
+            return
+        # A mirror dropped: forget it (no auto-reconnect for mirrors in v1).
+        for conn in list(getattr(self, "_mirror_connections", None) or []):
+            if conn.client is client:
+                self._mirror_connections.remove(conn)
+                self.status_changed.emit(localization_manager.status_ble_event("mirror_lost", address=conn.address))
+                self.mirrors_changed.emit(self.mirror_addresses())
+                return
 
     def _start_reconnect_after_connection_loss(self) -> None:
         if self._shutdown_started or self._manual_disconnect_requested:
@@ -814,14 +1097,18 @@ class BleController(QObject):
 
         return last_error
 
-    async def _write_attempt(self, characteristic, payload: bytes, response: bool) -> Exception | None:
-        """Single GATT write attempt. Returns None on success, exception on failure."""
-        client = self._client
-        if client is None:
+    async def _write_attempt(self, characteristic, payload: bytes, response: bool, *, client=None) -> Exception | None:
+        """Single GATT write attempt. Returns None on success, exception on failure.
+
+        ``client`` defaults to the primary connection; a mirror connection passes
+        its own client so the same helper drives every controller.
+        """
+        target = client if client is not None else self._client
+        if target is None:
             return ConnectionLostError("BLE connection was lost. Reconnecting to the last controller...")
         try:
             await asyncio.wait_for(
-                client.write_gatt_char(characteristic, payload, response=response),
+                target.write_gatt_char(characteristic, payload, response=response),
                 timeout=WRITE_TIMEOUT_SECONDS,
             )
             return None

@@ -117,6 +117,9 @@ def test_apply_static_color_uses_single_ble_operation() -> None:
         def set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
             calls.append((red, green, blue, brightness))
 
+        def set_color_fade(self, red: int, green: int, blue: int, brightness: int) -> None:
+            calls.append((red, green, blue, brightness))
+
         def shutdown(self) -> None:
             pass
 
@@ -149,6 +152,9 @@ def test_apply_static_color_stays_local_when_disconnected() -> None:
         def set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
             calls.append((red, green, blue, brightness))
 
+        def set_color_fade(self, red: int, green: int, blue: int, brightness: int) -> None:
+            calls.append((red, green, blue, brightness))
+
         def shutdown(self) -> None:
             pass
 
@@ -177,6 +183,9 @@ def test_color_sliders_queue_auto_apply_when_connected() -> None:
 
     class DummyBle:
         def set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
+            calls.append((red, green, blue, brightness))
+
+        def set_color_fade(self, red: int, green: int, blue: int, brightness: int) -> None:
             calls.append((red, green, blue, brightness))
 
         def shutdown(self) -> None:
@@ -355,6 +364,9 @@ def test_rgb_slider_does_not_send_ble_when_disconnected() -> None:
 
     class DummyBle:
         def set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
+            calls.append((red, green, blue, brightness))
+
+        def set_color_fade(self, red: int, green: int, blue: int, brightness: int) -> None:
             calls.append((red, green, blue, brightness))
 
         def shutdown(self) -> None:

@@ -17,6 +17,7 @@ from app.constants import BODY_SPACING, ROOT_MARGINS, SECTION_SPACING, STATUS_MI
 from app.hero_header import build_brand, build_chrome_controls, build_mode_row
 from app.panels import (
     build_ambient_section,
+    build_app_triggers_section,
     build_color_section,
     build_configs_section,
     build_device_section,
@@ -74,7 +75,7 @@ _NAV_SECTIONS = (
     ("ambient", "nav.ambient", (build_ambient_section,)),
     ("music", "nav.music", (build_music_section,)),
     ("profiles", "nav.profiles", (build_configs_section,)),
-    ("schedule", "nav.schedule", (build_schedule_section,)),
+    ("schedule", "nav.schedule", (build_schedule_section, build_app_triggers_section)),
     (
         "settings",
         "nav.settings",

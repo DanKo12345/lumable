@@ -80,7 +80,8 @@ def test_is_license_active_returns_false_when_no_credentials() -> None:
     assert is_license_active({"license": {"license_key": "", "instance_id": "inst-uuid"}}) is False
 
 
-def test_is_license_active_uses_cache_when_recent() -> None:
+def test_is_license_active_local_trusts_recent_without_network() -> None:
+    # The UI-thread path (allow_network=False) trusts a recent check, no network.
     recent = datetime.now(UTC).isoformat()
     settings = {
         "license": {
@@ -90,9 +91,45 @@ def test_is_license_active_uses_cache_when_recent() -> None:
         }
     }
     with patch("app.license._ls_post") as mock_post:
-        result = is_license_active(settings)
+        result = is_license_active(settings, allow_network=False)
     assert result is True
     mock_post.assert_not_called()
+
+
+def test_is_license_active_network_revalidates_even_when_recent() -> None:
+    # Hardening: a hand-edited recent timestamp must NOT skip the server check on
+    # the authoritative path, so a forged local state can't grant Pro.
+    recent = datetime.now(UTC).isoformat()
+    settings = {
+        "license": {
+            "license_key": "LS-FORGED",
+            "instance_id": "inst-uuid",
+            "checked_at": recent,
+        }
+    }
+    with patch("app.license._ls_post", return_value={"valid": False}) as mock_post:
+        result = is_license_active(settings)  # allow_network=True by default
+    assert result is False
+    mock_post.assert_called_once()
+    assert settings["license"]["edition"] == "free"
+
+
+def test_is_license_active_rejects_forged_future_timestamp() -> None:
+    # A future "checked_at" is forged: it earns neither the recent-shortcut nor
+    # the offline grace window.
+    future = (datetime.now(UTC) + timedelta(days=3650)).isoformat()
+    settings = {
+        "license": {
+            "license_key": "LS-FORGED",
+            "instance_id": "inst-uuid",
+            "checked_at": future,
+        }
+    }
+    with patch("app.license._ls_post") as mock_post:
+        assert is_license_active(settings, allow_network=False) is False
+        mock_post.assert_not_called()
+    with patch("app.license._ls_post", side_effect=URLError("offline")):
+        assert is_license_active(settings, allow_network=True) is False
 
 
 def test_is_license_active_revalidates_when_stale() -> None:

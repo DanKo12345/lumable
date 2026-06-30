@@ -58,11 +58,20 @@ def paint_color_tile(
 
 class ColorSwatch(QWidget):
     clicked = Signal()
+    rightClicked = Signal()
 
-    def __init__(self, theme_provider: Callable[[], dict[str, str]], parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        theme_provider: Callable[[], dict[str, str]],
+        parent: QWidget | None = None,
+        *,
+        radius_ratio: float = 0.5,
+    ) -> None:
         super().__init__(parent)
         self._theme_provider = theme_provider
         self._color = QColor(88, 182, 255)
+        # 0.5 = circle (square widget); lower values give a rounded rectangle.
+        self._radius_ratio = radius_ratio
         self.setFixedSize(32, 32)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("")
@@ -76,8 +85,11 @@ class ColorSwatch(QWidget):
         return QColor(self._color)
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
-            self.clicked.emit()
+        if self.rect().contains(event.position().toPoint()):
+            if event.button() == Qt.LeftButton:
+                self.clicked.emit()
+            elif event.button() == Qt.RightButton:
+                self.rightClicked.emit()
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event) -> None:
@@ -96,5 +108,5 @@ class ColorSwatch(QWidget):
             rect,
             self._color,
             border_color=border_color,
-            radius_ratio=0.5,
+            radius_ratio=self._radius_ratio,
         )

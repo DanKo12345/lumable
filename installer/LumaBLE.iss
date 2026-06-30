@@ -1,5 +1,5 @@
 #define MyAppName "LumaBLE"
-#define MyAppVersion "0.2.3.1"
+#define MyAppVersion "0.2.4"
 #define MyAppPublisher "dollza"
 #define MyAppExeName "LumaBLE.exe"
 
@@ -18,6 +18,9 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; LumaBLE needs Qt 6 + WinRT Bluetooth, which require Windows 10 or newer.
+; Refuse to install on older Windows instead of failing to launch afterwards.
+MinVersion=10.0
 SetupIconFile=..\app\assets\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 

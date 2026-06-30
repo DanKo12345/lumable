@@ -174,6 +174,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "dark",
     "capture_compatibility": True,
     "ui_fps": "auto",
+    "fade": True,
     "language": "ru",
     "ambient": {"region": "full", "saturation": 55, "smoothing": 65, "monitor": 0},
     "music": {
@@ -189,6 +190,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         },
     },
     "software_fx": {"effect": "breathing", "speed": 30},
+    "app_triggers": {"enabled": False, "default": "", "rules": []},
     "quick_mode": "",
     "custom_quick_modes": [],
     "updates_last_auto_check_at": 0,
@@ -443,6 +445,26 @@ def validate_software_fx(data: Any) -> dict[str, Any]:
     }
 
 
+def validate_app_triggers(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        data = {}
+    rules: list[dict[str, str]] = []
+    raw_rules = data.get("rules", [])
+    if isinstance(raw_rules, list):
+        for item in raw_rules[:20]:
+            if not isinstance(item, dict):
+                continue
+            app = _coerce_str(item.get("app"), "").strip()
+            scene = _coerce_str(item.get("scene"), "").strip()
+            if app and scene:
+                rules.append({"app": app, "scene": scene})
+    return {
+        "enabled": _coerce_bool(data.get("enabled"), False),
+        "default": _coerce_str(data.get("default"), "").strip(),
+        "rules": rules,
+    }
+
+
 def _coerce_days(value: Any, default: list[int]) -> list[int]:
     if not isinstance(value, list):
         return list(default)
@@ -512,10 +534,12 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "theme": theme,
         "capture_compatibility": capture_compatibility,
         "ui_fps": ui_fps,
+        "fade": _coerce_bool(data.get("fade"), bool(DEFAULT_SETTINGS["fade"])),
         "language": language,
         "ambient": validate_ambient(data.get("ambient", DEFAULT_SETTINGS["ambient"])),
         "music": validate_music(data.get("music", DEFAULT_SETTINGS["music"])),
         "software_fx": validate_software_fx(data.get("software_fx", DEFAULT_SETTINGS["software_fx"])),
+        "app_triggers": validate_app_triggers(data.get("app_triggers", DEFAULT_SETTINGS["app_triggers"])),
         "quick_mode": quick_mode,
         "custom_quick_modes": custom_quick_modes,
         "updates_last_auto_check_at": _coerce_int(

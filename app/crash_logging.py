@@ -90,6 +90,40 @@ def _cleanup_exception_logs() -> None:
             continue
 
 
+def _log_app_version(path: Path) -> str | None:
+    """Read the app version recorded on an exception log's first line, if present.
+
+    Logs start with e.g. ``Application: LumaBLE 0.2.1`` — that token tells us
+    which build produced the crash.
+    """
+    prefix = f"Application: {APP_NAME} "
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            first_line = handle.readline().strip()
+    except OSError:
+        return None
+    if first_line.startswith(prefix):
+        return first_line[len(prefix) :].strip() or None
+    return None
+
+
+def _cleanup_old_version_logs() -> None:
+    """Drop exception logs written by a previous app version.
+
+    After an upgrade, crashes from the old build (e.g. the 0.2.1 startup
+    failures) would otherwise linger for the full age window and keep surfacing
+    in the diagnostics report. Logs we can't classify are left untouched.
+    """
+    _ensure_crash_log_dir()
+    for path in _exception_log_files():
+        version = _log_app_version(path)
+        if version is not None and version != APP_VERSION:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                continue
+
+
 def _trim_fatal_log() -> None:
     _ensure_crash_log_dir()
     if not FATAL_LOG_PATH.exists():
@@ -221,6 +255,7 @@ def install_crash_logging() -> None:
         return
 
     _ensure_crash_log_dir()
+    _cleanup_old_version_logs()
     _cleanup_exception_logs()
     _trim_fatal_log()
     _FAULT_LOG_HANDLE = open(FATAL_LOG_PATH, "a", encoding="utf-8")

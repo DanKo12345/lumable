@@ -56,7 +56,7 @@ class InlineProfileList(QListWidget):
         if item is None:
             return ""
         row = QRectF(self.visualItemRect(item)).adjusted(6.0, 5.0, -8.0, -5.0)
-        tile_left = row.right() - 42.0 - 17.0
+        tile_left = row.right() - 36.0 - 17.0
         delete_left = tile_left - ProfileListDelegate.ACTION_GAP - ProfileListDelegate.ACTION_SIZE
         rename_left = delete_left - ProfileListDelegate.ACTION_GAP - ProfileListDelegate.ACTION_SIZE
         y = row.center().y() - ProfileListDelegate.ACTION_SIZE / 2.0

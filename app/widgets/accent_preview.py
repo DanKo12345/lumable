@@ -15,19 +15,22 @@ class AccentPreview(QFrame):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self._color = QColor(88, 182, 255)
         self._brightness = 100
-        self.setMinimumHeight(140)
+        self.setMinimumHeight(190)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 14)
+        # Generous side/top margins so the coloured glow has room to render —
+        # the effect is clipped to this widget's bounds, so margins must be at
+        # least the glow's blur radius or the aura gets cut off.
+        layout.setContentsMargins(38, 36, 38, 38)
         layout.setSpacing(10)
         self.swatch = QFrame()
         self.swatch.setObjectName("previewSwatch")
-        self.swatch.setMinimumHeight(86)
+        self.swatch.setMinimumHeight(82)
         # Coloured glow beneath the swatch — makes it read as real light. Its
         # strength tracks brightness, so a dim strip glows softly without the
         # colour itself going dark (the colour stays recognisable at any %).
         self._glow = QGraphicsDropShadowEffect(self)
-        self._glow.setOffset(0, 6)
+        self._glow.setOffset(0, 2)
         self.swatch.setGraphicsEffect(self._glow)
         layout.addWidget(self.swatch)
         self.info_label = QLabel()
@@ -63,9 +66,10 @@ class AccentPreview(QFrame):
             f"border: 1px solid {border}; border-radius: 20px; }}"
         )
         glow = QColor(color)
-        glow.setAlpha(int(70 + self._brightness * 1.6))  # brighter strip → stronger glow
+        glow.setAlpha(int(75 + self._brightness * 1.6))  # brighter strip → stronger glow
         self._glow.setColor(glow)
-        self._glow.setBlurRadius(28 + self._brightness * 0.22)
+        # Cap the blur so the aura stays inside the widget margins (no clipping).
+        self._glow.setBlurRadius(16 + self._brightness * 0.16)
 
         self.info_label.setText(
             localization_manager.t(

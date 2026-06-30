@@ -83,6 +83,9 @@ class UiLocalizationController:
         host.device_onboarding_label.setText(host._tr("device.onboarding_hint"))
         host.connect_button.setText(host._tr("device.connect"))
         host.disconnect_button.setText(host._tr("device.disconnect"))
+        add_mirror = getattr(host, "add_mirror_button", None)
+        if add_mirror is not None:
+            add_mirror.setText(host._tr("device.add_mirror"))
         host.device_status.setText(
             host._tr("device.status.connected") if host._is_connected else host._tr("device.status.not_connected")
         )
@@ -155,6 +158,13 @@ class UiLocalizationController:
         host.schedule_on_time.set_picker_labels(**time_picker_labels)
         host.schedule_off_time.set_picker_labels(**time_picker_labels)
         host._schedule_ctrl.sync_controls()
+        if getattr(host, "app_triggers_card", None) is not None:
+            host.app_triggers_card.title_label.setText(host._tr("app_triggers.title"))
+            if host.app_triggers_card.subtitle_label is not None:
+                host.app_triggers_card.subtitle_label.setText(host._tr("app_triggers.subtitle"))
+            host.app_triggers_default_label.setText(host._tr("app_triggers.default_label"))
+            host.app_triggers_add_button.setText(host._tr("app_triggers.add_rule"))
+            host._app_trigger_ui.relocalize()
 
     def _apply_performance_texts(self) -> None:
         host = self._host
