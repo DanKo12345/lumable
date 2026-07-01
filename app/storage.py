@@ -7,6 +7,8 @@ from typing import Any
 
 from platformdirs import user_data_dir
 
+from app.hotkeys import ACTIONS as HOTKEY_ACTIONS
+from app.hotkeys import DEFAULT_HOTKEYS, parse_hotkey
 from app.license import validate_license_state
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -175,6 +177,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "capture_compatibility": True,
     "ui_fps": "auto",
     "fade": True,
+    "color_temperature": 4500,
     "language": "ru",
     "ambient": {"region": "full", "saturation": 55, "smoothing": 65, "monitor": 0},
     "music": {
@@ -191,6 +194,16 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "software_fx": {"effect": "breathing", "speed": 30},
     "app_triggers": {"enabled": False, "default": "", "rules": []},
+    "hotkeys": {"enabled": False, "bindings": dict(DEFAULT_HOTKEYS)},
+    "diy": {
+        "steps": [
+            {"rgb": [255, 77, 77], "duration_ms": 1000},
+            {"rgb": [91, 140, 255], "duration_ms": 1000},
+        ],
+        "transition": "smooth",
+        "speed": 50,
+    },
+    "diy_saved": [],
     "quick_mode": "",
     "custom_quick_modes": [],
     "updates_last_auto_check_at": 0,
@@ -465,6 +478,67 @@ def validate_app_triggers(data: Any) -> dict[str, Any]:
     }
 
 
+def validate_hotkeys(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        data = {}
+    raw = data.get("bindings", {})
+    raw = raw if isinstance(raw, dict) else {}
+    bindings: dict[str, str] = {}
+    for action in HOTKEY_ACTIONS:
+        spec = _coerce_str(raw.get(action), DEFAULT_HOTKEYS[action]).strip()
+        # Keep a usable combo: fall back to the default if the saved spec is junk.
+        bindings[action] = spec if parse_hotkey(spec) is not None else DEFAULT_HOTKEYS[action]
+    return {
+        "enabled": _coerce_bool(data.get("enabled"), False),
+        "bindings": bindings,
+    }
+
+
+def validate_diy(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        data = {}
+    steps: list[dict[str, Any]] = []
+    raw_steps = data.get("steps", [])
+    if isinstance(raw_steps, list):
+        for item in raw_steps[:8]:
+            if not isinstance(item, dict):
+                continue
+            rgb = item.get("rgb", [255, 255, 255])
+            rgb = rgb if isinstance(rgb, (list, tuple)) and len(rgb) == 3 else [255, 255, 255]
+            steps.append({
+                "rgb": [_coerce_int(rgb[0], 255, 0, 255), _coerce_int(rgb[1], 255, 0, 255), _coerce_int(rgb[2], 255, 0, 255)],
+                "duration_ms": _coerce_int(item.get("duration_ms"), 1000, 0, 10_000),
+            })
+    if len(steps) < 2:
+        steps = [
+            {"rgb": [255, 77, 77], "duration_ms": 1000},
+            {"rgb": [91, 140, 255], "duration_ms": 1000},
+        ]
+    transition = "cut" if str(data.get("transition", "smooth")) == "cut" else "smooth"
+    return {
+        "steps": steps,
+        "transition": transition,
+        "speed": _coerce_int(data.get("speed"), 50, 0, 100),
+    }
+
+
+def validate_diy_saved(data: Any) -> list[dict[str, Any]]:
+    if not isinstance(data, list):
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in data[:8]:
+        if not isinstance(item, dict):
+            continue
+        name = _coerce_str(item.get("name"), "").strip()[:40]
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        effect = validate_diy(item)
+        out.append({"name": name, **effect})
+    return out
+
+
 def _coerce_days(value: Any, default: list[int]) -> list[int]:
     if not isinstance(value, list):
         return list(default)
@@ -535,11 +609,15 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "capture_compatibility": capture_compatibility,
         "ui_fps": ui_fps,
         "fade": _coerce_bool(data.get("fade"), bool(DEFAULT_SETTINGS["fade"])),
+        "color_temperature": _coerce_int(data.get("color_temperature"), 4500, 2000, 6500),
         "language": language,
         "ambient": validate_ambient(data.get("ambient", DEFAULT_SETTINGS["ambient"])),
         "music": validate_music(data.get("music", DEFAULT_SETTINGS["music"])),
         "software_fx": validate_software_fx(data.get("software_fx", DEFAULT_SETTINGS["software_fx"])),
         "app_triggers": validate_app_triggers(data.get("app_triggers", DEFAULT_SETTINGS["app_triggers"])),
+        "hotkeys": validate_hotkeys(data.get("hotkeys", DEFAULT_SETTINGS["hotkeys"])),
+        "diy": validate_diy(data.get("diy", DEFAULT_SETTINGS["diy"])),
+        "diy_saved": validate_diy_saved(data.get("diy_saved", [])),
         "quick_mode": quick_mode,
         "custom_quick_modes": custom_quick_modes,
         "updates_last_auto_check_at": _coerce_int(

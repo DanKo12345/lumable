@@ -22,7 +22,9 @@ from app.panels import (
     build_configs_section,
     build_device_section,
     build_diagnostics_section,
+    build_diy_section,
     build_effects_section,
+    build_hotkeys_section,
     build_music_section,
     build_schedule_section,
     build_software_effects_section,
@@ -71,7 +73,7 @@ def _build_settings_card(host):
 # rarely-touched setup (device, schedule, app settings, diagnostics).
 _NAV_SECTIONS = (
     ("color", "nav.color", (build_color_section,)),
-    ("effects", "nav.effects", (build_effects_section, build_software_effects_section)),
+    ("effects", "nav.effects", (build_effects_section, build_software_effects_section, build_diy_section)),
     ("ambient", "nav.ambient", (build_ambient_section,)),
     ("music", "nav.music", (build_music_section,)),
     ("profiles", "nav.profiles", (build_configs_section,)),
@@ -82,6 +84,7 @@ _NAV_SECTIONS = (
         (
             build_device_section,
             _build_settings_card,
+            build_hotkeys_section,
             build_diagnostics_section,
         ),
     ),

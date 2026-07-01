@@ -22,10 +22,19 @@ def build_color_section(host: PanelHost) -> GlassCard:
     host.blue_slider.setRange(0, 255)
     host.brightness_slider = host._slider("white")
     host.brightness_slider.setRange(0, 100)
+    # Colour temperature: warm↔cool white emulated via RGB (no white channel on
+    # cheap controllers). Range 2000K (warm) → 6500K (cool daylight).
+    host.temperature_slider = host._slider("white")
+    host.temperature_slider.setRange(2000, 6500)
+    host.temperature_slider.setValue(4500)
+    host.temperature_slider.set_track_gradient(
+        [(0.0, (255, 176, 102)), (0.5, (251, 239, 224)), (1.0, (159, 196, 255))]
+    )
     host.red_value = host._pill("0")
     host.green_value = host._pill("0")
     host.blue_value = host._pill("0")
     host.brightness_value = host._pill("100%")
+    host.temperature_value = host._pill("4500K")
 
     # Recent colours first — quick one-tap re-pick (fast on top, fine-tune below).
     history_row = QHBoxLayout()
@@ -59,6 +68,9 @@ def build_color_section(host: PanelHost) -> GlassCard:
     )
     host.color_card.content_layout.addLayout(
         host._slider_row(host._tr("slider.brightness"), host.brightness_slider, host.brightness_value, "slider.brightness")
+    )
+    host.color_card.content_layout.addLayout(
+        host._slider_row(host._tr("slider.temperature"), host.temperature_slider, host.temperature_value, "slider.temperature")
     )
 
     color_actions = QHBoxLayout()

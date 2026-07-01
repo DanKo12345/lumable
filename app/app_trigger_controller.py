@@ -42,7 +42,7 @@ class AppTriggerController(QObject):
 
     def _streaming_mode_running(self) -> bool:
         host = self._host
-        for attr in ("_ambient_ui", "_music_ui", "_software_fx_ui"):
+        for attr in ("_ambient_ui", "_music_ui", "_software_fx_ui", "_diy_ui"):
             controller = getattr(host, attr, None)
             if controller is not None and controller.is_running():
                 return True

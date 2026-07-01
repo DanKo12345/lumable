@@ -18,6 +18,7 @@ class LiquidSlider(QSlider):
         self._scale = 1.0
         self.setMinimumHeight(68)
         self.accent = accent
+        self._track_gradient: list[tuple[float, QColor]] | None = None
         self._hover = 0.0
         self._press = 0.0
         self._impact = 0.0
@@ -63,6 +64,15 @@ class LiquidSlider(QSlider):
 
     def set_accent_color(self, accent: str):
         self.accent = accent
+        self.update()
+
+    def set_track_gradient(self, stops: list[tuple[float, tuple[int, int, int]]] | None) -> None:
+        """Paint the whole groove with a fixed colour gradient (e.g. warm→cool for
+        a temperature slider) instead of the flat groove + accent fill."""
+        if stops is None:
+            self._track_gradient = None
+        else:
+            self._track_gradient = [(float(off), QColor(*rgb)) for off, rgb in stops]
         self.update()
 
     def set_render_scale(self, scale: float) -> None:
@@ -285,17 +295,26 @@ class LiquidSlider(QSlider):
         painter.drawEllipse(glow_rect)
 
         painter.setPen(Qt.NoPen)
-        painter.setBrush(groove_color)
-        painter.drawRoundedRect(groove_rect, groove_rect.height() / 2, groove_rect.height() / 2)
+        if self._track_gradient is not None:
+            # Fixed-colour track (e.g. warm→cool temperature): the whole groove is
+            # the gradient and there's no accent fill — the handle shows position.
+            track = QLinearGradient(groove_rect.left(), 0.0, groove_rect.right(), 0.0)
+            for offset, color in self._track_gradient:
+                track.setColorAt(offset, color)
+            painter.setBrush(track)
+            painter.drawRoundedRect(groove_rect, groove_rect.height() / 2, groove_rect.height() / 2)
+        else:
+            painter.setBrush(groove_color)
+            painter.drawRoundedRect(groove_rect, groove_rect.height() / 2, groove_rect.height() / 2)
 
-        if fill_rect.width() > 0:
-            fill = QLinearGradient(fill_rect.left(), fill_rect.top(), fill_rect.right(), fill_rect.top())
-            start = accent.lighter(110)
-            end = QColor(accent)
-            fill.setColorAt(0.0, start)
-            fill.setColorAt(1.0, end)
-            painter.setBrush(fill)
-            painter.drawRoundedRect(fill_rect, groove_rect.height() / 2, groove_rect.height() / 2)
+            if fill_rect.width() > 0:
+                fill = QLinearGradient(fill_rect.left(), fill_rect.top(), fill_rect.right(), fill_rect.top())
+                start = accent.lighter(110)
+                end = QColor(accent)
+                fill.setColorAt(0.0, start)
+                fill.setColorAt(1.0, end)
+                painter.setBrush(fill)
+                painter.drawRoundedRect(fill_rect, groove_rect.height() / 2, groove_rect.height() / 2)
 
         handle_rect = QRectF(handle_x - handle_radius, handle_cy - handle_radius, handle_radius * 2, handle_radius * 2)
         painter.setBrush(handle_fill)

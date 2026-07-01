@@ -245,6 +245,31 @@ def _form_styles(T: dict, is_dark: bool) -> str:
         QLineEdit, QTimeEdit {{
             min-height: 44px;
         }}
+        QLineEdit#diyDurationInput {{
+            min-height: 0px;
+            max-height: 34px;
+            padding: 0px 14px;
+            border-radius: 17px;
+            background: {T["chip"]};
+            border: 1px solid {T["chip_border"]};
+            color: {T["text"]};
+            font-size: 13px;
+            font-weight: 600;
+        }}
+        QLineEdit#diyDurationInput:focus {{
+            border: 1px solid {T["accent_start"]};
+        }}
+        #diyList {{
+            background: transparent;
+            border: none;
+            padding: 0px;
+        }}
+        #diyList::item {{
+            margin: 4px 2px;
+            padding: 0px;
+            background: transparent;
+            border: none;
+        }}
         QComboBox {{
             min-height: 44px;
         }}

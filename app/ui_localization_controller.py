@@ -114,6 +114,7 @@ class UiLocalizationController:
         host._set_slider_label_text("slider.green", host._tr("slider.green"))
         host._set_slider_label_text("slider.blue", host._tr("slider.blue"))
         host._set_slider_label_text("slider.brightness", host._tr("slider.brightness"))
+        host._set_slider_label_text("slider.temperature", host._tr("slider.temperature"))
 
     def _apply_effect_texts(self) -> None:
         host = self._host
@@ -165,6 +166,12 @@ class UiLocalizationController:
             host.app_triggers_default_label.setText(host._tr("app_triggers.default_label"))
             host.app_triggers_add_button.setText(host._tr("app_triggers.add_rule"))
             host._app_trigger_ui.relocalize()
+        if getattr(host, "hotkeys_card", None) is not None:
+            host.hotkeys_card.title_label.setText(host._tr("hotkeys.title"))
+            if host.hotkeys_card.subtitle_label is not None:
+                host.hotkeys_card.subtitle_label.setText(host._tr("hotkeys.subtitle"))
+            host.hotkeys_lock_label.setText(host._tr("hotkeys.pro_locked"))
+            host._hotkey_ui.relocalize()
 
     def _apply_performance_texts(self) -> None:
         host = self._host
@@ -265,6 +272,12 @@ class UiLocalizationController:
         index = combo.findData(current)
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)
+        if getattr(host, "diy_card", None) is not None:
+            host.diy_card.title_label.setText(host._tr("diy.title"))
+            if host.diy_card.subtitle_label is not None:
+                host.diy_card.subtitle_label.setText(host._tr("diy.subtitle"))
+            host.diy_lock_label.setText(host._tr("diy.pro_locked"))
+            host._diy_ui.relocalize()
 
     def _apply_diagnostics_texts(self) -> None:
         host = self._host

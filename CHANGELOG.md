@@ -2,6 +2,19 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.2.5] - 2026-07-01
+
+Build your own colour animations, control the strip from anywhere with global hotkeys, and dial in a warm↔cool white — plus the app's own colour/number dialogs everywhere.
+
+### Added
+- DIY effect editor (Pro): build your own looping colour sequence — add colours, drag rows to reorder, set a duration per colour, pick a smooth-fade or hard-cut transition and a speed, with a live preview. It streams to any controller (no firmware effects needed). Save multiple named effects and switch between them from the card.
+- Global hotkeys (Pro): control the strip with system-wide keyboard shortcuts even from a fullscreen game — power, brightness up/down, and next/previous scene. Press-to-set and fully rebindable, with a reset-to-defaults button and sensible defaults (Alt+L, Alt+PageUp/PageDown, Alt+N/B).
+- Colour temperature (Free): a warm↔cool white slider in the Colour card (2000–6500K) with a gradient track. Emulated via RGB, so it works on any controller.
+
+### Changed
+- Colour and number inputs now use the app's own graphite dialogs instead of the native Windows ones: picking a DIY step colour opens the LumaBLE colour picker, and editing a value chip (RGB / brightness / temperature / speed) or a DIY duration opens the styled input.
+- Auto-update check now runs up to every 6 hours instead of once a day, so a new release is noticed sooner.
+
 ## [0.2.4] - 2026-06-30
 
 Drive several strips at once, smoother colour transitions, auto-scenes that follow the app you're using (now free), plus a tidier Configs list and cleaner diagnostics.

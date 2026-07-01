@@ -300,6 +300,8 @@ class MusicUiController:
         host._ambient_ui.stop_if_running()
         if getattr(host, "_software_fx_ui", None) is not None:
             host._software_fx_ui.stop_if_running()
+        if getattr(host, "_diy_ui", None) is not None:
+            host._diy_ui.stop_if_running()
         # If the strip is powered off the colour stream wouldn't show — turn it
         # on first so enabling music "just works".
         if not host.power_button.isChecked():

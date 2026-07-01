@@ -11,7 +11,7 @@ from app.update_checker import UpdateChecker, UpdateResult
 
 
 class UpdateController:
-    AUTO_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+    AUTO_CHECK_INTERVAL_SECONDS = 6 * 60 * 60
     RATE_LIMIT_COOLDOWN_SECONDS = 600
 
     def __init__(self, host: Any, current_version: str, update_url: str, releases_url: str) -> None:

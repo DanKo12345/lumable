@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMainWindow,
     QTextEdit,
@@ -25,6 +24,7 @@ from app.app_trigger_ui_controller import AppTriggerUiController
 from app.ble import BleController
 from app.ble_event_handler import BleEventHandler
 from app.color_controller import ColorController
+from app.color_temperature import cct_to_rgb
 from app.constants import (
     CHIP_HEIGHT,
     CONTROL_HEIGHT,
@@ -35,7 +35,10 @@ from app.constants import (
     WINDOW_MIN_WIDTH,
 )
 from app.diagnostics_controller import DiagnosticsController
+from app.diy_ui_controller import DiyUiController
 from app.feature_gate import FREE_COLOR_HISTORY_COUNT, PRO_COLOR_HISTORY_COUNT, can_use
+from app.hotkey_controller import HotkeyController
+from app.hotkey_ui_controller import HotkeyUiController
 from app.license_refresh import LicenseRefresher
 from app.localization import localization_manager
 from app.main_layout import build_main_layout
@@ -66,6 +69,7 @@ from app.widgets import (
     LiquidButton,
     LiquidSlider,
     LogsOverlay,
+    ProfileRenameOverlay,
     SmoothScrollFilter,
     ValueChip,
 )
@@ -100,6 +104,7 @@ class MainWindow(QMainWindow):
         self._start_deferred(500, self._ble_events.start_autoconnect)
         self._start_deferred(900, self._license_refresher.refresh)
         self._start_deferred(1300, self._app_triggers.start)
+        self._start_deferred(1400, self._apply_hotkeys)
         self._start_deferred(1600, self._update_controller.check_silent)
 
     def _sz(self, value: float) -> int:
@@ -136,6 +141,7 @@ class MainWindow(QMainWindow):
         self._theme_transition_overlay = None
         self._update_result: UpdateResult | None = None
         self._color_picker_overlay: ColorPickerOverlay | None = None
+        self._slider_value_overlay: ProfileRenameOverlay | None = None
         self._custom_quick_overlay = None
         self._logs_overlay: LogsOverlay | None = None
         # Widget refs set later by _build_ui / build_main_layout
@@ -164,8 +170,11 @@ class MainWindow(QMainWindow):
         self._ambient_ui = AmbientUiController(self)
         self._music_ui = MusicUiController(self)
         self._software_fx_ui = SoftwareEffectUiController(self)
+        self._diy_ui = DiyUiController(self)
         self._app_trigger_ui = AppTriggerUiController(self)
         self._app_triggers = AppTriggerController(self)
+        self._hotkey_controller = HotkeyController(self)
+        self._hotkey_ui = HotkeyUiController(self)
         self._window_state = WindowStateController(self)
         self._diagnostics_ctrl = DiagnosticsController(self)
         self._color_ctrl = ColorController(self)
@@ -254,7 +263,16 @@ class MainWindow(QMainWindow):
             return
         self._apply_localized_texts()
         self._refresh_color_history()
+        self._apply_hotkeys()
         self._log(self._tr("license.activated_log") if is_pro_now else self._tr("license.expired_log"))
+
+    def _apply_hotkeys(self) -> None:
+        config = self._settings.get("hotkeys", {}) if isinstance(self._settings, dict) else {}
+        config = config if isinstance(config, dict) else {}
+        bindings = config.get("bindings", {})
+        bindings = bindings if isinstance(bindings, dict) else {}
+        enabled = bool(config.get("enabled", False)) and can_use("global_hotkeys")
+        self._hotkey_controller.apply(bindings, enabled=enabled)
 
     def _refresh_effect_names(self):
         self._color_ctrl.refresh_effect_names()
@@ -329,7 +347,9 @@ class MainWindow(QMainWindow):
         self._ambient_ui.wire()
         self._music_ui.wire()
         self._software_fx_ui.wire()
+        self._diy_ui.wire()
         self._app_trigger_ui.wire()
+        self._hotkey_ui.wire()
         self._wire_shortcuts()
 
     def _wire_device_events(self):
@@ -387,6 +407,10 @@ class MainWindow(QMainWindow):
         self.brightness_value.activated.connect(
             lambda: self._edit_slider_value(self.brightness_slider, self.brightness_value, suffix="%")
         )
+        self.temperature_slider.valueChanged.connect(self._on_temperature_changed)
+        self.temperature_value.activated.connect(
+            lambda: self._edit_slider_value(self.temperature_slider, self.temperature_value, suffix="K")
+        )
 
     def _wire_rgb_slider_events(self):
         for slider, label in (
@@ -400,16 +424,32 @@ class MainWindow(QMainWindow):
             slider.valueChanged.connect(self._queue_current_color_update)
 
     def _edit_slider_value(self, slider: LiquidSlider, value_label: ValueChip, *, suffix: str = ""):
-        value, ok = QInputDialog.getInt(
-            self,
-            self._tr("dialog.slider_value_title"),
-            self._tr("dialog.slider_value_label"),
-            slider.value(),
-            slider.minimum(),
-            slider.maximum(),
-        )
-        if not ok:
+        if self._slider_value_overlay is not None:
+            self._slider_value_overlay.raise_()
             return
+        overlay = ProfileRenameOverlay(
+            {
+                "title": self._tr("dialog.slider_value_title"),
+                "prompt": self._tr("dialog.slider_value_label"),
+                "cancel": self._tr("dialog.cancel"),
+                "ok": self._tr("dialog.ok"),
+            },
+            str(slider.value()),
+            self,
+        )
+        self._slider_value_overlay = overlay
+        overlay.nameSelected.connect(
+            lambda text: self._apply_slider_value_text(slider, value_label, suffix, text)
+        )
+        overlay.closed.connect(lambda: setattr(self, "_slider_value_overlay", None))
+        overlay.open()
+
+    def _apply_slider_value_text(self, slider: LiquidSlider, value_label: ValueChip, suffix: str, text: str):
+        try:
+            value = round(float(text.replace(",", ".")))
+        except ValueError:
+            return
+        value = max(slider.minimum(), min(slider.maximum(), value))
         slider.setValue(value)
         value_label.setText(f"{value}{suffix}")
         if slider in {self.red_slider, self.green_slider, self.blue_slider}:
@@ -461,6 +501,7 @@ class MainWindow(QMainWindow):
             self.green_slider.setValue(int(color.get("g", DEFAULT_START_COLOR["g"])))
             self.blue_slider.setValue(int(color.get("b", DEFAULT_START_COLOR["b"])))
             self.brightness_slider.setValue(int(last.get("brightness", 100)))
+            self.temperature_slider.setValue(int(self._settings.get("color_temperature", 4500)))
             self.speed_slider.setValue(int(last.get("speed", 60)))
             # BLEDOM-style controllers do not expose a reliable readback for the
             # active built-in effect, so startup must not present a stale saved mode.
@@ -575,6 +616,24 @@ class MainWindow(QMainWindow):
         self._remember_current_color()
         self._sync_quick_mode_from_state()
         self._log(self._tr("presets.applied", name=self._tr(f"scene.{key}")))
+
+    def _on_temperature_changed(self, kelvin: int) -> None:
+        # Warm↔cool white: map the Kelvin value to an RGB point and drive the
+        # colour sliders, then apply along the normal colour path (with fade).
+        self.temperature_value.setText(f"{int(kelvin)}K")
+        if self._initializing:
+            return
+        red, green, blue = cct_to_rgb(int(kelvin))
+        with self._suppress_signals():
+            self.red_slider.setValue(red)
+            self.green_slider.setValue(green)
+            self.blue_slider.setValue(blue)
+            self._update_preview()
+        self._apply_current_color()
+        self._remember_current_color()
+        if isinstance(self._settings, dict):
+            self._settings["color_temperature"] = int(kelvin)
+            self._persist_settings()
 
     def _apply_current_color(self):
         if self._initializing:

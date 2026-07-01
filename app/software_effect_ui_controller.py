@@ -71,6 +71,7 @@ class SoftwareEffectUiController:
         # Only one streaming mode can own the strip at a time.
         host._ambient_ui.stop_if_running()
         host._music_ui.stop_if_running()
+        host._diy_ui.stop_if_running()
         # If the strip is off the colour stream wouldn't show — turn it on first.
         if not host.power_button.isChecked():
             host.power_button.setChecked(True)
