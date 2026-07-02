@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLineEdit, QW
 from app.scene_presets import SCENE_PRESETS
 from app.storage import save_settings
 from app.widgets import StaticPopupComboBox
+from app.widgets.themed_line_edit import ThemedLineEdit
 
 
 class AppTriggerUiController:
@@ -87,7 +88,7 @@ class AppTriggerUiController:
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(8)
-        app_input = QLineEdit(app)
+        app_input = ThemedLineEdit(app)
         app_input.setObjectName("licenseKeyInput")
         app_input.setPlaceholderText(host._tr("app_triggers.app_placeholder"))
         app_input.setMinimumHeight(host._control_height)

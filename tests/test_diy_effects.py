@@ -85,6 +85,38 @@ def test_frames_nonempty_and_sane() -> None:
     assert all(0 <= c <= 255 for frame in result for c in frame)
 
 
+def test_motion_none_leaves_colour_steady() -> None:
+    # Default motion is "none": colour is identical across the whole hold.
+    effect = DiyEffect(steps=(DiyStep(RED, 0, 1500), DiyStep(BLUE, 0, 100)))
+    assert color_at(effect, 0) == RED
+    assert color_at(effect, 700) == RED
+
+
+def test_breathe_motion_dims_then_peaks() -> None:
+    effect = DiyEffect(
+        steps=(DiyStep(RED, 0, 1500, motion="breathe"), DiyStep(BLUE, 0, 100)),
+    )
+    dim = color_at(effect, 0)       # start of step -> breathe trough
+    peak = color_at(effect, 750)    # half a 1500ms motion cycle -> peak
+    assert dim[0] < peak[0]
+    assert peak == RED              # peak returns the base colour unchanged
+    assert all(0 <= c <= 255 for c in dim)
+
+
+def test_strobe_motion_blinks_off() -> None:
+    effect = DiyEffect(
+        steps=(DiyStep(GREEN, 0, 1500, motion="strobe"), DiyStep(BLUE, 0, 100)),
+    )
+    levels = [max(color_at(effect, t)) for t in range(0, 1500, 20)]
+    assert min(levels) <= 30       # blinks nearly off part of the cycle
+    assert max(levels) >= 200      # and fully on the rest
+
+
+def test_unknown_motion_is_safe() -> None:
+    effect = DiyEffect(steps=(DiyStep(RED, 0, 100, motion="bogus"), DiyStep(BLUE, 0, 100)))
+    assert color_at(effect, 0) == RED
+
+
 def test_empty_effect_is_safe() -> None:
     assert color_at(DiyEffect(steps=()), 0) == (0, 0, 0)
     assert frames(DiyEffect(steps=()), 50) == [(0, 0, 0)]

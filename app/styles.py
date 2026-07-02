@@ -19,6 +19,40 @@ def _scale_px(css: str, scale: float) -> str:
     return _PX_RE.sub(lambda m: f"{max(1, round(int(m.group(1)) * scale))}px", css)
 
 
+def context_menu_qss(tokens: dict[str, str]) -> str:
+    """QMenu styling for the standard context menu inside self-styled overlays.
+
+    Overlays set their own local stylesheet, which shadows the app-wide QMenu
+    rules, so a QLineEdit's right-click menu (Cut/Copy/Paste…) falls back to the
+    native light look. Append this to an overlay's stylesheet so that menu keeps
+    the app theme while still offering paste (handy for license keys).
+    """
+    T = tokens
+    return f"""
+        QMenu {{
+            background: {T["surface_strong"]};
+            border: 1px solid {T["field_border"]};
+            border-radius: 12px;
+            padding: 6px;
+            color: {T["text"]};
+            font-size: 13px;
+            font-weight: 500;
+        }}
+        QMenu::item {{
+            padding: 8px 16px;
+            border-radius: 8px;
+        }}
+        QMenu::item:selected {{
+            background: {T["list_sel"]};
+        }}
+        QMenu::separator {{
+            height: 1px;
+            background: {T["field_border"]};
+            margin: 4px 8px;
+        }}
+    """
+
+
 def build_theme_stylesheet(tokens: dict[str, str], scale: float = 1.0) -> str:
     T = tokens
     is_dark = qcolor_from_token(T["text"]).lightness() > 180
@@ -244,31 +278,6 @@ def _form_styles(T: dict, is_dark: bool) -> str:
         }}
         QLineEdit, QTimeEdit {{
             min-height: 44px;
-        }}
-        QLineEdit#diyDurationInput {{
-            min-height: 0px;
-            max-height: 34px;
-            padding: 0px 14px;
-            border-radius: 17px;
-            background: {T["chip"]};
-            border: 1px solid {T["chip_border"]};
-            color: {T["text"]};
-            font-size: 13px;
-            font-weight: 600;
-        }}
-        QLineEdit#diyDurationInput:focus {{
-            border: 1px solid {T["accent_start"]};
-        }}
-        #diyList {{
-            background: transparent;
-            border: none;
-            padding: 0px;
-        }}
-        #diyList::item {{
-            margin: 4px 2px;
-            padding: 0px;
-            background: transparent;
-            border: none;
         }}
         QComboBox {{
             min-height: 44px;

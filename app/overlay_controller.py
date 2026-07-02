@@ -67,6 +67,8 @@ class OverlayController:
             "title": host._tr("license.title"),
             "subtitle": host._tr("license.subtitle"),
             "features": host._tr("license.features"),
+            "show_all": host._tr("license.show_all"),
+            "show_less": host._tr("license.show_less"),
             "active_title": host._tr("license.active_title"),
             "active_license": host._tr("license.active_license"),
             "active_dev": host._tr("license.active_dev"),

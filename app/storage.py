@@ -185,7 +185,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "smoothing": 50,
         "speed": 30,
         "beat": 40,
+        "gate": 16,
+        "source": "system",
         "device": "",
+        "mic_device": "",
         "colors": {
             "bass": {"r": 255, "g": 80, "b": 70},
             "mid": {"r": 180, "g": 90, "b": 255},
@@ -437,7 +440,10 @@ def validate_music(data: Any) -> dict[str, Any]:
         "smoothing": _coerce_int(data.get("smoothing"), int(defaults["smoothing"]), 0, 100),
         "speed": _coerce_int(data.get("speed"), int(defaults["speed"]), 0, 100),
         "beat": _coerce_int(data.get("beat"), int(defaults["beat"]), 0, 100),
+        "gate": _coerce_int(data.get("gate"), int(defaults["gate"]), 0, 100),
+        "source": "mic" if str(data.get("source", "system")) == "mic" else "system",
         "device": _coerce_str(data.get("device"), str(defaults["device"])),
+        "mic_device": _coerce_str(data.get("mic_device"), str(defaults["mic_device"])),
         "colors": {
             band: _coerce_rgb(colors.get(band), default_colors[band])
             for band in ("bass", "mid", "treble")
@@ -505,9 +511,13 @@ def validate_diy(data: Any) -> dict[str, Any]:
                 continue
             rgb = item.get("rgb", [255, 255, 255])
             rgb = rgb if isinstance(rgb, (list, tuple)) and len(rgb) == 3 else [255, 255, 255]
+            motion = _coerce_str(item.get("motion"), "none")
+            if motion not in {"none", "breathe", "pulse", "twinkle", "strobe"}:
+                motion = "none"
             steps.append({
                 "rgb": [_coerce_int(rgb[0], 255, 0, 255), _coerce_int(rgb[1], 255, 0, 255), _coerce_int(rgb[2], 255, 0, 255)],
                 "duration_ms": _coerce_int(item.get("duration_ms"), 1000, 0, 10_000),
+                "motion": motion,
             })
     if len(steps) < 2:
         steps = [

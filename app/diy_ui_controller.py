@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -11,16 +11,21 @@ from PySide6.QtWidgets import (
 )
 
 from app.diy_effect_controller import DiyEffectController
-from app.diy_effects import MAX_MS, MAX_STEPS, MIN_STEPS, DiyEffect, DiyStep
+from app.diy_effects import MAX_MS, MAX_STEPS, MIN_STEPS, MOTION_KEYS, DiyEffect, DiyStep
+from app.effect_share import decode_effect, encode_effect
 from app.feature_gate import can_use
 from app.storage import save_settings
 from app.widgets import ColorPickerOverlay, ColorSwatch, ProfileRenameOverlay
 from app.widgets.diy_row import DiyRow
 
 _DEFAULT_STEPS = [
-    {"rgb": [255, 77, 77], "duration_ms": 1000},
-    {"rgb": [91, 140, 255], "duration_ms": 1000},
+    {"rgb": [255, 77, 77], "duration_ms": 1000, "motion": "none"},
+    {"rgb": [91, 140, 255], "duration_ms": 1000, "motion": "none"},
 ]
+
+
+def _clean_motion(value: object) -> str:
+    return value if value in MOTION_KEYS else "none"
 
 
 class DiyUiController:
@@ -37,18 +42,21 @@ class DiyUiController:
         self._color_picker: ColorPickerOverlay | None = None
         self._duration_overlay: ProfileRenameOverlay | None = None
         self._save_overlay: ProfileRenameOverlay | None = None
+        self._import_overlay: ProfileRenameOverlay | None = None
+        self._share_overlay: ProfileRenameOverlay | None = None
 
     # ── wiring / state ────────────────────────────────────────────────
     def wire(self) -> None:
         host = self._host
         host.diy_add_button.clicked.connect(self._add_step)
         host.diy_run_button.clicked.connect(self._toggle_run)
-        host.diy_smooth_button.clicked.connect(lambda: self._set_transition("smooth"))
-        host.diy_cut_button.clicked.connect(lambda: self._set_transition("cut"))
+        host.diy_transition_segment.selected.connect(self._on_transition_selected)
         host.diy_speed_slider.valueChanged.connect(self._on_speed_changed)
         host.diy_list.reordered.connect(self._on_reordered)
         host.diy_save_button.clicked.connect(self._save_current)
         host.diy_delete_button.clicked.connect(self._delete_saved)
+        host.diy_share_button.clicked.connect(self._share_current)
+        host.diy_import_button.clicked.connect(self._import_code)
         host.diy_saved_combo.currentIndexChanged.connect(self._on_saved_selected)
         self.sync_controls()
         self.refresh_lock()
@@ -69,14 +77,20 @@ class DiyUiController:
                 continue
             rgb = item.get("rgb", [255, 255, 255])
             duration = int(item.get("duration_ms", 1000))
-            self._steps.append({"id": self._take_id(), "rgb": list(rgb), "duration_ms": duration})
+            self._steps.append({
+                "id": self._take_id(), "rgb": list(rgb), "duration_ms": duration,
+                "motion": _clean_motion(item.get("motion", "none")),
+            })
         if len(self._steps) < MIN_STEPS:
             for step in _DEFAULT_STEPS[len(self._steps):]:
-                self._steps.append({"id": self._take_id(), "rgb": list(step["rgb"]), "duration_ms": step["duration_ms"]})
+                self._steps.append({
+                    "id": self._take_id(), "rgb": list(step["rgb"]),
+                    "duration_ms": step["duration_ms"], "motion": step["motion"],
+                })
         self._transition = "cut" if str(config.get("transition", "smooth")) == "cut" else "smooth"
         host.diy_speed_slider.jump_to(int(config.get("speed", 50)))
         host.diy_speed_value.setText(f"{host.diy_speed_slider.value()}%")
-        self._sync_transition_buttons()
+        self._sync_transition_segment()
         self._rebuild_rows()
         self._update_preview()
         self._refresh_saved_combo()
@@ -119,14 +133,18 @@ class DiyUiController:
                 "id": self._take_id(),
                 "rgb": list(item.get("rgb", [255, 255, 255])),
                 "duration_ms": int(item.get("duration_ms", 1000)),
+                "motion": _clean_motion(item.get("motion", "none")),
             })
         while len(self._steps) < MIN_STEPS:
             default = _DEFAULT_STEPS[len(self._steps)]
-            self._steps.append({"id": self._take_id(), "rgb": list(default["rgb"]), "duration_ms": default["duration_ms"]})
+            self._steps.append({
+                "id": self._take_id(), "rgb": list(default["rgb"]),
+                "duration_ms": default["duration_ms"], "motion": default["motion"],
+            })
         self._transition = "cut" if str(entry.get("transition", "smooth")) == "cut" else "smooth"
         host.diy_speed_slider.jump_to(int(entry.get("speed", 50)))
         host.diy_speed_value.setText(f"{host.diy_speed_slider.value()}%")
-        self._sync_transition_buttons()
+        self._sync_transition_segment()
         self._rebuild_rows()
         self._persist()
         self._update_preview()
@@ -163,7 +181,7 @@ class DiyUiController:
             return
         snapshot = {
             "name": name,
-            "steps": [{"rgb": list(s["rgb"]), "duration_ms": int(s["duration_ms"])} for s in self._steps],
+            "steps": [{"rgb": list(s["rgb"]), "duration_ms": int(s["duration_ms"]), "motion": s.get("motion", "none")} for s in self._steps],
             "transition": self._transition,
             "speed": int(host.diy_speed_slider.value()),
         }
@@ -183,6 +201,74 @@ class DiyUiController:
         save_settings(host._settings)
         self._refresh_saved_combo()
 
+    # ── share / import ────────────────────────────────────────────────
+    def _share_current(self) -> None:
+        host = self._host
+        if not can_use("diy_effects"):
+            host._show_license_overlay()
+            return
+        effect = {
+            "name": str(host.diy_saved_combo.currentData() or ""),
+            "steps": [{"rgb": list(s["rgb"]), "duration_ms": int(s["duration_ms"]), "motion": s.get("motion", "none")} for s in self._steps],
+            "transition": self._transition,
+            "speed": int(host.diy_speed_slider.value()),
+        }
+        code = encode_effect(effect)
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(code)
+        host._log(host._tr("diy.share_copied"))
+        if self._share_overlay is not None:
+            self._share_overlay.raise_()
+            return
+        # Show the code so the user sees it worked and can copy it manually too.
+        overlay = ProfileRenameOverlay(
+            {
+                "title": host._tr("diy.share_title"),
+                "prompt": host._tr("diy.share_copied"),
+                "cancel": host._tr("dialog.cancel"),
+                "ok": host._tr("dialog.ok"),
+            },
+            code,
+            host,
+        )
+        self._share_overlay = overlay
+        overlay.closed.connect(lambda: setattr(self, "_share_overlay", None))
+        overlay.open()
+
+    def _import_code(self) -> None:
+        host = self._host
+        if not can_use("diy_effects"):
+            host._show_license_overlay()
+            return
+        if self._import_overlay is not None:
+            self._import_overlay.raise_()
+            return
+        overlay = ProfileRenameOverlay(
+            {
+                "title": host._tr("diy.import_title"),
+                "prompt": host._tr("diy.import_prompt"),
+                "cancel": host._tr("dialog.cancel"),
+                "ok": host._tr("dialog.ok"),
+            },
+            "",
+            host,
+        )
+        self._import_overlay = overlay
+        overlay.nameSelected.connect(self._apply_import)
+        overlay.closed.connect(lambda: setattr(self, "_import_overlay", None))
+        overlay.open()
+
+    def _apply_import(self, code: str) -> None:
+        host = self._host
+        entry = decode_effect(code)
+        if entry is None:
+            host._show_error(host._tr("diy.import_invalid"))
+            return
+        self._load_effect(entry)
+        name = str(entry.get("name", "")).strip()[:40] or host._tr("diy.import_default_name")
+        self._do_save(name)
+
     def _take_id(self) -> int:
         value = self._next_id
         self._next_id += 1
@@ -200,7 +286,7 @@ class DiyUiController:
 
     def _make_row(self, step_id: int) -> QWidget:
         host = self._host
-        step = self._step_by_id(step_id) or {"rgb": [255, 255, 255], "duration_ms": 1000}
+        step = self._step_by_id(step_id) or {"rgb": [255, 255, 255], "duration_ms": 1000, "motion": "none"}
         row = DiyRow(str(step_id))
         layout = QHBoxLayout(row)
         # Symmetric vertical padding; the item is sized to this widget's natural
@@ -220,21 +306,23 @@ class DiyUiController:
         layout.addWidget(hex_label, 0, Qt.AlignVCenter)
         layout.addStretch(1)
 
-        # Fixed right-side grid: label / value / unit / remove.
+        # Fixed right-side grid: motion / duration / remove.
         right = QWidget()
-        right.setFixedWidth(host._sz(238))
+        right.setFixedWidth(host._sz(260))
         right_layout = QHBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(host._sz(8))
         right_layout.setAlignment(Qt.AlignVCenter)
+        right_layout.addStretch(1)
 
-        dur_label = QLabel(host._tr("diy.duration"))
-        dur_label.setObjectName("cardSubtitle")
-        dur_label.setFixedWidth(host._sz(96))
-        dur_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        right_layout.addWidget(dur_label, 0, Qt.AlignVCenter)
+        motion_key = _clean_motion(step.get("motion", "none"))
+        motion = host._pill(host._tr(f"diy.motion_{motion_key}"))
+        motion.setToolTip(host._tr("diy.motion_hint"))
+        motion.activated.connect(lambda sid=step_id: self._cycle_motion(sid))
+        right_layout.addWidget(motion, 0, Qt.AlignVCenter)
 
         value = host._pill(f"{step['duration_ms'] / 1000:.1f} {host._tr('diy.seconds_short')}")
+        value.setToolTip(host._tr("diy.duration"))
         value.activated.connect(lambda sid=step_id: self._edit_duration(sid))
         right_layout.addWidget(value, 0, Qt.AlignVCenter)
 
@@ -318,13 +406,23 @@ class DiyUiController:
         self._rebuild_rows()
         self._after_change()
 
+    def _cycle_motion(self, step_id: int) -> None:
+        step = self._step_by_id(step_id)
+        if step is None:
+            return
+        current = _clean_motion(step.get("motion", "none"))
+        index = MOTION_KEYS.index(current)
+        step["motion"] = MOTION_KEYS[(index + 1) % len(MOTION_KEYS)]
+        self._rebuild_rows()
+        self._after_change()
+
     def _add_step(self) -> None:
         if not can_use("diy_effects"):
             self._host._show_license_overlay()
             return
         if len(self._steps) >= MAX_STEPS:
             return
-        self._steps.append({"id": self._take_id(), "rgb": [255, 200, 60], "duration_ms": 1000})
+        self._steps.append({"id": self._take_id(), "rgb": [255, 200, 60], "duration_ms": 1000, "motion": "none"})
         self._rebuild_rows()
         self._after_change()
 
@@ -343,9 +441,8 @@ class DiyUiController:
         self._steps = [by_key[k] for k in keys if k in by_key]
         self._after_change()
 
-    def _set_transition(self, mode: str) -> None:
-        self._transition = "cut" if mode == "cut" else "smooth"
-        self._sync_transition_buttons()
+    def _on_transition_selected(self, key: str) -> None:
+        self._transition = "cut" if key == "cut" else "smooth"
         self._after_change()
 
     def _on_speed_changed(self) -> None:
@@ -364,10 +461,11 @@ class DiyUiController:
         for step in self._steps:
             rgb = tuple(int(c) for c in step["rgb"])
             duration = int(step["duration_ms"])
+            motion = _clean_motion(step.get("motion", "none"))
             if self._transition == "cut":
-                steps.append(DiyStep(rgb=rgb, transition_ms=0, hold_ms=duration))
+                steps.append(DiyStep(rgb=rgb, transition_ms=0, hold_ms=duration, motion=motion))
             else:
-                steps.append(DiyStep(rgb=rgb, transition_ms=duration, hold_ms=0))
+                steps.append(DiyStep(rgb=rgb, transition_ms=duration, hold_ms=0, motion=motion))
         return DiyEffect(steps=tuple(steps), speed=int(self._host.diy_speed_slider.value()))
 
     def _toggle_run(self) -> None:
@@ -437,21 +535,17 @@ class DiyUiController:
         if preview is not None:
             preview.set_colors([tuple(int(c) for c in s["rgb"]) for s in self._steps])
             preview.set_smooth(self._transition == "smooth")
+            preview.set_effect(self._build_effect())
 
-    def _sync_transition_buttons(self) -> None:
-        host = self._host
-        smooth = self._transition == "smooth"
-        host.diy_smooth_button.setChecked(smooth)
-        host.diy_cut_button.setChecked(not smooth)
-        host.diy_smooth_button.set_role("accent_soft" if smooth else "ghost")
-        host.diy_cut_button.set_role("accent_soft" if not smooth else "ghost")
+    def _sync_transition_segment(self) -> None:
+        self._host.diy_transition_segment.set_current(self._transition, animate=False)
 
     def _persist(self) -> None:
         host = self._host
         if not isinstance(host._settings, dict):
             return
         host._settings["diy"] = {
-            "steps": [{"rgb": list(s["rgb"]), "duration_ms": int(s["duration_ms"])} for s in self._steps],
+            "steps": [{"rgb": list(s["rgb"]), "duration_ms": int(s["duration_ms"]), "motion": s.get("motion", "none")} for s in self._steps],
             "transition": self._transition,
             "speed": int(host.diy_speed_slider.value()),
         }
@@ -463,9 +557,9 @@ class DiyUiController:
         lock = getattr(host, "diy_lock_label", None)
         if lock is not None:
             lock.setVisible(not unlocked)
-        for name in ("diy_list", "diy_add_button", "diy_smooth_button", "diy_cut_button",
+        for name in ("diy_list", "diy_add_button", "diy_transition_segment",
                      "diy_speed_slider", "diy_run_button", "diy_saved_combo",
-                     "diy_save_button", "diy_delete_button"):
+                     "diy_save_button", "diy_delete_button", "diy_share_button", "diy_import_button"):
             widget = getattr(host, name, None)
             if widget is not None:
                 widget.setEnabled(unlocked)
@@ -474,11 +568,16 @@ class DiyUiController:
         host = self._host
         host.diy_add_button.setText(host._tr("diy.add_step"))
         host.diy_transition_label.setText(host._tr("diy.transition"))
-        host.diy_smooth_button.setText(host._tr("diy.transition_smooth"))
-        host.diy_cut_button.setText(host._tr("diy.transition_cut"))
+        host.diy_transition_segment.set_labels({
+            "smooth": host._tr("diy.transition_smooth"),
+            "cut": host._tr("diy.transition_cut"),
+        })
+        self._sync_transition_segment()
         host.diy_run_button.setText(host._tr("diy.stop") if self._fx.is_running() else host._tr("diy.run"))
         host.diy_save_button.setText(host._tr("diy.save"))
         host.diy_delete_button.setText(host._tr("diy.delete"))
+        host.diy_share_button.setText(host._tr("diy.share"))
+        host.diy_import_button.setText(host._tr("diy.import"))
         host._set_slider_label_text("diy.speed", host._tr("diy.speed"))
         self._rebuild_rows()  # row labels (duration / seconds)
         current = str(host.diy_saved_combo.currentData() or "")

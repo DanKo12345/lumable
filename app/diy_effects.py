@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app import software_effects as sfx
 from app.color_fade import lerp_rgb
 
 RGB = tuple[int, int, int]
@@ -17,12 +18,26 @@ MAX_STEPS = 8
 MIN_MS = 0
 MAX_MS = 10_000
 
+# Each step may carry a per-step "motion" that modulates its colour's brightness
+# while it's on-screen (during its whole transition + hold span), reusing the
+# software-effect generators. "none" leaves the colour steady. One motion cycle
+# spans MOTION_PERIOD_MS so the liveliness reads the same regardless of step length.
+MOTION_KEYS: tuple[str, ...] = ("none", "breathe", "pulse", "twinkle", "strobe")
+MOTION_PERIOD_MS = 1500
+_MOTION_FUNCS = {
+    "breathe": sfx.breathing,
+    "pulse": sfx.heartbeat,
+    "twinkle": sfx.twinkle,
+    "strobe": sfx.strobe,
+}
+
 
 @dataclass(frozen=True)
 class DiyStep:
     rgb: RGB
-    transition_ms: int  # fade-in time from the previous step's colour
-    hold_ms: int        # time held at this step's colour
+    transition_ms: int      # fade-in time from the previous step's colour
+    hold_ms: int            # time held at this step's colour
+    motion: str = "none"    # per-step brightness motion (see MOTION_KEYS)
 
 
 @dataclass(frozen=True)
@@ -35,6 +50,15 @@ def total_duration_ms(effect: DiyEffect) -> int:
     return sum(step.transition_ms + step.hold_ms for step in effect.steps)
 
 
+def _apply_motion(motion: str, rgb: RGB, t_in_step_ms: float) -> RGB:
+    """Modulate ``rgb`` by the step's motion at ``t_in_step_ms`` into the step."""
+    func = _MOTION_FUNCS.get(motion)
+    if func is None:
+        return rgb
+    phase = (t_in_step_ms % MOTION_PERIOD_MS) / MOTION_PERIOD_MS
+    return func(phase, rgb)
+
+
 def color_at(effect: DiyEffect, t_ms: float) -> RGB:
     """Colour of the looping animation at time ``t_ms`` (raw, speed not applied)."""
     steps = effect.steps
@@ -42,19 +66,21 @@ def color_at(effect: DiyEffect, t_ms: float) -> RGB:
         return (0, 0, 0)
     total = total_duration_ms(effect)
     if total <= 0:
-        return steps[0].rgb
+        return _apply_motion(steps[0].motion, steps[0].rgb, 0.0)
     t = t_ms % total
     prev = steps[-1].rgb  # loop: first step fades in from the last colour
     for step in steps:
-        if t < step.transition_ms:
-            frac = t / step.transition_ms if step.transition_ms > 0 else 1.0
-            return lerp_rgb(prev, step.rgb, frac)
-        t -= step.transition_ms
-        if t < step.hold_ms:
-            return step.rgb
-        t -= step.hold_ms
+        span = step.transition_ms + step.hold_ms
+        if t < span:
+            if t < step.transition_ms:
+                frac = t / step.transition_ms if step.transition_ms > 0 else 1.0
+                base = lerp_rgb(prev, step.rgb, frac)
+            else:
+                base = step.rgb
+            return _apply_motion(step.motion, base, t)
+        t -= span
         prev = step.rgb
-    return steps[-1].rgb
+    return _apply_motion(steps[-1].motion, steps[-1].rgb, 0.0)
 
 
 def duration_scale(speed: int) -> float:

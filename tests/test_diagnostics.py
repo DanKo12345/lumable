@@ -197,7 +197,7 @@ def test_diagnostics_report_uses_current_language_for_report_labels() -> None:
         include_crashes=False,
     )
 
-    assert "Версия: 0.2.5" in report
+    assert "Версия: 0.2.6" in report
     assert "Устройство" in report
     assert "Подключено: да" in report
     assert "Поддерживаемые команды" in report

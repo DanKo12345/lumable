@@ -7,11 +7,11 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QGraphicsOpacityEffect
 
 from app.feature_gate import can_use
-from app.music_controller import MusicController, list_audio_outputs
+from app.music_controller import MusicController, list_audio_inputs, list_audio_outputs
 from app.storage import save_settings
 from app.widgets import ColorPickerOverlay
 
-_DEFAULTS = {"saturation": 60, "smoothing": 50, "speed": 30, "beat": 40}
+_DEFAULTS = {"saturation": 60, "smoothing": 50, "speed": 30, "beat": 40, "gate": 16}
 _BANDS = ("bass", "mid", "treble")
 _DEFAULT_BAND_RGB = {"bass": (255, 80, 70), "mid": (180, 90, 255), "treble": (60, 190, 255)}
 
@@ -28,14 +28,17 @@ class MusicUiController:
         self._host = host
         self._music = MusicController(host)
         self._sink = None
+        self._source = "system"
 
     def wire(self) -> None:
         host = self._host
         host.music_toggle_button.clicked.connect(self._toggle)
         self._populate_sources()
+        host.music_source_segment.selected.connect(self._on_source_type_changed)
         host.music_source_combo.currentIndexChanged.connect(self._on_source_changed)
         host.music_speed_slider.valueChanged.connect(self._on_options_changed)
         host.music_beat_slider.valueChanged.connect(self._on_options_changed)
+        host.music_gate_slider.valueChanged.connect(self._on_options_changed)
         host.music_saturation_slider.valueChanged.connect(self._on_options_changed)
         host.music_smoothing_slider.valueChanged.connect(self._on_options_changed)
         for band in _BANDS:
@@ -46,8 +49,62 @@ class MusicUiController:
         self._music.color_sampled.connect(self._update_preview)
         self._music.failed.connect(self._on_failed)
         self._setup_preview_fade()
+        self._setup_gate_reveal()
         self.sync_controls()
         self.refresh_lock()
+
+    # ── noise-gate reveal (mic only) ──────────────────────────────────
+    # Height-only accordion (no opacity effect): the row lives inside
+    # music_controls, which already carries its own opacity effect for the
+    # dim-when-off state, and nesting two QGraphicsEffects renders glitchy.
+    def _setup_gate_reveal(self) -> None:
+        host = self._host
+        row = getattr(host, "music_gate_row", None)
+        if row is None:
+            return
+        self._gate_height = max(row.sizeHint().height(), host._sz(40))
+        self._gate_anim = QParallelAnimationGroup(host)
+        self._gate_min = QPropertyAnimation(row, b"minimumHeight")
+        self._gate_max = QPropertyAnimation(row, b"maximumHeight")
+        for anim in (self._gate_min, self._gate_max):
+            anim.setDuration(240)
+            anim.setEasingCurve(QEasingCurve.InOutCubic)
+            self._gate_anim.addAnimation(anim)
+        self._gate_hiding = False
+        self._gate_anim.finished.connect(self._on_gate_anim_finished)
+
+    def _set_gate_visible_instant(self, visible: bool) -> None:
+        row = getattr(self._host, "music_gate_row", None)
+        if row is None or getattr(self, "_gate_anim", None) is None:
+            return
+        self._gate_anim.stop()
+        height = self._gate_height if visible else 0
+        row.setMinimumHeight(height)
+        row.setMaximumHeight(height)
+        row.setVisible(visible)
+
+    def _animate_gate(self, *, opening: bool) -> None:
+        row = getattr(self._host, "music_gate_row", None)
+        if row is None or getattr(self, "_gate_anim", None) is None:
+            return
+        self._gate_anim.stop()
+        self._gate_hiding = not opening
+        if opening:
+            row.setVisible(True)
+        target = self._gate_height if opening else 0
+        self._gate_min.setStartValue(row.minimumHeight())
+        self._gate_min.setEndValue(target)
+        self._gate_max.setStartValue(row.maximumHeight())
+        self._gate_max.setEndValue(target)
+        self._gate_anim.start()
+
+    def _on_gate_anim_finished(self) -> None:
+        if not self._gate_hiding:
+            return
+        row = getattr(self._host, "music_gate_row", None)
+        if row is not None:
+            row.setVisible(False)
+        self._gate_hiding = False
 
     def _setup_preview_fade(self) -> None:
         """Reveal the live preview bar by growing its height + fading it in,
@@ -157,13 +214,21 @@ class MusicUiController:
         smoothing = int(saved.get("smoothing", _DEFAULTS["smoothing"]))
         speed = int(saved.get("speed", _DEFAULTS["speed"]))
         beat = int(saved.get("beat", _DEFAULTS["beat"]))
+        gate = int(saved.get("gate", _DEFAULTS["gate"]))
         host.music_speed_slider.jump_to(speed)
         host.music_beat_slider.jump_to(beat)
+        host.music_gate_slider.jump_to(gate)
         host.music_saturation_slider.jump_to(saturation)
         host.music_smoothing_slider.jump_to(smoothing)
+        self._source = "mic" if str(saved.get("source", "system")) == "mic" else "system"
+        segment = getattr(host, "music_source_segment", None)
+        if segment is not None:
+            segment.set_current(self._source, animate=False)
+        self._set_gate_visible_instant(self._source == "mic")
+        self._populate_sources()
         combo = getattr(host, "music_source_combo", None)
         if combo is not None:
-            device = str(saved.get("device", ""))
+            device = str(saved.get("mic_device" if self._source == "mic" else "device", ""))
             index = combo.findData(device)
             combo.blockSignals(True)
             combo.setCurrentIndex(index if index >= 0 else 0)
@@ -189,17 +254,36 @@ class MusicUiController:
         combo = getattr(host, "music_source_combo", None)
         if combo is None:
             return
+        is_mic = self._source == "mic"
         combo.blockSignals(True)
         combo.clear()
-        combo.addItem(host._tr("music.source_default"), "")
-        for name in list_audio_outputs():
+        combo.addItem(host._tr("music.source_default_mic" if is_mic else "music.source_default"), "")
+        names = list_audio_inputs() if is_mic else list_audio_outputs()
+        for name in names:
             combo.addItem(name, name)
         combo.blockSignals(False)
 
+    def _on_source_type_changed(self, key: str) -> None:
+        self._source = "mic" if key == "mic" else "system"
+        self._animate_gate(opening=self._source == "mic")
+        self._populate_sources()
+        # Re-select the device previously chosen for this source, if any.
+        host = self._host
+        saved = host._settings.get("music", {}) if isinstance(host._settings, dict) else {}
+        device = str(saved.get("mic_device" if self._source == "mic" else "device", ""))
+        combo = host.music_source_combo
+        index = combo.findData(device)
+        combo.blockSignals(True)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+        self._persist()
+        if self._music.is_running():
+            self._restart_capture()
+
     def _on_source_changed(self) -> None:
         self._persist()
-        # Switching output device means re-opening the loopback recorder, so
-        # restart the capture in place if music is currently running.
+        # Switching device means re-opening the recorder, so restart the capture
+        # in place if music is currently running.
         if self._music.is_running():
             self._restart_capture()
 
@@ -353,12 +437,17 @@ class MusicUiController:
         reactivity = 0.05 + (host.music_speed_slider.value() / 100.0) * 0.95
         # Beat slider -> brightness pop strength (0 disables the beat punch).
         beat_strength = host.music_beat_slider.value() / 100.0
+        # Gate slider 0..100% -> noise-gate fraction 0..0.5 of full loudness.
+        # Only applied for the microphone (system audio doesn't need it).
+        noise_gate = (host.music_gate_slider.value() / 100.0) * 0.5 if self._source == "mic" else 0.0
         device_name = host.music_source_combo.currentData() or ""
         self._music.configure(
             saturation=saturation,
             smoothing=smoothing,
             reactivity=reactivity,
             beat_strength=beat_strength,
+            noise_gate=noise_gate,
+            source=self._source,
             device_name=device_name,
             band_colors=self._band_colors_tuple(),
         )
@@ -373,6 +462,7 @@ class MusicUiController:
         host = self._host
         host.music_speed_value.setText(f"{host.music_speed_slider.value()}%")
         host.music_beat_value.setText(f"{host.music_beat_slider.value()}%")
+        host.music_gate_value.setText(f"{host.music_gate_slider.value()}%")
         host.music_saturation_value.setText(f"{host.music_saturation_slider.value()}%")
         host.music_smoothing_value.setText(f"{host.music_smoothing_slider.value()}%")
 
@@ -380,14 +470,22 @@ class MusicUiController:
         host = self._host
         if not isinstance(host._settings, dict):
             return
-        host._settings["music"] = {
+        prev = host._settings.get("music", {}) if isinstance(host._settings.get("music"), dict) else {}
+        active_device = str(host.music_source_combo.currentData() or "")
+        music = {
             "saturation": int(host.music_saturation_slider.value()),
             "smoothing": int(host.music_smoothing_slider.value()),
             "speed": int(host.music_speed_slider.value()),
             "beat": int(host.music_beat_slider.value()),
-            "device": str(host.music_source_combo.currentData() or ""),
+            "gate": int(host.music_gate_slider.value()),
+            "source": self._source,
+            # Remember the chosen device per source so switching back restores it.
+            "device": str(prev.get("device", "")),
+            "mic_device": str(prev.get("mic_device", "")),
             "colors": self._colors_dict(),
         }
+        music["mic_device" if self._source == "mic" else "device"] = active_device
+        host._settings["music"] = music
         save_settings(host._settings)
 
     def _on_failed(self, reason: str) -> None:
@@ -398,6 +496,10 @@ class MusicUiController:
         host._log(host._tr("music.error", error=reason))
         if reason.startswith("audio_capture_unavailable"):
             host._show_error(host._tr("music.capture_failed"))
+        elif reason.startswith("mic_backend_missing"):
+            host._show_error(host._tr("music.mic_backend_missing"))
+        elif reason.startswith("mic_capture_failed"):
+            host._show_error(host._tr("music.mic_failed"))
         else:
             host._show_error(host._tr("music.error", error=reason))
 

@@ -44,4 +44,4 @@ def test_band_colors_coerced_and_clamped() -> None:
 
 def test_unknown_keys_dropped() -> None:
     result = validate_music({"saturation": 50, "bogus": 1})
-    assert set(result.keys()) == {"saturation", "smoothing", "speed", "beat", "device", "colors"}
+    assert set(result.keys()) == {"saturation", "smoothing", "speed", "beat", "gate", "source", "device", "mic_device", "colors"}

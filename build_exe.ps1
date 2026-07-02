@@ -28,6 +28,7 @@ if ([version]$version -lt [version]"3.11") {
     --add-data "app\i18n;app\i18n" `
     --add-data "THIRD_PARTY_NOTICES.txt;." `
     --collect-all "soundcard" `
+    --collect-all "sounddevice" `
     --exclude-module "PySide6.QtQml" `
     --exclude-module "PySide6.QtQmlMeta" `
     --exclude-module "PySide6.QtQmlModels" `

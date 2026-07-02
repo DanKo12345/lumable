@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QLineEdit, QListWidget, QMenu
+from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QListWidget, QMenu
 
 from app.constants import ROW_SPACING_TIGHT, ROW_TOP_MARGIN, SAVE_BUTTON_MIN_WIDTH
 from app.panels.types import PanelHost
 from app.widgets import GlassCard, ProfileListDelegate
+from app.widgets.themed_line_edit import ThemedLineEdit
 
 HEADER_ACTION_SIZE = 32
 HEADER_ACTION_SPACING = 10
@@ -104,7 +105,7 @@ def build_configs_section(host: PanelHost) -> GlassCard:
     config_top = QHBoxLayout()
     config_top.setSpacing(ROW_SPACING_TIGHT)
     config_top.setContentsMargins(0, ROW_TOP_MARGIN, 0, 0)
-    host.profile_name = QLineEdit()
+    host.profile_name = ThemedLineEdit()
     host.profile_name.setMinimumHeight(host._control_height)
     host.profile_name.setPlaceholderText(host._tr("configs.placeholder"))
     host.save_profile_button = host._button(host._tr("configs.save"), "accent_soft")

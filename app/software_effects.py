@@ -10,11 +10,16 @@ RGB = tuple[int, int, int]
 # already does a smooth rainbow on-device (and better). The app effects focus on
 # what firmware can't do (breathe the current colour, candle flicker, gradients).
 # render() still supports "rainbow" for any controller that lacks it in firmware.
-EFFECT_KEYS: tuple[str, ...] = ("breathing", "heartbeat", "candle", "storm", "gradient", "lava", "aurora")
+EFFECT_KEYS: tuple[str, ...] = (
+    "breathing", "heartbeat", "candle", "storm", "gradient", "lava", "aurora",
+    "ocean", "sunset", "twinkle", "strobe", "police",
+)
 
 _GRADIENT_PALETTE: tuple[RGB, RGB, RGB] = ((255, 80, 70), (180, 90, 255), (60, 190, 255))
 _LAVA_PALETTE: tuple[RGB, ...] = ((190, 20, 10), (255, 95, 0), (210, 30, 120), (120, 0, 40))
 _AURORA_PALETTE: tuple[RGB, ...] = ((0, 130, 95), (0, 190, 150), (40, 95, 225), (130, 40, 205))
+_OCEAN_PALETTE: tuple[RGB, ...] = ((0, 70, 150), (0, 140, 190), (0, 200, 205), (25, 100, 210))
+_SUNSET_PALETTE: tuple[RGB, ...] = ((255, 70, 20), (255, 130, 40), (235, 45, 120), (120, 25, 95))
 
 
 def _clamp8(value: float) -> int:
@@ -116,6 +121,37 @@ def aurora(phase: float) -> RGB:
     return gradient(phase, _AURORA_PALETTE)
 
 
+def ocean(phase: float) -> RGB:
+    """Calm drift through deep blues, teals and cyan (like water)."""
+    return gradient(phase, _OCEAN_PALETTE)
+
+
+def sunset(phase: float) -> RGB:
+    """Warm drift through oranges, pinks and dusk purple."""
+    return gradient(phase, _SUNSET_PALETTE)
+
+
+def twinkle(phase: float, base: RGB) -> RGB:
+    """Gentle sparkle: the base colour mostly glows dim with occasional bright flashes."""
+    spark = max(0.0, math.sin(phase * 2.0 * math.pi * 5.0) * math.sin(phase * 2.0 * math.pi * 9.0 + 0.6))
+    flash = spark**3
+    level = 0.28 + 0.72 * flash
+    return (_clamp8(base[0] * level), _clamp8(base[1] * level), _clamp8(base[2] * level))
+
+
+def strobe(phase: float, base: RGB) -> RGB:
+    """Hard party strobe: the base colour blinks on/off several times per cycle."""
+    level = 1.0 if (phase * 6.0) % 1.0 < 0.5 else 0.06
+    return (_clamp8(base[0] * level), _clamp8(base[1] * level), _clamp8(base[2] * level))
+
+
+def police(phase: float) -> RGB:
+    """Alternating red / blue siren with a quick double-flash in each half."""
+    color = (255, 0, 0) if (phase % 1.0) < 0.5 else (0, 40, 255)
+    level = 1.0 if (phase * 8.0) % 1.0 < 0.5 else 0.15
+    return (_clamp8(color[0] * level), _clamp8(color[1] * level), _clamp8(color[2] * level))
+
+
 def render(effect: str, phase: float, base: RGB) -> RGB:
     """Return the colour for ``effect`` at ``phase`` (in cycles, 0..1 loops).
 
@@ -138,4 +174,14 @@ def render(effect: str, phase: float, base: RGB) -> RGB:
         return lava(phase)
     if effect == "aurora":
         return aurora(phase)
+    if effect == "ocean":
+        return ocean(phase)
+    if effect == "sunset":
+        return sunset(phase)
+    if effect == "twinkle":
+        return twinkle(phase, base)
+    if effect == "strobe":
+        return strobe(phase, base)
+    if effect == "police":
+        return police(phase)
     return base

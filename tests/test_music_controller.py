@@ -4,7 +4,7 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
-from app.music_controller import analyze_block  # noqa: E402  (after importorskip)
+from app.music_controller import MusicController, MusicOptions, analyze_block  # noqa: E402  (after importorskip)
 
 _SR = 48000
 _N = 1024
@@ -42,3 +42,68 @@ def test_stereo_is_downmixed() -> None:
 
 def test_empty_block_is_safe() -> None:
     assert analyze_block(np.zeros((0,)), _SR) == (0.0, 0.0, 0.0, 0.0)
+
+
+class _FakeMic:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _FakeSpeaker:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.id = name
+
+
+class _FakeSc:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def get_microphone(self, name, include_loopback=False):
+        self.calls.append(("get_microphone", name, include_loopback))
+        return _FakeMic(f"loopback:{name}" if include_loopback else name)
+
+    def default_microphone(self):
+        return _FakeMic("default-mic")
+
+    def all_microphones(self, include_loopback=False):
+        return [_FakeMic("MyMic")]
+
+    def default_speaker(self):
+        return _FakeSpeaker("default-speaker")
+
+    def all_speakers(self):
+        return [_FakeSpeaker("Speakers")]
+
+    def get_speaker(self, name):
+        return _FakeSpeaker(name)
+
+
+def test_system_source_uses_speaker_loopback() -> None:
+    sc = _FakeSc()
+    dev = MusicController._open_recorder_source(sc, MusicOptions(source="system", device_name=""))
+    assert dev.name == "loopback:default-speaker"
+    assert ("get_microphone", "default-speaker", True) in sc.calls
+
+
+class _FakeSd:
+    def __init__(self, devices: list[dict]) -> None:
+        self._devices = devices
+
+    def query_devices(self, *args, **kwargs):
+        return self._devices
+
+
+def test_resolve_sd_input_matches_input_by_name() -> None:
+    sd = _FakeSd([
+        {"name": "Speakers (Realtek)", "max_input_channels": 0},
+        {"name": "Microphone (RODE NT-USB)", "max_input_channels": 1},
+    ])
+    # Skips the output-only device, matches the mic by substring -> its index.
+    assert MusicController._resolve_sd_input(sd, "RODE") == 1
+
+
+def test_resolve_sd_input_defaults_to_none() -> None:
+    sd = _FakeSd([{"name": "Mic", "max_input_channels": 2}])
+    assert MusicController._resolve_sd_input(sd, "") is None            # empty -> default input
+    assert MusicController._resolve_sd_input(sd, "Nonexistent") is None  # no match -> default input

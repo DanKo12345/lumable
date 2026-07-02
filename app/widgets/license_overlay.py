@@ -15,12 +15,18 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
-from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
 from app.widgets.celebration_overlay import CelebrationOverlay
 from app.widgets.clickable_label import ClickableLabel
 from app.widgets.liquid_button import LiquidButton
+from app.widgets.themed_line_edit import ThemedLineEdit
+
+# Feature list: show this many up front, the rest behind a "show all" toggle.
+_FEATURES_VISIBLE = 4
+_FEATURES_COLLAPSED_H = 556
+_FEATURES_EXPANDED_H = 648
 
 
 class _ActivateWorker(QThread):
@@ -244,8 +250,8 @@ class LicenseOverlay(QWidget):
         if self._is_active_mode():
             self._panel.setFixedSize(560, 460)
         else:
-            # Free mode also lists what Pro unlocks, so it needs more room.
-            self._panel.setFixedSize(560, 556)
+            # Free mode also lists what Pro unlocks (4 up front, rest on expand).
+            self._panel.setFixedSize(560, _FEATURES_COLLAPSED_H)
         layout.addWidget(self._panel, 0, Qt.AlignCenter)
         layout.addStretch(1)
 
@@ -295,7 +301,7 @@ class LicenseOverlay(QWidget):
         field_layout.setSpacing(8)
         field_label = QLabel(labels["key_label"], field_box)
         field_label.setObjectName("licenseFieldLabel")
-        self.key_input = QLineEdit(field_box)
+        self.key_input = ThemedLineEdit(field_box)
         self.key_input.setObjectName("licenseKeyInput")
         self.key_input.setPlaceholderText(labels["placeholder"])
         self.key_input.returnPressed.connect(self._activate)
@@ -389,21 +395,76 @@ class LicenseOverlay(QWidget):
         lines = [line.strip() for line in text.split("\n") if line.strip()]
         if not lines:
             return None
+        accent = theme_manager.palette["accent_start"]
+
+        def render(items: list[str]) -> str:
+            rows = "<br>".join(
+                f"<span style='color:{accent};'>✓</span>&nbsp;&nbsp;{line}" for line in items
+            )
+            return f"<div style='line-height: 172%;'>{rows}</div>"
+
+        # One label whose text swaps between the short and full list — a single
+        # line-height keeps the spacing between every row uniform.
+        self._features_html_short = render(lines[:_FEATURES_VISIBLE])
+        self._features_html_full = render(lines)
+        self._features_extra_count = max(0, len(lines) - _FEATURES_VISIBLE)
+        self._features_expanded = False
+
         card = QFrame(self._panel)
         card.setObjectName("licenseFeatures")
         layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 14, 18, 14)
-        layout.setSpacing(0)
-        label = QLabel(card)
-        label.setObjectName("licenseFeatureList")
-        label.setTextFormat(Qt.RichText)
-        accent = theme_manager.palette["accent_start"]
-        rows = "<br>".join(
-            f"<span style='color:{accent};'>✓</span>&nbsp;&nbsp;{line}" for line in lines
-        )
-        label.setText(f"<div style='line-height: 172%;'>{rows}</div>")
-        layout.addWidget(label)
+        layout.setSpacing(8)
+
+        self._features_label = QLabel(card)
+        self._features_label.setObjectName("licenseFeatureList")
+        self._features_label.setTextFormat(Qt.RichText)
+        self._features_label.setText(self._features_html_short)
+        layout.addWidget(self._features_label)
+
+        self._features_toggle = None
+        if self._features_extra_count:
+            self._features_toggle = ClickableLabel(self._show_all_text(), card)
+            self._features_toggle.setObjectName("licenseFeatureToggle")
+            self._features_toggle.setCursor(Qt.PointingHandCursor)
+            self._features_toggle.setStyleSheet(
+                f"QLabel#licenseFeatureToggle {{ color: {accent}; font-size: 12px; font-weight: 700; }}"
+            )
+            self._features_toggle.clicked.connect(self._toggle_features)
+            layout.addWidget(self._features_toggle, 0, Qt.AlignLeft)
         return card
+
+    def _show_all_text(self) -> str:
+        return f"{self._labels.get('show_all', '')}  (+{self._features_extra_count})"
+
+    def _toggle_features(self) -> None:
+        if self._features_toggle is None:
+            return
+        self._features_expanded = not self._features_expanded
+        start = self._panel.height()
+        end = _FEATURES_EXPANDED_H if self._features_expanded else _FEATURES_COLLAPSED_H
+        if self._features_expanded:
+            self._features_label.setText(self._features_html_full)  # revealed as the panel grows
+            self._features_toggle.setText(str(self._labels.get("show_less", "")))
+        else:
+            self._features_toggle.setText(self._show_all_text())
+
+        # Animate min+max height together so the fixed-size panel grows/shrinks smoothly.
+        self._feature_anims = []
+        for prop in (b"minimumHeight", b"maximumHeight"):
+            anim = QPropertyAnimation(self._panel, prop, self)
+            anim.setDuration(240)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            anim.setStartValue(start)
+            anim.setEndValue(end)
+            self._feature_anims.append(anim)
+        if not self._features_expanded:
+            # Trim back to the short list once the panel has finished shrinking.
+            self._feature_anims[0].finished.connect(
+                lambda: self._features_label.setText(self._features_html_short)
+            )
+        for anim in self._feature_anims:
+            anim.start()
 
     def _activate(self) -> None:
         if self._activate_worker is not None:

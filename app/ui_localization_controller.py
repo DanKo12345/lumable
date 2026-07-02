@@ -234,9 +234,17 @@ class UiLocalizationController:
             host.music_card.subtitle_label.setText(host._tr("music.subtitle"))
         host._set_slider_label_text("music.speed", host._tr("music.speed"))
         host._set_slider_label_text("music.beat", host._tr("music.beat"))
+        host._set_slider_label_text("music.gate", host._tr("music.gate"))
+        source_segment = getattr(host, "music_source_segment", None)
+        is_mic = getattr(host._music_ui, "_source", "system") == "mic"
+        if source_segment is not None:
+            source_segment.set_labels({
+                "system": host._tr("music.source_system"),
+                "mic": host._tr("music.source_mic"),
+            })
         source_combo = getattr(host, "music_source_combo", None)
         if source_combo is not None and source_combo.count() > 0:
-            source_combo.setItemText(0, host._tr("music.source_default"))
+            source_combo.setItemText(0, host._tr("music.source_default_mic" if is_mic else "music.source_default"))
             source_combo.setToolTip(host._tr("music.source_hint"))
         host._set_slider_label_text("music.saturation", host._tr("music.saturation"))
         host._set_slider_label_text("music.smoothing", host._tr("music.smoothing"))

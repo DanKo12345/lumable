@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
 from app.widgets.liquid_button import LiquidButton
+from app.widgets.themed_line_edit import ThemedLineEdit
 
 
 class _ProfileActionPanel(QFrame):
@@ -86,7 +87,7 @@ class ProfileRenameOverlay(QWidget):
         field_layout.setSpacing(8)
         field_label = QLabel(labels["prompt"], field_box)
         field_label.setObjectName("profileActionFieldLabel")
-        self.name_input = QLineEdit(field_box)
+        self.name_input = ThemedLineEdit(field_box)
         self.name_input.setObjectName("profileActionInput")
         self.name_input.setText(current_name)
         self.name_input.selectAll()

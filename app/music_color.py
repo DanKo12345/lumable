@@ -26,6 +26,23 @@ def normalize_level(rms: float, *, noise_floor: float = 0.0025, ceiling: float =
     return linear**0.5
 
 
+def gate_level(level: float, gate: float) -> float:
+    """Apply a noise gate to a 0..1 loudness level.
+
+    ``gate`` (0..1) is the threshold as a fraction of full level: anything at or
+    below it becomes 0 (the strip stays at its floor, so faint room noise / hiss
+    doesn't make it react), and the range above the gate is rescaled back to
+    0..1 so real sound still drives the full brightness. Pure and unit-testable.
+    """
+    gate = max(0.0, min(0.95, gate))
+    level = max(0.0, min(1.0, level))
+    if gate <= 0.0:
+        return level
+    if level <= gate:
+        return 0.0
+    return min(1.0, (level - gate) / (1.0 - gate))
+
+
 def update_beat(
     energy: float,
     avg: float,

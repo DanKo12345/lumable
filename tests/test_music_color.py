@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb, normalize_level, update_beat
+from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb, gate_level, normalize_level, update_beat
 
 
 def test_custom_band_colors_recolor_bands() -> None:
@@ -64,6 +64,26 @@ def test_bands_to_rgb_always_clamped() -> None:
     ):
         for channel in color:
             assert 0 <= channel <= 255
+
+
+def test_gate_zero_is_passthrough() -> None:
+    assert gate_level(0.5, 0.0) == 0.5
+    assert gate_level(1.0, 0.0) == 1.0
+
+
+def test_gate_silences_at_or_below_threshold() -> None:
+    assert gate_level(0.05, 0.1) == 0.0
+    assert gate_level(0.10, 0.1) == 0.0
+
+
+def test_gate_rescales_above_threshold() -> None:
+    assert gate_level(0.55, 0.1) == pytest.approx(0.5)  # (0.55-0.1)/0.9
+    assert gate_level(1.0, 0.1) == pytest.approx(1.0)
+
+
+def test_gate_clamps_inputs() -> None:
+    assert gate_level(2.0, 0.0) == 1.0
+    assert gate_level(-1.0, 0.2) == 0.0
 
 
 def test_update_beat_warmup_seeds_average_without_firing() -> None:

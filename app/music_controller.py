@@ -8,7 +8,7 @@ from functools import lru_cache
 from PySide6.QtCore import QObject, Signal
 
 from app.color_stream import ColorStreamEngine
-from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb, normalize_level, update_beat
+from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb, gate_level, normalize_level, update_beat
 
 
 @lru_cache(maxsize=8)
@@ -70,11 +70,36 @@ def list_audio_outputs() -> list[str]:
         return []
 
 
+def list_audio_inputs() -> list[str]:
+    """Names of real microphones (recording devices) via sounddevice, or [] if
+    unavailable. Enumerated with the same backend that captures them (PortAudio),
+    so the names always match what can actually be opened."""
+    try:
+        import sounddevice as sd
+
+        seen: set[str] = set()
+        names: list[str] = []
+        for dev in sd.query_devices():
+            if int(dev.get("max_input_channels", 0)) <= 0:
+                continue
+            name = str(dev.get("name", "")).strip()
+            if name and name not in seen:
+                seen.add(name)
+                names.append(name)
+        return names
+    except Exception:
+        return []
+
+
 @dataclass(frozen=True)
 class MusicOptions:
     samplerate: int = 48000
     blocksize: int = 1024
-    # Output device to capture (loopback). Empty = the system default speaker.
+    # Where to listen: "system" captures the PC's audio (speaker loopback),
+    # "mic" captures a real microphone (sound in the room).
+    source: str = "system"
+    # The chosen device for the current source: a speaker name in "system" mode,
+    # a microphone name in "mic" mode. Empty = that source's system default.
     device_name: str = ""
     saturation: float = 1.4
     smoothing: float = 0.5
@@ -94,6 +119,9 @@ class MusicOptions:
     beat_strength: float = 0.4
     beat_sensitivity: float = 1.3
     beat_decay: float = 0.82
+    # Noise gate (0..1): loudness at/below this fraction is treated as silence so
+    # faint room noise / hiss doesn't make the strip react (useful for the mic).
+    noise_gate: float = 0.08
 
 
 class MusicController(QObject):
@@ -176,58 +204,197 @@ class MusicController(QObject):
                         return speaker
         return sc.default_speaker()
 
-    def _run(self) -> None:
+    @classmethod
+    def _open_recorder_source(cls, sc, options: MusicOptions):
+        """The soundcard loopback device for the chosen speaker (system audio).
+
+        Real microphones are captured via sounddevice instead (see
+        :meth:`_open_mic_reader`) — soundcard's WASAPI path asserts on many input
+        devices, while it handles speaker loopback reliably."""
+        speaker = cls._resolve_speaker(sc, options.device_name)
+        return sc.get_microphone(speaker.name, include_loopback=True)
+
+    @staticmethod
+    def _open_recorder(source_device, options: MusicOptions):
+        """Open a recorder, retrying with simpler args. Some real microphones
+        assert inside soundcard when a samplerate/blocksize they don't support is
+        forced, so fall back to the device's own defaults instead of failing."""
+        # soundcard requires an explicit samplerate; some real microphones also
+        # assert unless the channel count is stated. Try a few combos and use the
+        # first that opens, so the mic path is robust across devices/drivers.
+        attempts = (
+            {"samplerate": options.samplerate, "blocksize": options.blocksize},
+            {"samplerate": options.samplerate, "channels": 1},
+            {"samplerate": options.samplerate, "blocksize": options.blocksize, "channels": 1},
+            {"samplerate": options.samplerate},
+        )
+        errors: list[str] = []
+        for kwargs in attempts:
+            recorder = None
+            try:
+                recorder = source_device.recorder(**kwargs)
+                recorder.__enter__()
+                return recorder
+            except Exception as exc:  # probe the next arg combo
+                errors.append(f"{tuple(kwargs) or 'defaults'}:{type(exc).__name__}")
+                if recorder is not None:
+                    try:
+                        recorder.__exit__(None, None, None)
+                    except Exception:
+                        pass
+        raise RuntimeError("recorder_open_failed (" + "; ".join(errors) + ")")
+
+    @staticmethod
+    def _resolve_sd_input(sd, device_name: str):
+        """Index of the chosen sounddevice input device, or None for the default."""
+        name = (device_name or "").strip()
+        if not name:
+            return None
+        try:
+            for index, dev in enumerate(sd.query_devices()):
+                if int(dev.get("max_input_channels", 0)) > 0 and name in str(dev.get("name", "")):
+                    return index
+        except Exception:
+            return None
+        return None
+
+    def _open_loopback_reader(self, options: MusicOptions):
+        """(read, close, samplerate) for the PC's own audio via speaker loopback."""
         try:
             import soundcard as sc
         except Exception as exc:
-            self.failed.emit(f"audio_capture_unavailable: {exc}")
+            raise RuntimeError(f"audio_capture_unavailable: {exc}") from exc
+        source_device = self._open_recorder_source(sc, options)
+        recorder = self._open_recorder(source_device, options)
+
+        def read(numframes: int):
+            return recorder.record(numframes=numframes)
+
+        def close() -> None:
+            try:
+                recorder.__exit__(None, None, None)
+            except Exception:
+                pass
+
+        return read, close, options.samplerate
+
+    def _open_mic_reader(self, options: MusicOptions):
+        """(read, close, samplerate) for a real microphone via sounddevice.
+
+        PortAudio opens input devices reliably where soundcard's WASAPI path
+        asserts. The samplerate falls back to the device default if the requested
+        one isn't supported, so odd mics still work."""
+        try:
+            import sounddevice as sd
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(f"mic_backend_missing: {exc}") from exc
+        except Exception as exc:
+            # Installed but failed to load (e.g. PortAudio DLL missing) — that's a
+            # capture failure, not a missing package, so don't tell them to install it.
+            raise RuntimeError(f"mic_capture_failed: sounddevice load error: {type(exc).__name__}: {exc}") from exc
+        device = self._resolve_sd_input(sd, options.device_name)
+        rates = [options.samplerate, 44100]
+        try:
+            default_sr = int(sd.query_devices(device, "input").get("default_samplerate", 0))
+            if default_sr:
+                rates.append(default_sr)
+        except Exception:
+            pass
+        stream = None
+        rate_used = 0
+        errors: list[str] = []
+        for rate in dict.fromkeys(r for r in rates if r):
+            try:
+                candidate = sd.InputStream(
+                    device=device, channels=1, samplerate=int(rate),
+                    blocksize=options.blocksize, dtype="float32",
+                )
+                candidate.start()
+            except Exception as exc:  # try the next samplerate
+                errors.append(f"{rate}:{type(exc).__name__}")
+                continue
+            stream = candidate
+            rate_used = int(rate)
+            break
+        if stream is None:
+            raise RuntimeError("mic_open_failed (" + "; ".join(errors) + ")")
+
+        def read(numframes: int):
+            data, _overflow = stream.read(numframes)
+            return data
+
+        def close() -> None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
+
+        return read, close, rate_used
+
+    def _capture_error_reason(self, exc: Exception) -> str:
+        """Tag the failure so the UI can show the right message; keep the class
+        name because some WASAPI/soundcard errors carry an empty message."""
+        text = str(exc)
+        for prefix in ("audio_capture_unavailable", "mic_backend_missing"):
+            if text.startswith(prefix):
+                return text
+        detail = text.strip()
+        reason = f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+        if self._options.source == "mic":
+            return f"mic_capture_failed: {reason}"
+        return reason
+
+    def _process_block(self, block, samplerate: int, options: MusicOptions) -> tuple[int, int, int]:
+        bass, mid, treble, rms = analyze_block(block, samplerate)
+        # Detect beats from the *raw* bass (before smoothing) so the transient
+        # survives; the envelope pulses brightness below.
+        self._bass_avg, self._beat_env, _is_beat = update_beat(
+            bass, self._bass_avg, self._beat_env,
+            sensitivity=options.beat_sensitivity, decay=options.beat_decay,
+        )
+        # Ease the raw energies toward each reading (EMA) so the colour glides;
+        # the factor is the user's "speed": low = calm, high = snappy.
+        factor = options.reactivity
+        if self._ema is None:
+            self._ema = [bass, mid, treble, rms]
+        else:
+            for i, value in enumerate((bass, mid, treble, rms)):
+                self._ema[i] += (value - self._ema[i]) * factor
+        bass, mid, treble, rms = self._ema
+        # Noise gate first, so faint sound reads as silence (floor) and doesn't
+        # even get a beat pop; real sound above the gate still drives full range.
+        level = gate_level(normalize_level(rms), options.noise_gate)
+        if options.beat_strength > 0.0 and level > 0.0:
+            level = min(1.0, level + self._beat_env * options.beat_strength)
+        # Auto-gain the bands against a slowly decaying running peak so the hue
+        # reflects the *balance* of frequencies, not absolute volume.
+        current = max(bass, mid, treble, 1e-6)
+        self._band_peak = max(current, self._band_peak * options.agc_decay)
+        scale = 1.0 / self._band_peak
+        return bands_to_rgb(
+            bass * scale, mid * scale, treble * scale, level,
+            colors=options.band_colors, saturation=options.saturation,
+            floor_brightness=options.floor_brightness,
+        )
+
+    def _run(self) -> None:
+        try:
+            options = self._options
+            if options.source == "mic":
+                read, close, samplerate = self._open_mic_reader(options)
+            else:
+                read, close, samplerate = self._open_loopback_reader(options)
+        except Exception as exc:
+            self.failed.emit(self._capture_error_reason(exc))
             return
         try:
-            speaker = self._resolve_speaker(sc, self._options.device_name)
-            loopback = sc.get_microphone(speaker.name, include_loopback=True)
-            options = self._options
-            with loopback.recorder(samplerate=options.samplerate, blocksize=options.blocksize) as recorder:
-                while not self._stop.is_set():
-                    options = self._options
-                    block = recorder.record(numframes=options.blocksize)
-                    bass, mid, treble, rms = analyze_block(block, options.samplerate)
-                    # Detect beats from the *raw* bass (before smoothing, so the
-                    # transient survives) — the envelope pulses brightness below.
-                    self._bass_avg, self._beat_env, _is_beat = update_beat(
-                        bass,
-                        self._bass_avg,
-                        self._beat_env,
-                        sensitivity=options.beat_sensitivity,
-                        decay=options.beat_decay,
-                    )
-                    # Ease the raw energies toward each new reading (EMA) so the
-                    # colour glides instead of jumping on every block. The factor
-                    # is the user's "speed": low = calm/slow, high = snappy.
-                    factor = options.reactivity
-                    if self._ema is None:
-                        self._ema = [bass, mid, treble, rms]
-                    else:
-                        for i, value in enumerate((bass, mid, treble, rms)):
-                            self._ema[i] += (value - self._ema[i]) * factor
-                    bass, mid, treble, rms = self._ema
-                    level = normalize_level(rms)
-                    # Punch the brightness up on a beat, then let it decay.
-                    if options.beat_strength > 0.0:
-                        level = min(1.0, level + self._beat_env * options.beat_strength)
-                    # Auto-gain the bands against a slowly decaying running peak so
-                    # the hue reflects the *balance* of frequencies, not absolute volume.
-                    current = max(bass, mid, treble, 1e-6)
-                    self._band_peak = max(current, self._band_peak * options.agc_decay)
-                    scale = 1.0 / self._band_peak
-                    red, green, blue = bands_to_rgb(
-                        bass * scale,
-                        mid * scale,
-                        treble * scale,
-                        level,
-                        colors=options.band_colors,
-                        saturation=options.saturation,
-                        floor_brightness=options.floor_brightness,
-                    )
-                    self.color_sampled.emit(red, green, blue)
+            while not self._stop.is_set():
+                options = self._options
+                block = read(options.blocksize)
+                red, green, blue = self._process_block(block, samplerate, options)
+                self.color_sampled.emit(red, green, blue)
         except Exception as exc:  # audio device/driver failure — report and stop cleanly.
-            self.failed.emit(str(exc))
+            self.failed.emit(self._capture_error_reason(exc))
+        finally:
+            close()

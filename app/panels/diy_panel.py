@@ -8,6 +8,7 @@ from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.clickable_label import ClickableLabel
 from app.widgets.diy_preview_strip import DiyPreviewStrip
 from app.widgets.drag_reorder_list import DragReorderList
+from app.widgets.segmented_control import SegmentedControl
 
 
 def build_diy_section(host: PanelHost) -> GlassCard:
@@ -27,18 +28,27 @@ def build_diy_section(host: PanelHost) -> GlassCard:
     host.diy_lock_label.hide()
     host.diy_card.content_layout.addWidget(host.diy_lock_label, 0, Qt.AlignLeft)
 
-    # Saved-effects library: pick one to load, save the current, or delete.
+    # Saved-effects library: pick one to load, then save / delete / share / import.
     saved_row = QHBoxLayout()
     saved_row.setSpacing(10)
     host.diy_saved_combo = StaticPopupComboBox(lambda: host._theme_tokens, lambda: host._is_dark)
     host.diy_saved_combo.setMinimumHeight(host._control_height)
     host.diy_saved_combo.setMinimumWidth(host._sz(180))
+    saved_row.addWidget(host.diy_saved_combo, 1)
+    host.diy_card.content_layout.addLayout(saved_row)
+
+    actions_row = QHBoxLayout()
+    actions_row.setSpacing(10)
     host.diy_save_button = host._button(host._tr("diy.save"), "ghost")
     host.diy_delete_button = host._button(host._tr("diy.delete"), "ghost")
-    saved_row.addWidget(host.diy_saved_combo, 1)
-    saved_row.addWidget(host.diy_save_button)
-    saved_row.addWidget(host.diy_delete_button)
-    host.diy_card.content_layout.addLayout(saved_row)
+    host.diy_share_button = host._button(host._tr("diy.share"), "ghost")
+    host.diy_import_button = host._button(host._tr("diy.import"), "ghost")
+    actions_row.addWidget(host.diy_save_button)
+    actions_row.addWidget(host.diy_delete_button)
+    actions_row.addStretch(1)
+    actions_row.addWidget(host.diy_share_button)
+    actions_row.addWidget(host.diy_import_button)
+    host.diy_card.content_layout.addLayout(actions_row)
 
     # Live preview of the colour sequence.
     host.diy_preview = DiyPreviewStrip()
@@ -62,12 +72,11 @@ def build_diy_section(host: PanelHost) -> GlassCard:
     host.diy_transition_label = QLabel(host._tr("diy.transition"))
     host.diy_transition_label.setObjectName("sliderLabel")
     options.addWidget(host.diy_transition_label)
-    host.diy_smooth_button = host._button(host._tr("diy.transition_smooth"), "ghost")
-    host.diy_smooth_button.setCheckable(True)
-    host.diy_cut_button = host._button(host._tr("diy.transition_cut"), "ghost")
-    host.diy_cut_button.setCheckable(True)
-    options.addWidget(host.diy_smooth_button)
-    options.addWidget(host.diy_cut_button)
+    host.diy_transition_segment = SegmentedControl([
+        ("smooth", host._tr("diy.transition_smooth")),
+        ("cut", host._tr("diy.transition_cut")),
+    ])
+    options.addWidget(host.diy_transition_segment)
     options.addStretch(1)
     host.diy_card.content_layout.addLayout(options)
 
@@ -82,7 +91,8 @@ def build_diy_section(host: PanelHost) -> GlassCard:
     run_row = QHBoxLayout()
     host.diy_run_button = host._button(host._tr("diy.run"), "accent_soft")
     host.diy_run_button.setCheckable(True)
-    host.diy_run_button.setMinimumWidth(host._sz(150))
+    host.diy_run_button.setMinimumWidth(host._sz(168))
+    host.diy_run_button.setMinimumHeight(host._sz(46))
     run_row.addWidget(host.diy_run_button)
     run_row.addStretch(1)
     host.diy_card.content_layout.addLayout(run_row)

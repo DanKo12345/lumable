@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Property, QEasingCurve, QRectF, Qt, Signal
+from PySide6.QtCore import Property, QAbstractAnimation, QEasingCurve, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainter
 from PySide6.QtWidgets import QLabel, QStyle, QStyleOption
 
@@ -19,7 +19,7 @@ class ValueChip(QLabel):
         self._next_text = str(text)
         self._roll = 1.0
         self._roll_direction = 1
-        self._roll_anim = make_property_animation(self, b"rollValue", 140, QEasingCurve.OutCubic)
+        self._roll_anim = make_property_animation(self, b"rollValue", 170, QEasingCurve.OutQuint)
         super().setText(str(text))
         self.setObjectName("valueChip")
         self.setAttribute(Qt.WA_StyledBackground)
@@ -48,14 +48,21 @@ class ValueChip(QLabel):
             return
         old_value = self._numeric_value(self._next_text)
         new_value = self._numeric_value(text)
-        self._current_text = self._next_text
+        running = self._roll_anim.state() == QAbstractAnimation.Running
+        # If a roll is still playing (fast slider drag), don't snap back to 0 —
+        # that's what makes rapid changes look jerky. Instead just retarget the
+        # incoming text and keep the same slide direction, so the readout glides
+        # continuously toward the newest value in a single smooth motion.
+        if not running:
+            self._current_text = self._next_text
+            if old_value is not None and new_value is not None:
+                self._roll_direction = 1 if new_value >= old_value else -1
+            else:
+                self._roll_direction = 1
         self._next_text = text
-        if old_value is not None and new_value is not None:
-            self._roll_direction = 1 if new_value >= old_value else -1
-        else:
-            self._roll_direction = 1
         super().setText(text)
-        restart_animation(self._roll_anim, 0.0, 1.0)
+        if not running:
+            restart_animation(self._roll_anim, 0.0, 1.0)
 
     @staticmethod
     def _numeric_value(text: str) -> int | None:

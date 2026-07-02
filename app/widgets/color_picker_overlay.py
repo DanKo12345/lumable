@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
 from app.widgets.color_swatch import ColorSwatch
 from app.widgets.liquid_button import LiquidButton
 from app.widgets.liquid_slider import LiquidSlider
+from app.widgets.themed_line_edit import ThemedLineEdit
 
 PANEL_WIDTH = 500
 PANEL_HEIGHT_WITH_HISTORY = 560
@@ -292,7 +293,7 @@ class ColorPickerOverlay(QWidget):
         panel_layout.addLayout(picker_row)
 
         hex_row = self._control_row(labels["hex"])
-        self.hex_input = QLineEdit(panel)
+        self.hex_input = ThemedLineEdit(panel)
         self.hex_input.setObjectName("colorPickerHexInput")
         self.hex_input.setMaxLength(7)
         self.hex_input.setText(self._hex_text(self._color))

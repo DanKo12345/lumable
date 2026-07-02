@@ -2,6 +2,23 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.2.6] - 2026-07-02
+
+React to the room with your microphone, bring DIY effects to life with per-step motion, share them with a code, and enjoy more built-in effects — plus a rounder, more polished editor.
+
+### Added
+- Microphone as a music source (Pro): the strip can now react to sound in the room, not just the PC's own audio. Pick "System" or "Microphone" and choose the device. Captured via PortAudio so it opens real input devices reliably.
+- Noise gate (Pro): a "Noise gate" slider (microphone only) so faint room noise/hiss doesn't make the strip react — it only lights up on real sound.
+- DIY per-step motion (Pro): each colour step can breathe, pulse, twinkle or strobe instead of sitting static — set it per row.
+- Share & import DIY effects (Pro): copy an effect to a short shareable code and paste one in to import — send your presets to anyone.
+- More built-in effects (Free): Ocean, Sunset, Twinkle, Strobe and Police, alongside the existing set.
+
+### Changed
+- Live DIY preview: the preview strip now animates the actual effect with a glowing playhead, so you see the transitions, speed and per-step motion before you even hit Run.
+- The DIY transition (Smooth / Cut) is now a single segmented toggle with a sliding highlight, and the Run button is more prominent with a ▶ glyph.
+- Right-click menus on text fields (licence key, colour hex, rename, app triggers) are now dark-themed and localised instead of the native light menu, with paste still available.
+- The value readouts (percent chips) settle more smoothly when you drag a slider quickly.
+
 ## [0.2.5] - 2026-07-01
 
 Build your own colour animations, control the strip from anywhere with global hotkeys, and dial in a warm↔cool white — plus the app's own colour/number dialogs everywhere.

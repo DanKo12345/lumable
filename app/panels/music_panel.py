@@ -8,6 +8,7 @@ from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.ambient_preview import AmbientPreview
 from app.widgets.clickable_label import ClickableLabel
 from app.widgets.color_swatch import ColorSwatch
+from app.widgets.segmented_control import SegmentedControl
 
 _BANDS = (("bass", "music.band_bass"), ("mid", "music.band_mid"), ("treble", "music.band_treble"))
 
@@ -37,11 +38,19 @@ def build_music_section(host: PanelHost) -> GlassCard:
     host.music_toggle_button.setFixedSize(host._sz(104), host._sz(42))
     row.addWidget(host.music_toggle_button)
 
-    # Which audio output to listen to (its loopback). Populated by the controller;
-    # the first item is always the system default.
+    # Listen to the PC's own audio (speaker loopback) or a real microphone (sound
+    # in the room). Toggling this repopulates the device list below.
+    host.music_source_segment = SegmentedControl([
+        ("system", host._tr("music.source_system")),
+        ("mic", host._tr("music.source_mic")),
+    ])
+    row.addWidget(host.music_source_segment)
+
+    # Which device to capture. Populated by the controller based on the source;
+    # the first item is always that source's system default.
     host.music_source_combo = StaticPopupComboBox(lambda: host._theme_tokens, lambda: host._is_dark)
     host.music_source_combo.setMinimumHeight(host._control_height)
-    host.music_source_combo.setMinimumWidth(host._sz(190))
+    host.music_source_combo.setMinimumWidth(host._sz(180))
     host.music_source_combo.setToolTip(host._tr("music.source_hint"))
     row.addWidget(host.music_source_combo)
     row.addStretch(1)
@@ -90,6 +99,24 @@ def build_music_section(host: PanelHost) -> GlassCard:
             "music.beat",
         )
     )
+
+    # Noise gate — only meaningful for the microphone (ignores room noise), so it
+    # lives in its own container the controller collapses/reveals with the source.
+    host.music_gate_slider = host._slider("green")
+    host.music_gate_slider.setRange(0, 100)
+    host.music_gate_value = host._pill("16%")
+    host.music_gate_row = QWidget()
+    gate_layout = QVBoxLayout(host.music_gate_row)
+    gate_layout.setContentsMargins(0, 0, 0, 0)
+    gate_layout.addLayout(
+        host._slider_row(
+            host._tr("music.gate"),
+            host.music_gate_slider,
+            host.music_gate_value,
+            "music.gate",
+        )
+    )
+    controls.addWidget(host.music_gate_row)
 
     host.music_saturation_slider = host._slider("purple")
     host.music_saturation_slider.setRange(0, 100)
