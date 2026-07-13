@@ -207,6 +207,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "speed": 50,
     },
     "diy_saved": [],
+    "timers": {
+        "sleep_minutes": 30,
+        "sunrise_minutes": 20,
+        "sunrise_time": "07:00",
+        "sunrise_color": {"r": 255, "g": 180, "b": 120},
+        "sunrise_armed": False,
+    },
+    "onboarding_seen": False,
     "quick_mode": "",
     "custom_quick_modes": [],
     "updates_last_auto_check_at": 0,
@@ -549,6 +557,19 @@ def validate_diy_saved(data: Any) -> list[dict[str, Any]]:
     return out
 
 
+def validate_timers(data: Any) -> dict[str, Any]:
+    defaults = DEFAULT_SETTINGS["timers"]
+    if not isinstance(data, dict):
+        data = {}
+    return {
+        "sleep_minutes": _coerce_int(data.get("sleep_minutes"), int(defaults["sleep_minutes"]), 1, 120),
+        "sunrise_minutes": _coerce_int(data.get("sunrise_minutes"), int(defaults["sunrise_minutes"]), 1, 120),
+        "sunrise_time": _coerce_time_text(data.get("sunrise_time"), str(defaults["sunrise_time"])),
+        "sunrise_color": _coerce_rgb(data.get("sunrise_color"), defaults["sunrise_color"]),
+        "sunrise_armed": _coerce_bool(data.get("sunrise_armed"), False),
+    }
+
+
 def _coerce_days(value: Any, default: list[int]) -> list[int]:
     if not isinstance(value, list):
         return list(default)
@@ -619,6 +640,7 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "capture_compatibility": capture_compatibility,
         "ui_fps": ui_fps,
         "fade": _coerce_bool(data.get("fade"), bool(DEFAULT_SETTINGS["fade"])),
+        "onboarding_seen": _coerce_bool(data.get("onboarding_seen"), bool(DEFAULT_SETTINGS["onboarding_seen"])),
         "color_temperature": _coerce_int(data.get("color_temperature"), 4500, 2000, 6500),
         "language": language,
         "ambient": validate_ambient(data.get("ambient", DEFAULT_SETTINGS["ambient"])),
@@ -628,6 +650,7 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "hotkeys": validate_hotkeys(data.get("hotkeys", DEFAULT_SETTINGS["hotkeys"])),
         "diy": validate_diy(data.get("diy", DEFAULT_SETTINGS["diy"])),
         "diy_saved": validate_diy_saved(data.get("diy_saved", [])),
+        "timers": validate_timers(data.get("timers", DEFAULT_SETTINGS["timers"])),
         "quick_mode": quick_mode,
         "custom_quick_modes": custom_quick_modes,
         "updates_last_auto_check_at": _coerce_int(

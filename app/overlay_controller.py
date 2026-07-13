@@ -51,11 +51,13 @@ class OverlayController:
             "privacy_text": host._tr("about.privacy_text"),
             "components_title": host._tr("about.components_title"),
             "components_text": host._tr("about.components_text"),
+            "guide": host._tr("about.show_guide"),
             "ok": host._tr("dialog.ok"),
         }
         overlay = AboutOverlay(labels, host)
         self._about_overlay = overlay
         overlay.closed.connect(lambda: setattr(self, "_about_overlay", None))
+        overlay.guideRequested.connect(host.show_onboarding)
         overlay.open()
 
     def show_license(self) -> None:

@@ -59,6 +59,7 @@ class _AboutPanel(QFrame):
 
 class AboutOverlay(QWidget):
     closed = Signal()
+    guideRequested = Signal()
 
     def __init__(self, labels: dict[str, str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -131,12 +132,20 @@ class AboutOverlay(QWidget):
 
         ok_row = QHBoxLayout()
         ok_row.setContentsMargins(0, 4, 0, 0)
+        guide_button = LiquidButton(labels.get("guide", ""), "ghost", self._panel)
+        guide_button.setFixedSize(184, 38)
+        guide_button.clicked.connect(self._request_guide)
+        ok_row.addWidget(guide_button, 0, Qt.AlignLeft | Qt.AlignVCenter)
         ok_row.addStretch(1)
         ok_button = LiquidButton(labels["ok"], "accent_soft", self._panel)
         ok_button.setFixedSize(100, 38)
         ok_button.clicked.connect(self.close_overlay)
         ok_row.addWidget(ok_button, 0, Qt.AlignRight | Qt.AlignVCenter)
         panel_layout.addLayout(ok_row)
+
+    def _request_guide(self) -> None:
+        self.guideRequested.emit()
+        self.close_overlay()
 
     def _section(self, parent: QWidget, title_text: str, body_text: str, *, min_height: int | None = None) -> QFrame:
         section = QFrame(parent)

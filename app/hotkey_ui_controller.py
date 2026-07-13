@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QGraphicsOpacityEffect
 
-from app.feature_gate import can_use
 from app.hotkeys import ACTIONS, DEFAULT_HOTKEYS, parse_hotkey
 from app.storage import save_settings
 
@@ -76,11 +75,7 @@ class HotkeyUiController:
         host._apply_hotkeys()
 
     def _toggle(self) -> None:
-        host = self._host
-        if host.hotkeys_toggle_button.isChecked() and not can_use("global_hotkeys"):
-            host.hotkeys_toggle_button.setChecked(False)
-            host._show_license_overlay()
-            return
+        # Global hotkeys are free — just toggle on/off.
         self._sync_toggle_text()
         self._persist()
         self._apply_enabled_state()
@@ -94,16 +89,12 @@ class HotkeyUiController:
         host.hotkeys_toggle_button.set_role("accent_soft" if on else "ghost")
 
     def refresh_lock(self) -> None:
-        host = self._host
-        unlocked = can_use("global_hotkeys")
-        lock = getattr(host, "hotkeys_lock_label", None)
-        if lock is not None:
-            lock.setVisible(not unlocked)
+        # Kept for the controller interface; hotkeys are free, nothing to lock.
         self._apply_enabled_state()
 
     def _apply_enabled_state(self) -> None:
         host = self._host
-        active = can_use("global_hotkeys") and host.hotkeys_toggle_button.isChecked()
+        active = host.hotkeys_toggle_button.isChecked()
         controls = getattr(host, "hotkeys_controls", None)
         if controls is None:
             return

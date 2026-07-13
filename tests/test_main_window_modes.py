@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import warnings
+
+import pytest
 from PySide6.QtCore import Qt, QTime
 from PySide6.QtWidgets import QApplication, QMenu
 
@@ -596,10 +599,19 @@ def test_shortcuts_do_not_fire_while_text_input_has_focus() -> None:
     calls: list[str] = []
     try:
         window.show()
+        window.activateWindow()
+        # Force focus to land even when the suite runs behind another window.
+        # setActiveWindow is deprecated in Qt6 but still the only reliable way to
+        # do this headless; the warning is irrelevant to what we're testing.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            QApplication.setActiveWindow(window)
         select_section(window, "profiles")  # profile name input lives on the Profiles page
         app.processEvents()
         window.profile_name.setFocus()
         app.processEvents()
+        if QApplication.focusWidget() is not window.profile_name:
+            pytest.skip("window could not take keyboard focus in this environment")
         window._activate_quick_mode = lambda mode_key: calls.append(mode_key)
 
         window._handle_quick_mode_shortcut("gaming")

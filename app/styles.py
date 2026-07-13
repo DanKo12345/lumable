@@ -248,6 +248,21 @@ def _card_styles(T: dict) -> str:
             line-height: 1.25em;
             qproperty-alignment: 'AlignLeft | AlignTop';
         }}
+        QFrame#timerBlock {{
+            background: {T["field"]};
+            border: 1px solid {T["field_border"]};
+            border-radius: 14px;
+        }}
+        #timerConnect {{
+            color: {T["text_soft"]};
+            font-size: 12px;
+            font-weight: 500;
+        }}
+        #timerStatus {{
+            color: {T["text_soft"]};
+            font-size: 11px;
+            font-weight: 500;
+        }}
     """
 
 

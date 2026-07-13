@@ -25,7 +25,6 @@ PRO_FEATURES = frozenset(
         "scenes_full",
         "tray_quick_controls",
         "unlimited_profiles",
-        "global_hotkeys",
         "diy_effects",
     }
 )

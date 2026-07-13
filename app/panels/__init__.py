@@ -10,6 +10,7 @@ from .hotkeys_panel import build_hotkeys_section
 from .music_panel import build_music_section
 from .schedule_panel import build_schedule_section
 from .software_effects_panel import build_software_effects_section
+from .timers_panel import build_timers_section
 
 __all__ = [
     "build_ambient_section",
@@ -24,4 +25,5 @@ __all__ = [
     "build_music_section",
     "build_schedule_section",
     "build_software_effects_section",
+    "build_timers_section",
 ]

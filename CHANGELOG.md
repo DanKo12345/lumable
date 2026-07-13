@@ -2,6 +2,22 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.2.7] - 2026-07-13
+
+Wake up and wind down with light: a daily sunrise and a sleep timer, a friendly first-run tour, and global hotkeys are now free for everyone.
+
+### Added
+- Sleep & sunrise timers (Free): a **sleep** timer gently fades the current colour to off over N minutes and powers the strip down; a **sunrise** wake light ramps a colour of your choice up to full every day at a set time (starting a few minutes before). Both stream over the colour path, so they work on any controller.
+- First-run onboarding: a short welcome carousel introduces the app the first time you open it, with painted icons and a scan shortcut to get connected right away.
+
+### Changed
+- Global hotkeys are now **Free** (previously Pro): power, brightness and scene shortcuts are available to everyone.
+- Card header icons: the Settings and Hotkeys cards now carry matching line icons for a cleaner, more consistent look.
+
+### Fixed
+- The sunrise light is now a true daily alarm with a per-day guard: if it's missed (app closed or disconnected during the window) it no longer gets stuck — it simply runs again the next day.
+- Onboarding starts on a window-owned timer and can no longer open twice.
+
 ## [0.2.6] - 2026-07-02
 
 React to the room with your microphone, bring DIY effects to life with per-step motion, share them with a code, and enjoy more built-in effects — plus a rounder, more polished editor.

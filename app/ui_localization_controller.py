@@ -159,6 +159,21 @@ class UiLocalizationController:
         host.schedule_on_time.set_picker_labels(**time_picker_labels)
         host.schedule_off_time.set_picker_labels(**time_picker_labels)
         host._schedule_ctrl.sync_controls()
+        if getattr(host, "timers_card", None) is not None:
+            host.timers_card.title_label.setText(host._tr("timers.title"))
+            if host.timers_card.subtitle_label is not None:
+                host.timers_card.subtitle_label.setText(host._tr("timers.subtitle"))
+            host.timer_sleep_label.setText(host._tr("timers.sleep"))
+            host.timer_sleep_after.setText(host._tr("timers.sleep_after"))
+            host.timer_sunrise_label.setText(host._tr("timers.sunrise"))
+            host.timer_sunrise_at.setText(host._tr("timers.sunrise_at"))
+            host.timer_sunrise_time.set_picker_title(host._tr("timers.sunrise"))
+            host.timer_sunrise_time.set_picker_labels(
+                hours=host._tr("time_picker.hours"),
+                minutes=host._tr("time_picker.minutes"),
+                ok=host._tr("dialog.ok"),
+            )
+            host._timer_ctrl.relocalize()
         if getattr(host, "app_triggers_card", None) is not None:
             host.app_triggers_card.title_label.setText(host._tr("app_triggers.title"))
             if host.app_triggers_card.subtitle_label is not None:
@@ -170,7 +185,6 @@ class UiLocalizationController:
             host.hotkeys_card.title_label.setText(host._tr("hotkeys.title"))
             if host.hotkeys_card.subtitle_label is not None:
                 host.hotkeys_card.subtitle_label.setText(host._tr("hotkeys.subtitle"))
-            host.hotkeys_lock_label.setText(host._tr("hotkeys.pro_locked"))
             host._hotkey_ui.relocalize()
 
     def _apply_performance_texts(self) -> None:

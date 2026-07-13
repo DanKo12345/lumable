@@ -56,6 +56,7 @@ from app.software_effect_ui_controller import SoftwareEffectUiController
 from app.storage import DEFAULT_START_COLOR, load_profiles, load_settings, save_settings
 from app.theme import theme_manager
 from app.theme_controller import ThemeController
+from app.timer_controller import TimerController
 from app.tray_controller import TrayController
 from app.ui_feedback import UiFeedback
 from app.ui_localization_controller import UiLocalizationController
@@ -73,6 +74,7 @@ from app.widgets import (
     SmoothScrollFilter,
     ValueChip,
 )
+from app.widgets.onboarding_overlay import OnboardingOverlay
 from app.widgets.styled_tooltip import TooltipManager
 from app.window_state_controller import WindowStateController
 
@@ -97,10 +99,12 @@ class MainWindow(QMainWindow):
         self._tray_controller.setup()
         self._apply_windows_backdrop()
         self._schedule_ctrl.start()
+        self._timer_ctrl.start()
         self._tooltip_manager = TooltipManager(self)
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self._tooltip_manager)
+        self._start_deferred(300, self.maybe_show_onboarding)
         self._start_deferred(500, self._ble_events.start_autoconnect)
         self._start_deferred(900, self._license_refresher.refresh)
         self._start_deferred(1300, self._app_triggers.start)
@@ -166,6 +170,7 @@ class MainWindow(QMainWindow):
         self._tray_controller = TrayController(self)
         self._ui_localization = UiLocalizationController(self)
         self._schedule_ctrl = ScheduleController(self)
+        self._timer_ctrl = TimerController(self)
         self._quick_mode_ctrl = QuickModeController(self)
         self._ambient_ui = AmbientUiController(self)
         self._music_ui = MusicUiController(self)
@@ -257,6 +262,46 @@ class MainWindow(QMainWindow):
     def _show_license_overlay(self) -> None:
         self._overlay_controller.show_license()
 
+    # ── first-run onboarding ──────────────────────────────────────────
+    def maybe_show_onboarding(self) -> None:
+        """Show the welcome carousel once, on the very first launch."""
+        if isinstance(self._settings, dict) and self._settings.get("onboarding_seen"):
+            return
+        self.show_onboarding()
+
+    def show_onboarding(self) -> None:
+        if getattr(self, "_onboarding_overlay", None) is not None:
+            self._onboarding_overlay.raise_()
+            return
+        overlay = OnboardingOverlay(self._onboarding_labels(), self)
+        self._onboarding_overlay = overlay
+        overlay.scanRequested.connect(self._ble_events.start_scan)
+        overlay.finished.connect(self._on_onboarding_finished)
+        overlay.open()
+
+    def _on_onboarding_finished(self) -> None:
+        self._onboarding_overlay = None
+        if isinstance(self._settings, dict) and not self._settings.get("onboarding_seen"):
+            self._settings["onboarding_seen"] = True
+            save_settings(self._settings)
+
+    def _onboarding_labels(self) -> dict:
+        tr = self._tr
+        return {
+            "skip": tr("onboarding.skip"),
+            "back": tr("onboarding.back"),
+            "next": tr("onboarding.next"),
+            "finish": tr("onboarding.finish"),
+            "scan": tr("onboarding.scan"),
+            "steps": [
+                {"icon": "app", "title": tr("onboarding.welcome_title"), "body": tr("onboarding.welcome_body")},
+                {"icon": "device", "title": tr("onboarding.connect_title"), "body": tr("onboarding.connect_body"), "scan": True},
+                {"icon": "effects", "title": tr("onboarding.sections_title"), "body": tr("onboarding.sections_body")},
+                {"icon": "sparkle", "title": tr("onboarding.pro_title"), "body": tr("onboarding.pro_body")},
+                {"icon": "check", "title": tr("onboarding.done_title"), "body": tr("onboarding.done_body")},
+            ],
+        }
+
     def _on_license_refreshed(self, is_pro_now: bool, changed: bool) -> None:
         """React to a background license revalidation finishing."""
         if not changed:
@@ -271,7 +316,7 @@ class MainWindow(QMainWindow):
         config = config if isinstance(config, dict) else {}
         bindings = config.get("bindings", {})
         bindings = bindings if isinstance(bindings, dict) else {}
-        enabled = bool(config.get("enabled", False)) and can_use("global_hotkeys")
+        enabled = bool(config.get("enabled", False))
         self._hotkey_controller.apply(bindings, enabled=enabled)
 
     def _refresh_effect_names(self):
@@ -482,6 +527,7 @@ class MainWindow(QMainWindow):
 
     def _wire_schedule_events(self):
         self._schedule_ctrl.wire()
+        self._timer_ctrl.wire()
 
     def _toggle_schedule(self, _checked: bool = False) -> None:
         self._schedule_ctrl.toggle_schedule(_checked)

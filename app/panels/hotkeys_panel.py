@@ -6,28 +6,14 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from app.hotkeys import ACTIONS
 from app.panels.types import PanelHost
 from app.widgets import GlassCard
-from app.widgets.clickable_label import ClickableLabel
 from app.widgets.hotkey_capture_edit import HotkeyCaptureEdit
 
 
 def build_hotkeys_section(host: PanelHost) -> GlassCard:
     host.hotkeys_card = host._card(
-        host._tr("hotkeys.title"), host._tr("hotkeys.subtitle"), icon="settings"
+        host._tr("hotkeys.title"), host._tr("hotkeys.subtitle"), icon="keyboard"
     )
     host.hotkeys_card.setMinimumHeight(host._sz(250))
-
-    # Pro badge — clickable, opens the Pro window (the feature is Pro-gated).
-    host.hotkeys_lock_label = ClickableLabel(host._tr("hotkeys.pro_locked"))
-    host.hotkeys_lock_label.setObjectName("proBadge")
-    host.hotkeys_lock_label.setStyleSheet(
-        "QLabel#proBadge { background: rgba(143, 191, 255, 0.16); color: #9fc0ff;"
-        " padding: 5px 12px; border-radius: 11px; }"
-        "QLabel#proBadge:hover { background: rgba(143, 191, 255, 0.26); }"
-    )
-    host.hotkeys_lock_label.setCursor(Qt.PointingHandCursor)
-    host.hotkeys_lock_label.clicked.connect(host._show_license_overlay)
-    host.hotkeys_lock_label.hide()
-    host.hotkeys_card.content_layout.addWidget(host.hotkeys_lock_label, 0, Qt.AlignLeft)
 
     top = QHBoxLayout()
     top.setSpacing(10)
