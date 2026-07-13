@@ -22,7 +22,8 @@ $iscc = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
 if ($null -eq $iscc) {
     $candidates = @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-        "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+        "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+        "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe"
     )
     foreach ($candidate in $candidates) {
         if (Test-Path -LiteralPath $candidate) {
@@ -39,7 +40,13 @@ if ($null -eq $iscc) {
 $installerDir = Join-Path $root "dist\installer"
 New-Item -ItemType Directory -Force -Path $installerDir | Out-Null
 
-& $iscc.Source (Join-Path $root "installer\LumaBLE.iss")
+$isccPath = if ($iscc -is [System.Management.Automation.CommandInfo]) {
+    $iscc.Source
+} else {
+    $iscc.FullName
+}
+
+& $isccPath (Join-Path $root "installer\LumaBLE.iss")
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
