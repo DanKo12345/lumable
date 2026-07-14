@@ -9,7 +9,19 @@ from app.app_info import APP_AUTHOR, APP_CHECKOUT_URL, APP_VERSION
 from app.feature_gate import invalidate_pro_cache, is_pro
 from app.license import activate_license_key, deactivate_license
 from app.storage import save_settings
+from app.support import supported_controllers
 from app.widgets import AboutOverlay, LicenseOverlay, UpdateOverlay
+
+
+def _supported_catalog_text(intro: str) -> str:
+    """A readable bullet list of the controller families LumaBLE supports, built
+    from the live driver list so it never drifts from what actually works."""
+    lines = [intro] if intro else []
+    for entry in supported_controllers():
+        aliases = entry.get("aliases", "")
+        suffix = f"  ({aliases})" if aliases else ""
+        lines.append(f"• {entry['name']}{suffix}")
+    return "\n".join(lines)
 
 
 class OverlayController:
@@ -47,6 +59,8 @@ class OverlayController:
             "meta": host._tr("about.meta_text", version=APP_VERSION, stage=host._tr("app.version_stage.beta"), plan=plan),
             "author_title": host._tr("about.author_title"),
             "author_text": f"{APP_AUTHOR}\ngithub.com/DanKo12345",
+            "supported_title": host._tr("about.supported_title"),
+            "supported_text": _supported_catalog_text(host._tr("about.supported_intro")),
             "privacy_title": host._tr("about.privacy_title"),
             "privacy_text": host._tr("about.privacy_text"),
             "components_title": host._tr("about.components_title"),

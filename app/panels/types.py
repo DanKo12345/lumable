@@ -33,6 +33,8 @@ class PanelHost(Protocol):
     connect_button: LiquidButton
     disconnect_button: LiquidButton
     logs_toggle_button: LiquidButton
+    supported_controllers_button: LiquidButton
+    rename_device_button: LiquidButton
 
     color_card: GlassCard
     preview: AccentPreview
@@ -72,6 +74,7 @@ class PanelHost(Protocol):
     diagnostics_output: object
     diagnostics_support_label: QLabel
     copy_diagnostics_button: LiquidButton
+    report_device_button: LiquidButton
     show_logs_button: LiquidButton
     export_diagnostics_button: LiquidButton
 

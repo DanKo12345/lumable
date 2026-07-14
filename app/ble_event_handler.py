@@ -4,8 +4,10 @@ from typing import Any
 
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
+from app.device_names import device_display_name, sanitize_device_name
 from app.storage import save_settings
 from app.types import BleEventHost
+from app.widgets import ProfileRenameOverlay
 
 
 def _is_plausible_ble_address(address: str) -> bool:
@@ -23,6 +25,65 @@ class BleEventHandler:
     def __init__(self, host: BleEventHost) -> None:
         self._host = host
         self._mirror_scan_pending = False
+        self._rename_overlay: ProfileRenameOverlay | None = None
+
+    def _device_names(self) -> dict[str, str]:
+        names = self._host._settings.get("device_names") if isinstance(self._host._settings, dict) else {}
+        return names if isinstance(names, dict) else {}
+
+    def _display_name(self, address: str, advertised: str = "") -> str:
+        return device_display_name(address, advertised, self._device_names())
+
+    def rename_device(self, address: str) -> None:
+        host = self._host
+        address = str(address).strip()
+        if not address or self._rename_overlay is not None:
+            return
+        overlay = ProfileRenameOverlay(
+            {
+                "title": host._tr("device.rename_title"),
+                "prompt": host._tr("device.rename_prompt"),
+                "cancel": host._tr("dialog.cancel"),
+                "ok": host._tr("dialog.ok"),
+            },
+            self._device_names().get(address, ""),
+            host,
+        )
+        self._rename_overlay = overlay
+        overlay.nameSelected.connect(lambda text, a=address: self._apply_device_name(a, text))
+        overlay.closed.connect(lambda: setattr(self, "_rename_overlay", None))
+        overlay.open()
+
+    def _apply_device_name(self, address: str, text: str) -> None:
+        host = self._host
+        if not isinstance(host._settings, dict):
+            return
+        names = dict(self._device_names())
+        clean = sanitize_device_name(text)
+        if clean:
+            names[address] = clean
+        else:
+            names.pop(address, None)
+        host._settings["device_names"] = names
+        save_settings(host._settings)
+        # Reflect the new name wherever the device is shown.
+        self._relabel_device_combo()
+        self._sync_last_device_hint()
+        self.refresh_mirror_list(host._ble.mirror_addresses())
+
+    def _relabel_device_combo(self) -> None:
+        host = self._host
+        combo = getattr(host, "device_combo", None)
+        if combo is None:
+            return
+        for index in range(combo.count()):
+            address = combo.itemData(index)
+            if not address:
+                continue
+            for device in host._devices:
+                if str(device.get("address", "")).strip() == str(address).strip():
+                    combo.setItemText(index, self._device_label(device))
+                    break
 
     def start_scan(self) -> None:
         host = self._host
@@ -145,8 +206,15 @@ class BleEventHandler:
 
     def on_connected_changed(self, connected: bool, address: str) -> None:
         host = self._host
+        was_connected = host._is_connected
         host._is_connected = connected
         host._connect_in_progress = False
+        # The strip just went away: stop any running stream so it doesn't keep
+        # writing to a dead connection (and so nothing auto-resumes on reconnect).
+        if was_connected and not connected:
+            stop_all = getattr(host, "stop_all_streams", None)
+            if callable(stop_all):
+                stop_all()
         add_mirror = getattr(host, "add_mirror_button", None)
         if add_mirror is not None:
             add_mirror.setEnabled(connected)
@@ -188,14 +256,18 @@ class BleEventHandler:
         self._sync_device_onboarding_hint()
 
     def _device_name_for_address(self, address: str) -> str:
+        custom = self._device_names().get(str(address).strip(), "")
+        if custom:
+            return custom
         for device in self._host._devices:
             if str(device.get("address", "")).strip() == address:
                 return str(device.get("name", "")).strip()
         return str(self._host._settings.get("last_device_name", "")).strip()
 
     def _device_label(self, device: dict[str, Any]) -> str:
-        name = str(device.get("name", "")).strip()
         address = str(device.get("address", "")).strip()
+        # Prefer the user's custom name, else the advertised name.
+        name = self._display_name(address, str(device.get("name", "")).strip())
         rssi = str(device.get("rssi", "")).strip()
         parts: list[str] = []
         # Skip the name when it's just the address again (avoids "MAC | MAC").
@@ -345,20 +417,24 @@ class BleEventHandler:
             if widget is not None:
                 widget.deleteLater()
         for address in addresses:
-            name = address
+            advertised = ""
             for device in host._devices:
                 if str(device.get("address", "")).strip() == address:
-                    name = str(device.get("name", "")).strip() or address
+                    advertised = str(device.get("name", "")).strip()
                     break
+            name = self._display_name(address, advertised)
             row = QWidget()
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(8)
             label = QLabel(host._tr("device.mirror_item", name=name, address=address))
             label.setObjectName("lastDeviceHint")
+            rename = host._button(host._tr("device.rename"), "ghost")
+            rename.clicked.connect(lambda _checked=False, a=address: self.rename_device(a))
             remove = host._button(host._tr("device.mirror_remove"), "ghost")
             remove.clicked.connect(lambda _checked=False, a=address: host._ble.remove_mirror_device(a))
             row_layout.addWidget(label, 1)
+            row_layout.addWidget(rename)
             row_layout.addWidget(remove)
             layout.addWidget(row)
         container.setVisible(bool(addresses))

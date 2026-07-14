@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -138,7 +139,10 @@ def _on_status_clicked(host) -> None:
 
 def _build_sections(host) -> None:
     host._section_stack = QStackedWidget()
-    host._section_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    # A stacked widget's size hint is the largest of *all* its pages. Keeping
+    # the default horizontal policy made a hidden wide page force the scroll
+    # canvas wider than its viewport, clipping the visible card on laptops.
+    host._section_stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
     host._nav_buttons = {}
     host._nav_pages = {}
 
@@ -272,18 +276,30 @@ def _build_body_scroll(host) -> QScrollArea:
     host.body_scroll.setWidgetResizable(True)
     host.body_scroll.setFrameShape(QFrame.NoFrame)
     host.body_scroll.setObjectName("bodyScroll")
+    host.body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
     host.body_canvas = QWidget()
     host.body_canvas.setObjectName("bodyCanvas")
+    host.body_canvas.setMinimumWidth(0)
     host.body_scroll.setWidget(host.body_canvas)
 
     canvas_layout = QVBoxLayout(host.body_canvas)
-    canvas_layout.setContentsMargins(0, 0, 0, 0)
+    # Keep the cards clear of the actual styled scrollbar, rather than relying
+    # on a magic pixel value. This remains balanced across Windows DPI scales
+    # and screen sizes.
+    scrollbar_width = host.body_scroll.style().pixelMetric(
+        QStyle.PixelMetric.PM_ScrollBarExtent,
+        None,
+        host.body_scroll.verticalScrollBar(),
+    )
+    right_gutter = max(host._sz(16), scrollbar_width + host._sz(10))
+    canvas_layout.setContentsMargins(0, 0, right_gutter, 0)
     canvas_layout.setSpacing(0)
     # Cap the section to the same width as the content column so it lines up with
     # the hero light and never overflows the scroll horizontally. Stretches
     # vertically centre short sections; taller ones (More) fill and scroll.
     host._section_stack.setMaximumWidth(host._sz(1120))
+    host._section_stack.setMinimumWidth(0)
     canvas_layout.addStretch(1)
     canvas_layout.addWidget(host._section_stack)
     canvas_layout.addStretch(1)

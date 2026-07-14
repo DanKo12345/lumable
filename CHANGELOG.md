@@ -2,6 +2,25 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.2.8] - 2026-07-14
+
+A reliability and compatibility release: steadier connections, more controllers that "just work", clearer status when the strip drops, and friendly names for multi-strip setups.
+
+### Added
+- Protocol auto-detect (Free): when you connect to an unrecognised controller, LumaBLE inspects what it exposes and, if it looks like a known protocol, offers to try it ("looks like a BLEDOM — try it?"). It only reads the device, never sending anything until you agree, so nothing flashes while it probes.
+- Supported-controllers catalog: an in-app list of the controller families LumaBLE speaks (BLEDOM, BanlanX, Magic Home, Triones), reachable from the Device card and the About window.
+- Report device (Free): one click copies the diagnostics and opens a prefilled GitHub issue, so adding support for a new controller is easy.
+- Strip names (Free): name each controller (Desk, TV, Shelf) instead of reading bare MAC addresses — shown in the device list and the mirror list, with a Rename action on each.
+
+### Changed
+- Reconnect is now visible: when the strip goes out of range or is powered off, the status line shows a live countdown to the next attempt with a pulsing orange dot, the Connect button retries immediately, and a clear "strip off or out of range" message appears if it can't be reached.
+- One owner at a time: music, screen sync, software effects, DIY and the sleep/sunrise timers now reliably hand the strip off to each other through a single coordinator, so two modes can't fight over it.
+- The unsupported-device message now points at the Report and Supported-controllers actions directly.
+- The diagnostics action buttons wrap onto two rows so nothing overlaps on narrower windows.
+
+### Fixed
+- A dropped BLE connection now stops any running stream instead of writing to a dead link, and nothing silently auto-resumes on reconnect.
+
 ## [0.2.7] - 2026-07-13
 
 Wake up and wind down with light: a daily sunrise and a sleep timer, a friendly first-run tour, and global hotkeys are now free for everyone.

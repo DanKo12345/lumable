@@ -5,10 +5,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from app.app_info import APP_VERSION
 from app.diagnostics import build_diagnostics_report
+from app.support import build_unsupported_report_url
 
 
 class DiagnosticsController:
@@ -41,6 +44,27 @@ class DiagnosticsController:
         # most common path, and it should carry the same detail as the export.
         QApplication.clipboard().setText(self.text(include_crashes=True))
         host._log(host._tr("diagnostics.copied"))
+
+    def _device_identity(self) -> tuple[str, str]:
+        """Best-effort (device name, detected-protocol hint) for a report."""
+        host = self._host
+        snapshot = host._ble.diagnostics_snapshot()
+        device = snapshot.get("device", {}) if isinstance(snapshot, dict) else {}
+        driver = snapshot.get("driver", {}) if isinstance(snapshot, dict) else {}
+        name = str(device.get("name", "")).strip()
+        if not name and isinstance(host._settings, dict):
+            name = str(host._settings.get("last_device_name", "")).strip()
+        return name, str(driver.get("name", "")).strip()
+
+    def report_unsupported(self) -> None:
+        """One-click report: copy the diagnostics to the clipboard and open a
+        prefilled GitHub issue so adding support for a controller is easy."""
+        host = self._host
+        QApplication.clipboard().setText(self.text(include_crashes=True))
+        name, hint = self._device_identity()
+        url = build_unsupported_report_url(device_name=name, driver_hint=hint)
+        QDesktopServices.openUrl(QUrl(url))
+        host._log(host._tr("diagnostics.report_opened"))
 
     def export_report(self) -> None:
         host = self._host

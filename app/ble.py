@@ -12,7 +12,13 @@ from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from PySide6.QtCore import QObject, Signal
 
-from app.ble_drivers import EFFECTS, detect_connected_driver, detect_scan_driver
+from app.ble_drivers import (
+    EFFECTS,
+    detect_connected_driver,
+    detect_scan_driver,
+    get_driver_by_id,
+    probe_driver_candidates,
+)
 from app.ble_drivers.base import LedBleDriver, clamp
 from app.color_fade import color_distance, fade_frames
 from app.localization import localization_manager
@@ -99,6 +105,14 @@ class BleController(QObject):
     error_occurred = Signal(str)
     shutdown_finished = Signal()
     mirrors_changed = Signal(list)
+    # An unrecognised controller looks like it might be a known driver:
+    # (address, driver_id, driver_display_name). Emitted before the unsupported
+    # error so the UI can offer to try that driver.
+    protocol_candidate_found = Signal(str, str, str)
+    # Auto-reconnect progress for the UI: (address, attempt, total, delay_seconds)
+    # emitted before each backoff wait, and give-up after the last attempt.
+    reconnect_scheduled = Signal(str, int, int, float)
+    reconnect_gave_up = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -239,7 +253,7 @@ class BleController(QObject):
         self.status_changed.emit(localization_manager.status_ble_event("scan_start"))
         self._submit(self._scan())
 
-    def connect_to_address(self, address: str) -> None:
+    def connect_to_address(self, address: str, *, force_driver_id: str | None = None) -> None:
         if self._client is not None and self._client.is_connected and self._device is not None and self._device.address == address:
             self.status_changed.emit(localization_manager.status_ble_event("already_connected", address=address))
             self.connected_changed.emit(True, address)
@@ -247,7 +261,7 @@ class BleController(QObject):
         self._manual_disconnect_requested = False
         self._cancel_reconnect()
         self.status_changed.emit(localization_manager.status_ble_event("connecting", address=address))
-        self._submit(self._connect(address))
+        self._submit(self._connect(address, force_driver_id=force_driver_id))
 
     def disconnect(self) -> None:
         self._manual_disconnect_requested = True
@@ -715,10 +729,22 @@ class BleController(QObject):
             raise RuntimeError("Built-in effects are not supported by this controller yet.")
         await self._write(payload, localization_manager.status_ble_event("effect_speed_set", value=value))
 
-    async def _establish_connection(self, address: str, preferred_driver_id: str | None) -> DeviceConnection:
+    async def _establish_connection(
+        self,
+        address: str,
+        preferred_driver_id: str | None,
+        *,
+        force_driver_id: str | None = None,
+        offer_candidates: bool = False,
+    ) -> DeviceConnection:
         """Find, connect to and identify a controller, returning a ready
         DeviceConnection. Shared by the primary connect path and (later)
         additional mirror devices. Raises on any failure (the caller cleans up).
+
+        ``force_driver_id`` bypasses auto-detection and drives the device with a
+        specific driver (used when the user accepts a "try as X" suggestion).
+        When ``offer_candidates`` is set and nothing matches, the best safe guess
+        is emitted via ``protocol_candidate_found`` before the unsupported error.
         """
         device = await asyncio.wait_for(
             BleakScanner.find_device_by_address(address, timeout=FIND_DEVICE_TIMEOUT_SECONDS),
@@ -731,6 +757,11 @@ class BleController(QObject):
         await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
         services = client.services
         driver = detect_connected_driver(device.name or "", services, preferred_id=preferred_driver_id)
+        if driver is None and force_driver_id:
+            # The user chose to try a specific driver on this unrecognised device.
+            forced = get_driver_by_id(force_driver_id)
+            if forced is not None and forced.pick_write_characteristic(services) is not None:
+                driver = forced
         if driver is None:
             await client.disconnect()
             # Keep the full technical detail (services + characteristics) in the
@@ -738,6 +769,11 @@ class BleController(QObject):
             # actionable line instead of the raw GATT dump.
             diagnostic = self._protocol_detection_diagnostic(device, services, preferred_driver_id)
             self._record_ble_history("protocol_mismatch", details=diagnostic)
+            if offer_candidates and not force_driver_id:
+                candidates = probe_driver_candidates(device.name or "", services)
+                if candidates:
+                    best = candidates[0]
+                    self.protocol_candidate_found.emit(address, best.driver_id, best.display_name)
             raise ProtocolCompatibilityError(localization_manager.t("error.controller_unsupported"))
         driver.reset_runtime_state()
         if hasattr(driver, "configure_for_device"):
@@ -878,10 +914,12 @@ class BleController(QObject):
             seen.add(uuid)
         return ordered
 
-    async def _connect(self, address: str, *, from_reconnect: bool = False) -> None:
+    async def _connect(self, address: str, *, from_reconnect: bool = False, force_driver_id: str | None = None) -> None:
         await self._disconnect(cancel_reconnect=not from_reconnect)
         preferred_driver_id = self._scan_driver_hints.get(address)
-        connection = await self._establish_connection(address, preferred_driver_id)
+        connection = await self._establish_connection(
+            address, preferred_driver_id, force_driver_id=force_driver_id, offer_candidates=True
+        )
 
         self._client = connection.client
         self._device = connection.device
@@ -984,7 +1022,9 @@ class BleController(QObject):
         for attempt in range(1, RECONNECT_ATTEMPTS + 1):
             if self._shutdown_started or self._manual_disconnect_requested:
                 return
-            await asyncio.sleep(self._reconnect_delay(attempt))
+            delay = self._reconnect_delay(attempt)
+            self.reconnect_scheduled.emit(address, attempt, RECONNECT_ATTEMPTS, float(delay))
+            await asyncio.sleep(delay)
             if self._shutdown_started or self._manual_disconnect_requested:
                 return
             self.status_changed.emit(
@@ -1014,6 +1054,7 @@ class BleController(QObject):
             await self._restore_state_after_reconnect()
             return
         self.status_changed.emit(localization_manager.status_ble_event("reconnect_give_up", address=address))
+        self.reconnect_gave_up.emit(address)
 
     async def _restore_state_after_reconnect(self) -> None:
         """After re-pairing, put the strip back the way the user left it.

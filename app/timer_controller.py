@@ -113,11 +113,28 @@ class TimerController:
         return rgb if any(rgb) else (255, 255, 255)
 
     def _stop_other_streams(self) -> None:
+        self._host.stop_streams(exclude=self)
+
+    def _mark_sunrise_handled_today(self) -> None:
+        """Record today's window as done so a stopped ramp doesn't immediately
+        re-fire and fight whatever took over. Stays armed for tomorrow."""
         host = self._host
-        for name in ("_ambient_ui", "_music_ui", "_software_fx_ui", "_diy_ui"):
-            ui = getattr(host, name, None)
-            if ui is not None and hasattr(ui, "stop_if_running"):
-                ui.stop_if_running()
+        t = host.timer_sunrise_time.time()
+        self._sunrise_last_fire = f"{QDate.currentDate().toString('yyyy-MM-dd')}:{t.toString('HH:mm')}"
+
+    def stop_if_running(self) -> None:
+        """Yield the strip to another owner (another stream started, power was
+        toggled, or the controller disconnected). Cancels an active sleep
+        countdown and stops an in-progress sunrise ramp for today; the sunrise
+        stays armed for the next day."""
+        if self._sleep_active:
+            self._sleep_active = False
+            self._host.timer_sleep_button.setChecked(False)
+            self._refresh_labels()
+        if self._sunrise_active:
+            self._sunrise_active = False
+            self._mark_sunrise_handled_today()
+            self._refresh_labels()
 
     def _ensure_power_on(self) -> None:
         host = self._host

@@ -485,9 +485,9 @@ class DiyUiController:
 
     def _start_run(self) -> None:
         host = self._host
-        host._ambient_ui.stop_if_running()
-        host._music_ui.stop_if_running()
-        host._software_fx_ui.stop_if_running()
+        # Only one owner drives the strip at a time — stop the others (screen
+        # sync, music, software FX, sleep/sunrise timers).
+        host.stop_streams(exclude=self)
         if not host.power_button.isChecked():
             host.power_button.setChecked(True)
             host._toggle_power()

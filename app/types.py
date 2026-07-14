@@ -34,6 +34,8 @@ class BleEventHost(Protocol):
     connect_button: LiquidButton
     disconnect_button: LiquidButton
     logs_toggle_button: LiquidButton
+    supported_controllers_button: LiquidButton
+    rename_device_button: LiquidButton
 
     def _tr(self, key: str, **kwargs: object) -> str: ...
 

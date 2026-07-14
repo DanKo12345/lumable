@@ -100,6 +100,8 @@ class UiLocalizationController:
                 hint.setVisible(True)
         host._ble_events._sync_last_device_hint(autoconnecting=host._connect_in_progress)
         host.logs_toggle_button.setText(host._tr("device.show_logs"))
+        host.supported_controllers_button.setText(host._tr("device.supported"))
+        host.rename_device_button.setText(host._tr("device.rename"))
         host._sync_connect_buttons()
 
     def _apply_color_texts(self) -> None:
@@ -309,6 +311,8 @@ class UiLocalizationController:
         host.diagnostics_support_label.setText(host._tr("diagnostics.support_hint"))
         host.copy_diagnostics_button.setText(host._tr("diagnostics.copy"))
         host.copy_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
+        host.report_device_button.setText(host._tr("diagnostics.report"))
+        host.report_device_button.setToolTip(host._tr("diagnostics.report_hint"))
         host.show_logs_button.setText(host._tr("device.show_logs"))
         host.export_diagnostics_button.setText(host._tr("diagnostics.export"))
         host.export_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))

@@ -7,6 +7,7 @@ from typing import Any
 
 from platformdirs import user_data_dir
 
+from app.device_names import validate_device_names
 from app.hotkeys import ACTIONS as HOTKEY_ACTIONS
 from app.hotkeys import DEFAULT_HOTKEYS, parse_hotkey
 from app.license import validate_license_state
@@ -215,6 +216,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "sunrise_armed": False,
     },
     "onboarding_seen": False,
+    "device_names": {},
     "quick_mode": "",
     "custom_quick_modes": [],
     "updates_last_auto_check_at": 0,
@@ -651,6 +653,7 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "diy": validate_diy(data.get("diy", DEFAULT_SETTINGS["diy"])),
         "diy_saved": validate_diy_saved(data.get("diy_saved", [])),
         "timers": validate_timers(data.get("timers", DEFAULT_SETTINGS["timers"])),
+        "device_names": validate_device_names(data.get("device_names", DEFAULT_SETTINGS["device_names"])),
         "quick_mode": quick_mode,
         "custom_quick_modes": custom_quick_modes,
         "updates_last_auto_check_at": _coerce_int(

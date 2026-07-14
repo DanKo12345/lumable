@@ -22,35 +22,50 @@ def build_diagnostics_section(host: PanelHost) -> GlassCard:
     host.diagnostics_support_label.setWordWrap(True)
     host.diagnostics_support_label.hide()
 
-    button_row = QHBoxLayout()
-    button_row.setContentsMargins(0, 2, 0, 0)
-    button_row.setSpacing(10)
-    button_row.addStretch(1)
+    # Five actions don't fit on one line once the labels are localised, so they
+    # wrap onto two right-aligned rows instead of crowding/overlapping.
     host.copy_diagnostics_button = host._button(host._tr("diagnostics.copy"), "ghost")
     host.copy_diagnostics_button.set_icon_kind("copy")
     host.copy_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
     _prepare_action_button(host.copy_diagnostics_button)
-    button_row.addWidget(host.copy_diagnostics_button)
+    host.report_device_button = host._button(host._tr("diagnostics.report"), "ghost")
+    host.report_device_button.set_icon_kind("send")
+    host.report_device_button.setToolTip(host._tr("diagnostics.report_hint"))
+    _prepare_action_button(host.report_device_button)
     host.show_logs_button = host._button(host._tr("device.show_logs"), "ghost")
     host.show_logs_button.set_icon_kind("logs")
     _prepare_action_button(host.show_logs_button)
-    button_row.addWidget(host.show_logs_button)
     host.export_diagnostics_button = host._button(host._tr("diagnostics.export"), "ghost")
     host.export_diagnostics_button.set_icon_kind("download")
     host.export_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
     _prepare_action_button(host.export_diagnostics_button)
-    button_row.addWidget(host.export_diagnostics_button)
     host.check_update_button = host._button(host._tr("updates.check"), "ghost")
     _prepare_action_button(host.check_update_button)
-    button_row.addWidget(host.check_update_button)
 
-    host.diagnostics_card.content_layout.addLayout(button_row)
+    primary_row = QHBoxLayout()
+    primary_row.setContentsMargins(0, 2, 0, 0)
+    primary_row.setSpacing(10)
+    primary_row.addStretch(1)
+    primary_row.addWidget(host.copy_diagnostics_button)
+    primary_row.addWidget(host.report_device_button)
+    primary_row.addWidget(host.show_logs_button)
+
+    secondary_row = QHBoxLayout()
+    secondary_row.setContentsMargins(0, 8, 0, 0)
+    secondary_row.setSpacing(10)
+    secondary_row.addStretch(1)
+    secondary_row.addWidget(host.export_diagnostics_button)
+    secondary_row.addWidget(host.check_update_button)
+
+    host.diagnostics_card.content_layout.addLayout(primary_row)
+    host.diagnostics_card.content_layout.addLayout(secondary_row)
     return host.diagnostics_card
 
 
 def resize_diagnostics_action_buttons(host: PanelHost) -> None:
     for button in (
         host.copy_diagnostics_button,
+        host.report_device_button,
         host.show_logs_button,
         host.export_diagnostics_button,
         host.check_update_button,

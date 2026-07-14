@@ -747,15 +747,21 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
 
         # The tinted icon only changes with its size and colour, so cache it as a
         # pixmap instead of allocating and compositing two QImages every paint.
-        key = (self._icon_kind, width, height, icon_color.rgba())
+        pixel_ratio = self.devicePixelRatioF()
+        key = (self._icon_kind, width, height, pixel_ratio, icon_color.rgba())
         pixmap = self._icon_pixmap_cache.get(key)
         if pixmap is None:
-            pixmap = self._build_tinted_icon(width, height, icon_color)
+            pixmap = self._build_tinted_icon(width, height, pixel_ratio, icon_color)
             self._icon_pixmap_cache[key] = pixmap
         target_painter.drawPixmap(rect.topLeft(), pixmap)
 
-    def _build_tinted_icon(self, width: int, height: int, icon_color: QColor) -> QPixmap:
-        glyph = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
+    def _build_tinted_icon(self, width: int, height: int, pixel_ratio: float, icon_color: QColor) -> QPixmap:
+        glyph = QImage(
+            round(width * pixel_ratio),
+            round(height * pixel_ratio),
+            QImage.Format_ARGB32_Premultiplied,
+        )
+        glyph.setDevicePixelRatio(pixel_ratio)
         glyph.fill(Qt.transparent)
         painter = QPainter(glyph)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -763,6 +769,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         painter.end()
 
         tint = QImage(glyph.size(), QImage.Format_ARGB32_Premultiplied)
+        tint.setDevicePixelRatio(pixel_ratio)
         tint.fill(Qt.transparent)
         painter = QPainter(tint)
         painter.fillRect(tint.rect(), icon_color)

@@ -9,7 +9,7 @@ license flow for advanced features.
 
 Author: `dollza`
 
-Version: `0.2.7 beta`
+Version: `0.2.8 beta`
 
 Download the latest Windows build from the [Releases page](https://github.com/DanKo12345/lumable/releases).
 

@@ -32,6 +32,10 @@ class SectionIcon(QWidget):
     def paintEvent(self, event) -> None:
         if not self._renderer.isValid():
             return
+        # Render at the screen's native pixel density. Rendering straight into a
+        # 26 px raster and then scaling it on a high-DPI display made thin Lucide
+        # strokes look stepped.
+        pixel_ratio = self.devicePixelRatioF()
         icon_size = self.GLYPH_SIZE
         icon_rect = QRectF(
             (self.width() - icon_size) / 2,
@@ -39,7 +43,12 @@ class SectionIcon(QWidget):
             icon_size,
             icon_size,
         )
-        image = QImage(self.size(), QImage.Format_ARGB32_Premultiplied)
+        image = QImage(
+            round(self.width() * pixel_ratio),
+            round(self.height() * pixel_ratio),
+            QImage.Format_ARGB32_Premultiplied,
+        )
+        image.setDevicePixelRatio(pixel_ratio)
         image.fill(Qt.transparent)
 
         svg_painter = QPainter(image)
@@ -48,6 +57,7 @@ class SectionIcon(QWidget):
         svg_painter.end()
 
         tint = QImage(image.size(), QImage.Format_ARGB32_Premultiplied)
+        tint.setDevicePixelRatio(pixel_ratio)
         tint.fill(Qt.transparent)
         tint_painter = QPainter(tint)
         icon_color = qcolor_from_token(theme_manager.palette["text"])

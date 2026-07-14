@@ -48,6 +48,7 @@ from app.performance import resolve_ui_fps
 from app.profile_actions import ProfileActions
 from app.profile_controller import ProfileController
 from app.quick_mode_controller import QuickModeController
+from app.reconnect_controller import ReconnectController
 from app.scene_presets import get_scene_preset
 from app.schedule_controller import ScheduleController
 from app.shortcut_controller import ShortcutController
@@ -70,6 +71,7 @@ from app.widgets import (
     LiquidButton,
     LiquidSlider,
     LogsOverlay,
+    ProfileConfirmOverlay,
     ProfileRenameOverlay,
     SmoothScrollFilter,
     ValueChip,
@@ -140,6 +142,7 @@ class MainWindow(QMainWindow):
         self._connect_in_progress = False
         self._connection_status_phase = 0
         self._status_pulsing = False
+        self._reconnecting = False
         self._active_mode_key: str | None = None
         self._theme_transition = None
         self._theme_transition_overlay = None
@@ -182,6 +185,7 @@ class MainWindow(QMainWindow):
         self._hotkey_ui = HotkeyUiController(self)
         self._window_state = WindowStateController(self)
         self._diagnostics_ctrl = DiagnosticsController(self)
+        self._reconnect_ctrl = ReconnectController(self)
         self._color_ctrl = ColorController(self)
         self._license_refresher = LicenseRefresher(self)
         self._license_refresher.finished.connect(self._on_license_refreshed)
@@ -261,6 +265,32 @@ class MainWindow(QMainWindow):
 
     def _show_license_overlay(self) -> None:
         self._overlay_controller.show_license()
+
+    def _offer_protocol_candidate(self, address: str, driver_id: str, driver_name: str) -> None:
+        """An unrecognised controller looks like a known driver — ask before
+        trying it (we never send anything until the user agrees)."""
+        if getattr(self, "_protocol_offer_overlay", None) is not None:
+            return
+        labels = {
+            "title": self._tr("protocol.offer_title"),
+            "message": self._tr("protocol.offer_message", driver=driver_name),
+            "cancel": self._tr("dialog.cancel"),
+            "delete": self._tr("protocol.try"),
+        }
+        overlay = ProfileConfirmOverlay(labels, self)
+        self._protocol_offer_overlay = overlay
+        overlay.confirmed.connect(lambda a=address, d=driver_id: self._try_forced_driver(a, d))
+        overlay.closed.connect(lambda: setattr(self, "_protocol_offer_overlay", None))
+        overlay.open()
+
+    def _try_forced_driver(self, address: str, driver_id: str) -> None:
+        self._log(self._tr("protocol.trying_log"))
+        self._ble.connect_to_address(address, force_driver_id=driver_id)
+
+    def _rename_primary_device(self) -> None:
+        address = str(self._settings.get("last_device_address", "")).strip()
+        if address:
+            self._ble_events.rename_device(address)
 
     # ── first-run onboarding ──────────────────────────────────────────
     def maybe_show_onboarding(self) -> None:
@@ -403,6 +433,8 @@ class MainWindow(QMainWindow):
         self.disconnect_button.clicked.connect(self._ble.disconnect)
         self.add_mirror_button.clicked.connect(self._ble_events.request_add_mirror)
         self.logs_toggle_button.clicked.connect(self._show_logs_overlay)
+        self.supported_controllers_button.clicked.connect(self._show_about_overlay)
+        self.rename_device_button.clicked.connect(self._rename_primary_device)
 
     def _wire_shortcuts(self):
         self._shortcut_controller.wire()
@@ -514,6 +546,8 @@ class MainWindow(QMainWindow):
         self._ble.devices_discovered.connect(self._ble_events.populate_devices)
         self._ble.connected_changed.connect(self._ble_events.on_connected_changed)
         self._ble.mirrors_changed.connect(self._ble_events.refresh_mirror_list)
+        self._ble.protocol_candidate_found.connect(self._offer_protocol_candidate)
+        self._reconnect_ctrl.wire()
         self._ble.error_occurred.connect(self._show_error)
         self._ble.shutdown_finished.connect(self._finish_close_after_ble_shutdown)
 
@@ -522,6 +556,7 @@ class MainWindow(QMainWindow):
 
     def _wire_diagnostics_events(self):
         self.copy_diagnostics_button.clicked.connect(self._copy_diagnostics_report)
+        self.report_device_button.clicked.connect(self._report_unsupported_device)
         self.export_diagnostics_button.clicked.connect(self._export_diagnostics_report)
         self.show_logs_button.clicked.connect(self._show_logs_overlay)
 
@@ -729,14 +764,36 @@ class MainWindow(QMainWindow):
             return
         self._color_apply_debounce.start()
 
+    def _stream_owners(self) -> tuple:
+        """Every controller that can drive the strip's colour path. Exactly one
+        of these owns the strip at a time; starting one stops the rest."""
+        return (
+            self._ambient_ui,
+            self._music_ui,
+            self._software_fx_ui,
+            self._diy_ui,
+            self._timer_ctrl,
+        )
+
+    def stop_streams(self, *, exclude: object | None = None) -> None:
+        """Stop every streaming owner except `exclude` (the one taking over)."""
+        for owner in self._stream_owners():
+            if owner is None or owner is exclude:
+                continue
+            stop = getattr(owner, "stop_if_running", None)
+            if callable(stop):
+                stop()
+
+    def stop_all_streams(self) -> None:
+        """Stop every streaming owner — used when the strip goes away (BLE drop)."""
+        self.stop_streams()
+
     def _toggle_power(self):
         self._sync_power_button()
         if self._initializing:
             return
-        # Power is a manual override: leave ambient sync if it was running.
-        self._ambient_ui.stop_if_running()
-        self._music_ui.stop_if_running()
-        self._software_fx_ui.stop_if_running()
+        # Power is a manual override: any running stream yields the strip.
+        self.stop_streams()
         enabled = self.power_button.isChecked()
         self._ble.set_power(enabled)
         self._sync_aurora_accent(enabled=enabled)
@@ -772,6 +829,7 @@ class MainWindow(QMainWindow):
         self.logs_toggle_button.setVisible(connected)
         self.logs_toggle_button.setEnabled(connected)
         self.logs_toggle_button.setText(self._tr("device.show_logs"))
+        self.rename_device_button.setVisible(connected)
 
     def _connection_status_text(self) -> str:
         key = "device.status.connecting" if self._connect_in_progress else "device.status.scanning"
@@ -817,10 +875,14 @@ class MainWindow(QMainWindow):
             color = "#6fa8ff"  # connecting (blue)
         elif self._scan_in_progress:
             color = "#f5b94a"  # searching (amber)
+        elif self._reconnecting:
+            color = "#ff9a5b"  # reconnecting (orange)
         else:
             color = "rgba(255, 255, 255, 0.30)"  # idle
         dot.setStyleSheet(f"background: {color}; border-radius: {max(2, dot.width() // 2)}px;")
-        pulsing = (self._connect_in_progress or self._scan_in_progress) and not self._is_connected
+        pulsing = (
+            self._connect_in_progress or self._scan_in_progress or self._reconnecting
+        ) and not self._is_connected
         if pulsing and not self._status_pulsing:
             self._status_pulse.start()
             self._status_pulsing = True
@@ -978,6 +1040,9 @@ class MainWindow(QMainWindow):
 
     def _copy_diagnostics_report(self):
         self._diagnostics_ctrl.copy_report()
+
+    def _report_unsupported_device(self):
+        self._diagnostics_ctrl.report_unsupported()
 
     def _export_diagnostics_report(self):
         self._diagnostics_ctrl.export_report()

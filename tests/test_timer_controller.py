@@ -119,6 +119,7 @@ class FakeHost(QObject):
         self.errors: list[str] = []
         self.power_toggled = 0
         self.synced = 0
+        self.stop_streams_calls = 0
 
     def _tr(self, key: str, **_kw: object) -> str:
         return key
@@ -137,6 +138,11 @@ class FakeHost(QObject):
 
     def _color_history(self) -> list:
         return []
+
+    def stop_streams(self, *, exclude: object | None = None) -> None:
+        # The real MainWindow stops the other stream owners here; the timer only
+        # needs the call to succeed, so just record it.
+        self.stop_streams_calls += 1
 
 
 @pytest.fixture(autouse=True)
@@ -269,3 +275,35 @@ def test_sunrise_disconnected_waits() -> None:
     ctrl._tick_sunrise()
     assert host._ble.calls == []
     assert ctrl._sunrise_active is False
+
+
+# ── yielding the strip (stop_if_running) ───────────────────────────────
+def test_stop_if_running_cancels_active_sleep() -> None:
+    ctrl, host = _make(powered=True)
+    host.timer_sleep_button.setChecked(True)
+    ctrl._toggle_sleep()
+    assert ctrl._sleep_active is True
+    ctrl.stop_if_running()  # another stream / power toggle takes over
+    assert ctrl._sleep_active is False
+    assert host.timer_sleep_button.isChecked() is False
+
+
+def test_stop_if_running_stops_sunrise_ramp_but_stays_armed_today() -> None:
+    ctrl, host = _make(powered=True)
+    host.timer_sunrise_button.setChecked(True)
+    ctrl._sunrise_minutes = 20
+    ctrl._sunrise_active = True  # pretend the ramp is mid-flight
+    ctrl.stop_if_running()
+    assert ctrl._sunrise_active is False
+    # Today's window is marked handled so it won't immediately re-fire and fight
+    # the new owner, but the arm toggle stays on for tomorrow.
+    assert ctrl._sunrise_last_fire != ""
+    assert host.timer_sunrise_button.isChecked() is True
+
+
+def test_stop_if_running_is_noop_when_idle() -> None:
+    ctrl, host = _make(powered=True)
+    ctrl.stop_if_running()
+    assert ctrl._sleep_active is False
+    assert ctrl._sunrise_active is False
+    assert host._ble.calls == []

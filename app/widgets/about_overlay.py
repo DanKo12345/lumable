@@ -124,6 +124,10 @@ class AboutOverlay(QWidget):
         content_layout.setContentsMargins(0, 0, 0, 8)
         content_layout.setSpacing(14)
         content_layout.addWidget(self._section(content, labels["author_title"], labels["author_text"]))
+        if labels.get("supported_text"):
+            content_layout.addWidget(
+                self._section(content, labels.get("supported_title", ""), labels["supported_text"])
+            )
         content_layout.addWidget(self._section(content, labels["privacy_title"], labels["privacy_text"]))
         content_layout.addWidget(self._section(content, labels["components_title"], labels["components_text"]))
         content_layout.addStretch(1)

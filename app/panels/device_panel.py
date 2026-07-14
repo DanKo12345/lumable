@@ -65,6 +65,23 @@ def build_device_section(host: PanelHost) -> GlassCard:
     row2.addWidget(host.logs_toggle_button)
     host.device_card.content_layout.addLayout(row2)
 
+    # A quiet, always-available link to the in-app catalog of supported
+    # controller families (opens About). Its own row so it never crowds the
+    # connect/disconnect actions above.
+    catalog_row = QHBoxLayout()
+    catalog_row.setContentsMargins(0, host._sz(6), 0, 0)
+    catalog_row.setSpacing(ROW_SPACING_TIGHT)
+    host.supported_controllers_button = host._button(host._tr("device.supported"), "ghost")
+    host.supported_controllers_button.setMinimumWidth(DEVICE_ACTION_MIN_WIDTH)
+    catalog_row.addWidget(host.supported_controllers_button)
+    catalog_row.addStretch(1)
+    # Name the connected strip (Desk / TV / Shelf). Shown only while connected.
+    host.rename_device_button = host._button(host._tr("device.rename"), "ghost")
+    host.rename_device_button.setMinimumWidth(DEVICE_ACTION_MIN_WIDTH)
+    host.rename_device_button.setVisible(False)
+    catalog_row.addWidget(host.rename_device_button)
+    host.device_card.content_layout.addLayout(catalog_row)
+
     # List of mirror controllers (each row: name + Remove). Built on demand by
     # the event handler from BleController.mirrors_changed; hidden when empty.
     host.mirror_list_container = QWidget()

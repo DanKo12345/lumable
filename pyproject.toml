@@ -1,6 +1,6 @@
 [project]
 name = "lumable"
-version = "0.2.7"
+version = "0.2.8"
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
