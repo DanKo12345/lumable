@@ -38,6 +38,7 @@ class UiLocalizationController:
         self._apply_music_texts()
         self._apply_software_fx_texts()
         self._apply_diagnostics_texts()
+        self._apply_local_api_texts()
 
         host._refresh_diagnostics_view()
         host._refresh_effect_names()
@@ -302,6 +303,24 @@ class UiLocalizationController:
                 host.diy_card.subtitle_label.setText(host._tr("diy.subtitle"))
             host.diy_lock_label.setText(host._tr("diy.pro_locked"))
             host._diy_ui.relocalize()
+
+    def _apply_local_api_texts(self) -> None:
+        host = self._host
+        host.api_card.title_label.setText(host._tr("api.title"))
+        if host.api_card.subtitle_label is not None:
+            host.api_card.subtitle_label.setText(host._tr("api.subtitle"))
+        host.api_token_label.setText(host._tr("api.token"))
+        host.api_port_label.setText(host._tr("api.port"))
+        host.api_copy_token_button.setText(host._tr("api.copy_token"))
+        host.api_regenerate_button.setText(host._tr("api.regenerate"))
+        host.api_lan_button.setText(host._tr("api.allow_lan"))
+        host.api_lan_host_field.setPlaceholderText(host._tr("api.lan_host_placeholder"))
+        host.api_lan_warning.setText(host._tr("api.lan_warning"))
+        host.api_security_note.setText(host._tr("api.security_note"))
+        host.api_help_button.setText(host._tr("api.help"))
+        advanced_open = host.api_advanced_toggle.isChecked()
+        host.api_advanced_toggle.setText(host._tr("api.advanced_hide" if advanced_open else "api.advanced"))
+        host._local_api.relocalize()
 
     def _apply_diagnostics_texts(self) -> None:
         host = self._host

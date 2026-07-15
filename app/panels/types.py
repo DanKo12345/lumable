@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QLabel, QLayout, QMenu
+from PySide6.QtWidgets import QLabel, QLayout, QLineEdit, QMenu, QWidget
 
 from app.widgets import (
     AccentPreview,
@@ -35,6 +35,24 @@ class PanelHost(Protocol):
     logs_toggle_button: LiquidButton
     supported_controllers_button: LiquidButton
     rename_device_button: LiquidButton
+
+    api_card: GlassCard
+    api_enable_button: LiquidButton
+    api_status_label: QLabel
+    api_reveal_button: LiquidButton
+    api_token_label: QLabel
+    api_port_label: QLabel
+    api_token_field: QLineEdit
+    api_copy_token_button: LiquidButton
+    api_regenerate_button: LiquidButton
+    api_port_field: QLineEdit
+    api_lan_button: LiquidButton
+    api_lan_host_field: QLineEdit
+    api_lan_warning: QLabel
+    api_security_note: QLabel
+    api_advanced_toggle: LiquidButton
+    api_advanced_container: QWidget
+    api_help_button: LiquidButton
 
     color_card: GlassCard
     preview: AccentPreview

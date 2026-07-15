@@ -11,6 +11,7 @@ from app.device_names import validate_device_names
 from app.hotkeys import ACTIONS as HOTKEY_ACTIONS
 from app.hotkeys import DEFAULT_HOTKEYS, parse_hotkey
 from app.license import validate_license_state
+from app.local_api.config import validate_api_settings
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(user_data_dir("LumaBLE", False, roaming=True))
@@ -217,6 +218,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "onboarding_seen": False,
     "device_names": {},
+    "api": {"enabled": False, "port": 7345, "token": "", "allow_lan": False, "lan_host": ""},
     "quick_mode": "",
     "custom_quick_modes": [],
     "updates_last_auto_check_at": 0,
@@ -654,6 +656,7 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "diy_saved": validate_diy_saved(data.get("diy_saved", [])),
         "timers": validate_timers(data.get("timers", DEFAULT_SETTINGS["timers"])),
         "device_names": validate_device_names(data.get("device_names", DEFAULT_SETTINGS["device_names"])),
+        "api": validate_api_settings(data.get("api", DEFAULT_SETTINGS["api"])),
         "quick_mode": quick_mode,
         "custom_quick_modes": custom_quick_modes,
         "updates_last_auto_check_at": _coerce_int(

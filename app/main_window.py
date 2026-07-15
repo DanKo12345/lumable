@@ -40,6 +40,7 @@ from app.feature_gate import FREE_COLOR_HISTORY_COUNT, PRO_COLOR_HISTORY_COUNT, 
 from app.hotkey_controller import HotkeyController
 from app.hotkey_ui_controller import HotkeyUiController
 from app.license_refresh import LicenseRefresher
+from app.local_api.controller import LocalApiController
 from app.localization import localization_manager
 from app.main_layout import build_main_layout
 from app.music_ui_controller import MusicUiController
@@ -112,6 +113,7 @@ class MainWindow(QMainWindow):
         self._start_deferred(1300, self._app_triggers.start)
         self._start_deferred(1400, self._apply_hotkeys)
         self._start_deferred(1600, self._update_controller.check_silent)
+        self._start_deferred(1800, self._local_api.start)
 
     def _sz(self, value: float) -> int:
         """Scale a base pixel size by the current UI-density factor."""
@@ -186,6 +188,7 @@ class MainWindow(QMainWindow):
         self._window_state = WindowStateController(self)
         self._diagnostics_ctrl = DiagnosticsController(self)
         self._reconnect_ctrl = ReconnectController(self)
+        self._local_api = LocalApiController(self)
         self._color_ctrl = ColorController(self)
         self._license_refresher = LicenseRefresher(self)
         self._license_refresher.finished.connect(self._on_license_refreshed)
@@ -425,6 +428,7 @@ class MainWindow(QMainWindow):
         self._diy_ui.wire()
         self._app_trigger_ui.wire()
         self._hotkey_ui.wire()
+        self._local_api.wire()
         self._wire_shortcuts()
 
     def _wire_device_events(self):
@@ -1109,6 +1113,7 @@ class MainWindow(QMainWindow):
             return
         if self._close_after_ble_shutdown:
             self._tray_controller.hide_icon()
+            self._local_api.shutdown()
             self._ambient_ui.shutdown()
             self._music_ui.shutdown()
             self._software_fx_ui.shutdown()

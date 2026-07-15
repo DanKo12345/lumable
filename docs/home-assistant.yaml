@@ -1,0 +1,77 @@
+# LumaBLE — Home Assistant integration (no custom component needed).
+#
+# Home Assistant talks to the LumaBLE Local API over plain HTTP. Enable the API
+# in LumaBLE (Settings -> Local API), copy the token, and paste it below.
+#
+# IMPORTANT:
+#   * Replace TOKEN with your LumaBLE API token.
+#   * If Home Assistant runs on THIS PC, the host is 127.0.0.1.
+#     If it runs on ANOTHER device, enable "Allow LAN access" in LumaBLE, bind a
+#     specific IP, and replace 127.0.0.1 below with this PC's LAN IP.
+#   * Add these under the matching top-level keys in configuration.yaml, then
+#     restart Home Assistant.
+
+# --- Commands -----------------------------------------------------------------
+rest_command:
+  lumable_power:
+    url: "http://127.0.0.1:7345/power"
+    method: POST
+    headers:
+      Authorization: "Bearer TOKEN"
+      Content-Type: "application/json"
+    payload: '{"on": {{ on }}}'
+
+  lumable_color:
+    url: "http://127.0.0.1:7345/color"
+    method: POST
+    headers:
+      Authorization: "Bearer TOKEN"
+      Content-Type: "application/json"
+    payload: '{"r": {{ r }}, "g": {{ g }}, "b": {{ b }}}'
+
+  lumable_brightness:
+    url: "http://127.0.0.1:7345/brightness"
+    method: POST
+    headers:
+      Authorization: "Bearer TOKEN"
+      Content-Type: "application/json"
+    payload: '{"value": {{ value }}}'
+
+  lumable_quick_mode:
+    url: "http://127.0.0.1:7345/quick-mode"
+    method: POST
+    headers:
+      Authorization: "Bearer TOKEN"
+      Content-Type: "application/json"
+    payload: '{"key": "{{ key }}"}'
+
+# --- Live state sensor --------------------------------------------------------
+# Polls /status and exposes attributes (power, brightness, colour, connection).
+sensor:
+  - platform: rest
+    name: LumaBLE
+    resource: "http://127.0.0.1:7345/status"
+    method: GET
+    headers:
+      Authorization: "Bearer TOKEN"
+    value_template: "{{ 'on' if value_json.power else 'off' }}"
+    json_attributes:
+      - connected
+      - power
+      - brightness
+      - color
+      - mode
+    scan_interval: 5
+
+# --- Example usage ------------------------------------------------------------
+# Call from an automation or script:
+#
+# action:
+#   - service: rest_command.lumable_power
+#     data:
+#       on: true
+#   - service: rest_command.lumable_color
+#     data:
+#       r: 255
+#       g: 80
+#       b: 0

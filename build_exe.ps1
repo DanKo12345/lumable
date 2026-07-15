@@ -70,7 +70,7 @@ foreach ($relativePath in $unusedQtFiles) {
 $translationsDir = Join-Path $root "dist\LumaBLE\_internal\PySide6\translations"
 if (Test-Path -LiteralPath $translationsDir) {
     Get-ChildItem -LiteralPath $translationsDir -Filter "*.qm" | ForEach-Object {
-        if ($_.Name -notmatch "(_ru|_zh|_en)\.qm$") {
+        if ($_.Name -notmatch "(_ru|_zh|_en|_es)\.qm$") {
             Remove-Item -LiteralPath $_.FullName -Force
         }
     }

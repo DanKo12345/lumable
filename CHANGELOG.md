@@ -2,6 +2,20 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.3.0] - 2026-07-14
+
+LumaBLE becomes a local automation node: a small, secure HTTP API lets Home Assistant, AutoHotkey and your own scripts control the strip.
+
+### Added
+- Local HTTP API (Free): a token-protected API on `127.0.0.1`, **off by default**. Endpoints for status, device list, power, colour, brightness, effect and quick-mode, plus a live status stream over Server-Sent Events (`GET /events`). Commands are idempotent (`{"on": true}`, never a toggle) so automations are safe to retry. `GET /` returns an endpoint index and `GET /health` a version probe.
+- API settings card (Settings → Local API): the everyday view is just Enable + status; the token, port and network access sit under **Advanced** so it doesn't look like a developer panel. Includes a copy-and-regenerate token and a configurable port.
+- "How to connect" window: one click copies a ready-to-paste Home Assistant config (token and address already filled in) or a ready curl example; a Stream Deck plugin is noted as coming later.
+- Home Assistant integration: ready-to-paste `rest_command` and REST `sensor` YAML (no custom component or cloud), plus a full API reference with curl / PowerShell / AutoHotkey examples. See `docs/local-api.md` and `docs/home-assistant.yaml`.
+
+### Security
+- Off by default and loopback-only. "Allow LAN access" is an explicit, off-by-default choice that binds a specific local IP (never all interfaces); the app auto-detects this PC's address so you don't need ipconfig, and clearly reports if it can't. Every request except `/` and `/health` needs the token in an `Authorization: Bearer` header, and requests without a valid token are rejected before reaching the strip.
+- The network address is hidden by default (masked, with a reveal toggle) so it can't be leaked on stream; the status simply reads "this PC only" when running locally.
+
 ## [0.2.8] - 2026-07-14
 
 A reliability and compatibility release: steadier connections, more controllers that "just work", clearer status when the strip drops, and friendly names for multi-strip setups.
