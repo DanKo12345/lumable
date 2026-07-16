@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hmac
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -33,7 +34,11 @@ _KNOWN_ROUTES: dict[str, set[str]] = {
     "/brightness": {"POST"},
     "/effect": {"POST"},
     "/quick-mode": {"POST"},
+    "/pc-mode": {"POST"},
 }
+
+# PC "hub" modes the phone can trigger (plus "off" to stop and return to manual).
+_PC_MODES = {"screen", "music", "effect", "diy", "off"}
 
 
 @dataclass
@@ -55,6 +60,7 @@ class ApiBackend(Protocol):
     def set_brightness(self, value: int, device_id: str | None) -> None: ...
     def set_effect(self, code: int, speed: int | None, device_id: str | None) -> None: ...
     def apply_quick_mode(self, key: str) -> bool: ...
+    def set_pc_mode(self, mode: str) -> bool: ...
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -62,9 +68,18 @@ def _clamp(value: int, low: int, high: int) -> int:
 
 
 class ApiRouter:
-    def __init__(self, backend: ApiBackend, token: str) -> None:
+    def __init__(
+        self,
+        backend: ApiBackend,
+        token: str,
+        *,
+        session_authorizer: Callable[[str], bool] | None = None,
+        pair_handler: Callable[[str], str | None] | None = None,
+    ) -> None:
         self._backend = backend
         self._token = str(token or "")
+        self._session_authorizer = session_authorizer
+        self._pair_handler = pair_handler
 
     # ── entry point ───────────────────────────────────────────────────
     def handle(
@@ -97,9 +112,14 @@ class ApiRouter:
                     "POST /brightness": "{value: 0-100}",
                     "POST /effect": "{code, speed?}",
                     "POST /quick-mode": "{key}",
+                    "POST /pc-mode": "{mode: screen|music|effect|diy|off}",
                 }
                 body["auth"] = "Send 'Authorization: Bearer <token>' on every request except /health and /."
             return ApiResponse(200, body)
+
+        # Pairing is how a phone earns a session token, so it can't require one.
+        if path == "/pair" and method == "POST":
+            return self._handle_pair(body)
 
         allowed = _KNOWN_ROUTES.get(path)
         if allowed is None:
@@ -173,6 +193,17 @@ class ApiRouter:
                 return ApiResponse(404, {"error": "unknown quick mode"})
             return ApiResponse(200, {"ok": True})
 
+        if path == "/pc-mode":
+            mode = data.get("mode")
+            if not isinstance(mode, str) or mode.strip().lower() not in _PC_MODES:
+                return ApiResponse(400, {"error": "'mode' must be one of screen, music, effect, diy, off"})
+            normalized = mode.strip().lower()
+            if not self._backend.set_pc_mode(normalized):
+                # The mode is valid but didn't start — e.g. needs Pro, or no strip
+                # is connected. Report a conflict, not a success.
+                return ApiResponse(409, {"error": "mode could not start (needs Pro or a connected strip)"})
+            return ApiResponse(200, {"ok": True, "mode": normalized})
+
         return ApiResponse(404, {"error": "not found"})
 
     def authorize(self, headers: dict[str, str] | None) -> bool:
@@ -182,14 +213,30 @@ class ApiRouter:
 
     # ── helpers ───────────────────────────────────────────────────────
     def _authorized(self, headers: dict[str, str]) -> bool:
-        if not self._token:
-            return False  # no token configured -> nothing is authorized
         header = headers.get("authorization", "")
         prefix = "bearer "
         if not header.lower().startswith(prefix):
             return False
         presented = header[len(prefix):].strip()
-        return hmac.compare_digest(presented, self._token)
+        if not presented:
+            return False
+        # The full app token, or a valid short-lived phone session token.
+        if self._token and hmac.compare_digest(presented, self._token):
+            return True
+        return bool(self._session_authorizer is not None and self._session_authorizer(presented))
+
+    def _handle_pair(self, body: bytes | None) -> ApiResponse:
+        if self._pair_handler is None:
+            return ApiResponse(404, {"error": "pairing not available"})
+        if body is not None and len(body) > MAX_BODY_BYTES:
+            return ApiResponse(413, {"error": "request too large"})
+        data, error = self._parse_json(body)
+        if error is not None:
+            return ApiResponse(400, {"error": error})
+        token = self._pair_handler(str(data.get("code", "")))
+        if not token:
+            return ApiResponse(401, {"error": "invalid or expired code"})
+        return ApiResponse(200, {"session": token})
 
     @staticmethod
     def _normalize_path(path: str) -> str:

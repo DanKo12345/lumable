@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
 from app.panels.types import PanelHost
@@ -38,23 +38,34 @@ def build_local_api_section(host: PanelHost) -> GlassCard:
     host.api_status_label = QLabel(host._tr("api.status_off"))
     host.api_status_label.setObjectName("timerConnect")
     host.api_status_label.setWordWrap(True)
-    host.api_reveal_button = host._button(host._tr("api.reveal"), "ghost")
-    host.api_reveal_button.setCheckable(True)
-    host.api_reveal_button.setVisible(False)
     top.addWidget(host.api_enable_button, 0, Qt.AlignVCenter)
     top.addWidget(host.api_status_label, 1, Qt.AlignVCenter)
-    top.addWidget(host.api_reveal_button, 0, Qt.AlignVCenter)
     host.api_card.content_layout.addLayout(top)
 
     # ── "How to connect" (primary next step) + Advanced toggle ─────────
     actions_row = _row(host)
     host.api_help_button = host._button(host._tr("api.help"), "accent_soft")
     actions_row.addWidget(host.api_help_button, 0, Qt.AlignVCenter)
+    # Shown only when the API is reachable over the network (a phone can open it).
+    host.api_pair_button = host._button(host._tr("api.pair"), "ghost")
+    host.api_pair_button.setVisible(False)
+    actions_row.addWidget(host.api_pair_button, 0, Qt.AlignVCenter)
     actions_row.addStretch(1)
     host.api_advanced_toggle = host._button(host._tr("api.advanced"), "ghost")
     host.api_advanced_toggle.setCheckable(True)
     actions_row.addWidget(host.api_advanced_toggle, 0, Qt.AlignVCenter)
     host.api_card.content_layout.addLayout(actions_row)
+
+    # ── Paired phones: count + "disconnect all" (shown only when a phone is on) ─
+    phones_row = _row(host)
+    host.api_phones_label = QLabel(host._tr("api.phones_connected", count=0))
+    host.api_phones_label.setObjectName("timerConnect")
+    host.api_phones_label.setVisible(False)
+    host.api_disconnect_phones_button = host._button(host._tr("api.disconnect_phones"), "ghost")
+    host.api_disconnect_phones_button.setVisible(False)
+    phones_row.addWidget(host.api_phones_label, 1, Qt.AlignVCenter)
+    phones_row.addWidget(host.api_disconnect_phones_button, 0, Qt.AlignVCenter)
+    host.api_card.content_layout.addLayout(phones_row)
 
     # ── Advanced container (hidden by default) ─────────────────────────
     host.api_advanced_container = QWidget()
@@ -99,8 +110,16 @@ def build_local_api_section(host: PanelHost) -> GlassCard:
     host.api_lan_host_field.setPlaceholderText(host._tr("api.lan_host_placeholder"))
     host.api_lan_host_field.setMinimumWidth(host._sz(150))
     host.api_lan_host_field.setEchoMode(QLineEdit.Password)  # masked until revealed
+    # Eye toggle sits right next to the address field so it reads as "reveal this".
+    host.api_reveal_button = host._button("", "ghost")
+    host.api_reveal_button.setCheckable(True)
+    host.api_reveal_button.set_icon_kind("eye")
+    host.api_reveal_button.setIconSize(QSize(18, 18))
+    host.api_reveal_button.setFixedSize(host._sz(38), host._sz(38))
+    host.api_reveal_button.setToolTip(host._tr("api.reveal"))
     lan_row.addWidget(host.api_lan_button, 0, Qt.AlignVCenter)
     lan_row.addWidget(host.api_lan_host_field, 1, Qt.AlignVCenter)
+    lan_row.addWidget(host.api_reveal_button, 0, Qt.AlignVCenter)
     advanced.addLayout(lan_row)
 
     host.api_lan_warning = QLabel(host._tr("api.lan_warning"))

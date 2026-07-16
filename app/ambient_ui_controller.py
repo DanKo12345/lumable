@@ -92,6 +92,14 @@ class AmbientUiController:
         if self._ambient.is_running():
             self._stop()
 
+    def activate(self) -> bool:
+        """Start screen sync as if the card's toggle was pressed (keeps the
+        licence/connection gates and stops any other active stream). Returns
+        whether it actually started — a gate may have silently blocked it."""
+        self._host.ambient_toggle_button.setChecked(True)
+        self._toggle()
+        return self.is_running()
+
     def shutdown(self) -> None:
         self._ambient.stop()
 

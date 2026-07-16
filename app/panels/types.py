@@ -53,6 +53,7 @@ class PanelHost(Protocol):
     api_advanced_toggle: LiquidButton
     api_advanced_container: QWidget
     api_help_button: LiquidButton
+    api_pair_button: LiquidButton
 
     color_card: GlassCard
     preview: AccentPreview

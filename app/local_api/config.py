@@ -16,6 +16,7 @@ from typing import Any
 from app.local_api.server import DEFAULT_PORT, LOOPBACK
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+LAN_WARNING_MAX_SHOWN = 5
 
 
 def generate_token() -> str:
@@ -31,11 +32,21 @@ def validate_api_settings(data: Any) -> dict[str, Any]:
         port = DEFAULT_PORT
     if not 1 <= port <= 65535:
         port = DEFAULT_PORT
+    try:
+        lan_warning_count = int(data.get("lan_warning_count", 0))
+    except (TypeError, ValueError):
+        lan_warning_count = 0
+    # ``allow_lan`` used to be persisted without an explicit confirmation.
+    # Treat those legacy values as loopback-only until the person consciously
+    # approves the LAN warning in the current UI.
+    lan_confirmed = bool(data.get("lan_confirmed", False))
     return {
         "enabled": bool(data.get("enabled", False)),
         "port": port,
         "token": str(data.get("token", "") or "").strip(),
-        "allow_lan": bool(data.get("allow_lan", False)),
+        "allow_lan": bool(data.get("allow_lan", False)) and lan_confirmed,
+        "lan_confirmed": lan_confirmed,
+        "lan_warning_count": max(0, min(LAN_WARNING_MAX_SHOWN, lan_warning_count)),
         "lan_host": str(data.get("lan_host", "") or "").strip(),
     }
 

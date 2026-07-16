@@ -15,17 +15,22 @@ from PySide6.QtWidgets import QApplication, QLineEdit
 
 from app.local_api.backend import QtApiBackend
 from app.local_api.config import (
+    LAN_WARNING_MAX_SHOWN,
     detect_lan_ip,
     generate_token,
     is_loopback,
     resolve_bind_host,
     validate_api_settings,
 )
+from app.local_api.mobile_page import build_mobile_page
+from app.local_api.pairing import PairingManager
 from app.local_api.router import ApiRouter
 from app.local_api.server import ApiServer
 from app.local_api.sse import SseBroker
 from app.storage import save_settings
 from app.widgets.api_connect_overlay import ApiConnectOverlay
+from app.widgets.lan_access_overlay import LanAccessOverlay
+from app.widgets.pair_phone_overlay import PairPhoneOverlay
 
 # Ready-to-paste Home Assistant config. __BASE__/__TOKEN__ are filled with the
 # user's live values so there's nothing to edit. Kept as a plain template to
@@ -69,7 +74,11 @@ class LocalApiController:
         self._backend: QtApiBackend | None = None
         self._server: ApiServer | None = None
         self._broker = SseBroker()
+        self._pairing = PairingManager()
         self._poll: QTimer | None = None
+        self._pair_overlay: PairPhoneOverlay | None = None
+        self._pair_timer: QTimer | None = None
+        self._lan_confirm_overlay: LanAccessOverlay | None = None
 
     # ── lifecycle ─────────────────────────────────────────────────────
     def start(self) -> None:
@@ -97,9 +106,18 @@ class LocalApiController:
             self._persist(config)
         if self._backend is None:
             self._backend = QtApiBackend(self._host)
-        router = ApiRouter(self._backend, config["token"])
+        router = ApiRouter(
+            self._backend,
+            config["token"],
+            session_authorizer=self._pairing.is_valid_session,
+            pair_handler=self._pairing.pair,
+        )
         server = ApiServer(
-            router, host=resolve_bind_host(config), port=config["port"], broker=self._broker
+            router,
+            host=resolve_bind_host(config),
+            port=config["port"],
+            broker=self._broker,
+            mobile_page=build_mobile_page(self._mobile_labels(), language=self._host._language),
         )
         try:
             server.start()
@@ -109,6 +127,10 @@ class LocalApiController:
         self._server = server
         self._start_polling()
         self._host._log(self._host._tr("api.started_log", url=self.base_url()))
+        # Startup is deferred until the UI is ready. Refresh here as well as in
+        # the button handlers so a persisted enabled API cannot remain visually
+        # stuck on "Try again" after it has successfully bound its port.
+        self.refresh()
 
     def _describe_bind_error(self, exc: OSError) -> str:
         host = self._host
@@ -139,6 +161,8 @@ class LocalApiController:
     def _publish_status(self) -> None:
         if self._backend is not None:
             self._broker.publish(self._backend.status())
+        # Reflect phones pairing/dropping without waiting for a card interaction.
+        self._refresh_phones()
 
     def is_running(self) -> bool:
         return self._server is not None and self._server.is_running()
@@ -159,7 +183,57 @@ class LocalApiController:
         host.api_reveal_button.clicked.connect(self.refresh)
         host.api_advanced_toggle.clicked.connect(self._toggle_advanced)
         host.api_help_button.clicked.connect(self._show_connect_help)
+        host.api_pair_button.clicked.connect(self._show_pair_phone)
+        host.api_disconnect_phones_button.clicked.connect(self._disconnect_all_phones)
         self.refresh()
+
+    def _disconnect_all_phones(self) -> None:
+        # Drops every paired phone at once; each must re-pair with a fresh code.
+        self._pairing.revoke_all()
+        self.refresh()
+
+    def _refresh_phones(self) -> None:
+        host = self._host
+        count = self._pairing.session_count() if self.is_running() else 0
+        has_phones = count > 0
+        host.api_phones_label.setText(host._tr("api.phones_connected", count=count))
+        host.api_phones_label.setVisible(has_phones)
+        host.api_disconnect_phones_button.setVisible(has_phones)
+
+    def _show_pair_phone(self) -> None:
+        host = self._host
+        if self._pair_overlay is not None:
+            return
+        labels = {
+            "title": host._tr("api.pair_title"),
+            "steps": host._tr("api.pair_steps"),
+            "code_caption": host._tr("api.pair_code_caption"),
+            "ok": host._tr("dialog.ok"),
+        }
+        url = self._tools_base_url()
+        display_url = url if host.api_reveal_button.isChecked() else self._masked_url(url)
+        overlay = PairPhoneOverlay(
+            labels,
+            url,
+            self.new_pairing_code(),
+            host,
+            display_url=display_url,
+        )
+        self._pair_overlay = overlay
+        # Refresh the code before it expires while the window stays open.
+        timer = QTimer(host)
+        timer.setInterval(240_000)
+        timer.timeout.connect(lambda: overlay.set_code(self.new_pairing_code()))
+        timer.start()
+        self._pair_timer = timer
+        overlay.closed.connect(self._on_pair_closed)
+        overlay.open()
+
+    def _on_pair_closed(self) -> None:
+        self._pair_overlay = None
+        if self._pair_timer is not None:
+            self._pair_timer.stop()
+            self._pair_timer = None
 
     def _tools_base_url(self) -> str:
         config = self._config()
@@ -207,9 +281,18 @@ class LocalApiController:
     def _on_toggle_enabled(self) -> None:
         config = self._config()
         config["enabled"] = bool(self._host.api_enable_button.isChecked())
+        if not config["enabled"]:
+            self._pairing.revoke_all()  # turning the API off drops paired phones
         self._persist(config)
         self.apply_settings()
         self.refresh()
+
+    # ── phone pairing (used by the "Open on phone" UI) ────────────────
+    def new_pairing_code(self) -> str:
+        return self._pairing.new_code()
+
+    def pairing_code(self) -> str:
+        return self._pairing.current_code()
 
     def _on_port_changed(self) -> None:
         config = self._config()
@@ -226,10 +309,47 @@ class LocalApiController:
     def _on_toggle_lan(self) -> None:
         config = self._config()
         turning_on = bool(self._host.api_lan_button.isChecked())
+        if turning_on and not config["allow_lan"] and config["lan_warning_count"] < LAN_WARNING_MAX_SHOWN:
+            # A LAN listener is powerful enough to deserve a deliberate second
+            # step. Restore the real saved state while the confirmation is up.
+            self._host.api_lan_button.setChecked(False)
+            self._show_lan_confirmation()
+            return
+        self._set_lan_access(turning_on)
+
+    def _show_lan_confirmation(self) -> None:
+        if self._lan_confirm_overlay is not None:
+            return
+        host = self._host
+        labels = {
+            "title": host._tr("api.lan_confirm_title"),
+            "body": host._tr("api.lan_confirm_body"),
+            "note": host._tr("api.lan_confirm_note"),
+            "cancel": host._tr("dialog.cancel"),
+            "allow": host._tr("api.lan_confirm_allow"),
+        }
+        overlay = LanAccessOverlay(labels, host)
+        self._lan_confirm_overlay = overlay
+        overlay.accepted.connect(self._confirm_lan_access)
+        overlay.closed.connect(self._on_lan_confirmation_closed)
+        overlay.open()
+
+    def _confirm_lan_access(self) -> None:
+        config = self._config()
+        config["lan_warning_count"] = min(LAN_WARNING_MAX_SHOWN, config["lan_warning_count"] + 1)
+        self._persist(config)
+        self._set_lan_access(True)
+
+    def _on_lan_confirmation_closed(self) -> None:
+        self._lan_confirm_overlay = None
+        self.refresh()
+
+    def _set_lan_access(self, enabled: bool) -> None:
+        config = self._config()
         # Turning LAN on with no address yet? Auto-fill this PC's IP so the user
         # doesn't have to run ipconfig. If we can't find one (offline), don't
         # pretend LAN is on — revert and explain.
-        if turning_on and not config["lan_host"]:
+        if enabled and not config["lan_host"]:
             detected = detect_lan_ip()
             if not detected:
                 self._host.api_lan_button.setChecked(False)
@@ -237,7 +357,10 @@ class LocalApiController:
                 self.refresh()
                 return
             config["lan_host"] = detected
-        config["allow_lan"] = turning_on
+        config["allow_lan"] = enabled
+        # Consent is intentionally stored separately from the LAN preference:
+        # a legacy config must not silently expose a fresh installation.
+        config["lan_confirmed"] = enabled
         self._persist(config)
         if config["enabled"]:
             self.apply_settings()
@@ -258,6 +381,7 @@ class LocalApiController:
     def _regenerate_token(self) -> None:
         config = self._config()
         config["token"] = generate_token()
+        self._pairing.revoke_all()  # regenerating the token invalidates paired phones
         self._persist(config)
         self.apply_settings()
         self.refresh()
@@ -287,8 +411,10 @@ class LocalApiController:
         # The LAN IP is hidden by default (masked field + status) so it can't be
         # leaked on stream; the eye toggle reveals it, and only when it matters.
         host.api_lan_host_field.setEchoMode(QLineEdit.Normal if reveal else QLineEdit.Password)
-        host.api_reveal_button.setVisible(running and not loopback)
-        host.api_reveal_button.setText(host._tr("api.hide" if reveal else "api.reveal"))
+        host.api_reveal_button.setVisible(bool(config["allow_lan"]))
+        host.api_pair_button.setVisible(running and not loopback)
+        host.api_reveal_button.set_icon_kind("eye-off" if reveal else "eye")
+        host.api_reveal_button.setToolTip(host._tr("api.hide" if reveal else "api.reveal"))
         if running and loopback:
             host.api_status_label.setText(host._tr("api.local_only"))
         elif running and reveal:
@@ -299,9 +425,52 @@ class LocalApiController:
             host.api_status_label.setText(host._tr("api.start_failed"))
         else:
             host.api_status_label.setText(host._tr("api.status_off"))
+        self._refresh_phones()
 
     def relocalize(self) -> None:
+        # The remote is a static page served by the local API. Recreate the
+        # server when its desktop language changes so the next phone refresh
+        # receives the matching translations too.
+        if self.is_running():
+            self.apply_settings()
         self.refresh()
+
+    def _mobile_labels(self) -> dict[str, str]:
+        host = self._host
+        keys = (
+            "pair_prompt",
+            "pair_connect",
+            "pair_invalid",
+            "pair_failed",
+            "connected",
+            "disconnected",
+            "power_on",
+            "power_off",
+            "all_off",
+            "pc_modes",
+            "pc_screen",
+            "pc_music",
+            "pc_effect",
+            "pc_diy",
+            "pc_active",
+            "pc_stop",
+            "brightness",
+            "colour",
+            "quick_modes",
+            "current_colour",
+            "custom_colour",
+            "recent_colours",
+            "open_palette",
+            "close_palette",
+            "sent",
+            "send_failed",
+            "mode_unavailable",
+            "mode_chill",
+            "mode_gaming",
+            "mode_night",
+            "mode_rainbow",
+        )
+        return {key: host._tr(f"remote.{key}") for key in keys}
 
     @staticmethod
     def _masked(token: str) -> str:
@@ -310,3 +479,12 @@ class LocalApiController:
         if len(token) <= 8:
             return "•" * len(token)
         return f"{token[:4]}…{token[-4:]}"
+
+    @staticmethod
+    def _masked_url(url: str) -> str:
+        """Hide the LAN host while keeping the scheme and port recognisable."""
+        scheme, separator, host_port = url.partition("://")
+        if not separator:
+            return "••••••••"
+        _, colon, port = host_port.rpartition(":")
+        return f"{scheme}://••••••••{colon}{port}" if colon else f"{scheme}://••••••••"

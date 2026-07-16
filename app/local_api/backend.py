@@ -89,9 +89,18 @@ class QtApiBackend:
     def apply_quick_mode(self, key: str) -> bool:
         return self._invoker.call(lambda: self._apply_quick_mode(key))
 
+    def set_pc_mode(self, mode: str) -> bool:
+        return self._invoker.call(lambda: self._set_pc_mode(mode))
+
     # ── main-thread implementations ───────────────────────────────────
     def _build_status(self) -> dict[str, Any]:
         host = self._host
+        primary = str(host._settings.get("last_device_address", "")).strip() if isinstance(host._settings, dict) else ""
+        name = (
+            device_display_name(primary, str(host._settings.get("last_device_name", "")), self._device_names())
+            if primary
+            else ""
+        )
         return {
             "connected": bool(host._is_connected),
             "power": bool(host.power_button.isChecked()),
@@ -102,7 +111,57 @@ class QtApiBackend:
                 "b": int(host.blue_slider.value()),
             },
             "mode": getattr(host, "_active_mode_key", None) or None,
+            "name": name,
+            "pc_mode": (pc := self._active_pc_mode()),
+            "pc_mode_detail": self._pc_mode_detail(pc),
         }
+
+    def _pc_mode_detail(self, mode: str | None) -> str:
+        # For "effect", the phone can't see which software effect is running, so
+        # surface its localised name (e.g. "Rainbow"). Other modes have none.
+        if mode != "effect":
+            return ""
+        host = self._host
+        saved = host._settings.get("software_fx", {}) if isinstance(host._settings, dict) else {}
+        key = str(saved.get("effect", "")).strip() if isinstance(saved, dict) else ""
+        translate = getattr(host, "_tr", None)
+        if not key or not callable(translate):
+            return ""
+        try:
+            return str(translate(f"software_fx.effect_{key}"))
+        except Exception:
+            return ""
+
+    # PC "hub" modes exposed to the phone: which live stream (if any) the desktop
+    # is currently running. The name is the stable API key; the label is localised
+    # on the phone side.
+    _PC_MODES = (("_ambient_ui", "screen"), ("_music_ui", "music"), ("_software_fx_ui", "effect"), ("_diy_ui", "diy"))
+
+    def _active_pc_mode(self) -> str | None:
+        for attr, key in self._PC_MODES:
+            controller = getattr(self._host, attr, None)
+            if controller is not None and controller.is_running():
+                return key
+        return None
+
+    def _set_pc_mode(self, mode: str) -> bool:
+        host = self._host
+        wanted = str(mode or "").strip().lower()
+        if wanted in ("", "off", "none", "stop"):
+            host.stop_streams()  # back to plain manual colour
+            return True
+        for attr, key in self._PC_MODES:
+            if key != wanted:
+                continue
+            controller = getattr(host, attr, None)
+            if controller is None:
+                return False
+            if controller.is_running():
+                return True
+            # activate() reports the real outcome — a Free licence or a missing
+            # BLE connection can silently refuse to start the stream.
+            return bool(controller.activate())
+        return False
 
     def _device_names(self) -> dict[str, str]:
         names = self._host._settings.get("device_names") if isinstance(self._host._settings, dict) else {}

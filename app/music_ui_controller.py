@@ -360,6 +360,13 @@ class MusicUiController:
         if self._music.is_running():
             self._stop()
 
+    def activate(self) -> bool:
+        """Start music reaction as if its toggle was pressed. Returns whether it
+        actually started (a licence/connection gate may have blocked it)."""
+        self._host.music_toggle_button.setChecked(True)
+        self._toggle()
+        return self.is_running()
+
     def shutdown(self) -> None:
         self._music.stop()
 

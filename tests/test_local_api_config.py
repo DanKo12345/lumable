@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.local_api import config as api_config
 from app.local_api.config import (
     DEFAULT_PORT,
+    LAN_WARNING_MAX_SHOWN,
     detect_lan_ip,
     generate_token,
     is_loopback,
@@ -31,6 +32,8 @@ def test_defaults_are_safe() -> None:
     cfg = validate_api_settings(None)
     assert cfg["enabled"] is False
     assert cfg["allow_lan"] is False
+    assert cfg["lan_confirmed"] is False
+    assert cfg["lan_warning_count"] == 0
     assert cfg["port"] == DEFAULT_PORT
     assert cfg["token"] == ""
     assert cfg["lan_host"] == ""
@@ -50,15 +53,29 @@ def test_lan_requires_flag_and_specific_host() -> None:
     # Flag on but no host -> still loopback.
     assert resolve_bind_host(validate_api_settings({"allow_lan": True})) == "127.0.0.1"
     # Flag on with a concrete IP -> that IP.
-    cfg = validate_api_settings({"allow_lan": True, "lan_host": "192.168.1.50"})
+    cfg = validate_api_settings(
+        {"allow_lan": True, "lan_confirmed": True, "lan_host": "192.168.1.50"}
+    )
     assert resolve_bind_host(cfg) == "192.168.1.50"
     # Host set but flag off -> loopback.
     assert resolve_bind_host(validate_api_settings({"lan_host": "192.168.1.50"})) == "127.0.0.1"
 
 
 def test_lan_never_binds_all_interfaces_implicitly() -> None:
-    cfg = validate_api_settings({"allow_lan": True, "lan_host": "0.0.0.0"})
+    cfg = validate_api_settings({"allow_lan": True, "lan_confirmed": True, "lan_host": "0.0.0.0"})
     assert resolve_bind_host(cfg) == "127.0.0.1"
+
+
+def test_legacy_lan_setting_requires_explicit_confirmation() -> None:
+    cfg = validate_api_settings({"allow_lan": True, "lan_host": "192.168.1.50"})
+
+    assert cfg["allow_lan"] is False
+    assert resolve_bind_host(cfg) == "127.0.0.1"
+
+
+def test_lan_warning_count_is_clamped() -> None:
+    assert validate_api_settings({"lan_warning_count": -1})["lan_warning_count"] == 0
+    assert validate_api_settings({"lan_warning_count": 999})["lan_warning_count"] == LAN_WARNING_MAX_SHOWN
 
 
 def test_generate_token_is_nonempty_and_unique() -> None:

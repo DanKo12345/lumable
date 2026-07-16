@@ -8,6 +8,7 @@ import urllib.request
 
 import pytest
 
+from app.local_api.pairing import PairingAttemptLimiter
 from app.local_api.router import ApiRouter
 from app.local_api.server import ApiServer
 
@@ -104,3 +105,21 @@ def test_command_denied_without_token_never_reaches_backend(server) -> None:
     status, _ = _request(f"{_base(srv)}/power", method="POST", body={"on": True})  # no token
     assert status == 401
     assert backend.calls == []  # default-deny: nothing happened
+
+
+def test_pairing_route_throttles_repeated_wrong_codes() -> None:
+    router = ApiRouter(FakeBackend(), TOKEN, pair_handler=lambda _code: None)
+    server = ApiServer(
+        router,
+        host="127.0.0.1",
+        port=0,
+        pairing_limiter=PairingAttemptLimiter(max_attempts=2),
+    )
+    server.start()
+    try:
+        url = f"{_base(server)}/pair"
+        assert _request(url, method="POST", body={"code": "000000"})[0] == 401
+        assert _request(url, method="POST", body={"code": "000000"})[0] == 401
+        assert _request(url, method="POST", body={"code": "000000"})[0] == 429
+    finally:
+        server.stop()

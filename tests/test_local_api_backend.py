@@ -115,6 +115,64 @@ def test_status_snapshot() -> None:
     assert status["brightness"] == 80
     assert status["color"] == {"r": 10, "g": 20, "b": 30}
     assert status["mode"] == "gaming"
+    assert status["name"] == "Desk"  # active strip name for the phone header
+    assert status["pc_mode"] is None  # no PC stream controllers on the bare host
+    assert status["pc_mode_detail"] == ""
+
+
+class _FakeMode:
+    def __init__(self, running: bool = False, starts: bool = True) -> None:
+        self._running = running
+        self._starts = starts  # whether activate() actually turns it on
+        self.activated = 0
+
+    def is_running(self) -> bool:
+        return self._running
+
+    def activate(self) -> bool:
+        self.activated += 1
+        self._running = self._starts
+        return self._running
+
+
+def test_set_pc_mode_activates_matching_controller() -> None:
+    host = _Host()
+    host._music_ui = _FakeMode()
+    backend = QtApiBackend(host)
+    assert backend.set_pc_mode("music") is True
+    assert host._music_ui.activated == 1
+    assert backend.status()["pc_mode"] == "music"
+
+
+def test_set_pc_mode_off_stops_all_streams() -> None:
+    host = _Host()
+    stops = {"count": 0}
+    host.stop_streams = lambda **_: stops.__setitem__("count", stops["count"] + 1)
+    assert QtApiBackend(host).set_pc_mode("off") is True
+    assert stops["count"] == 1
+
+
+def test_set_pc_mode_unknown_is_rejected() -> None:
+    assert _backend().set_pc_mode("laser") is False
+
+
+def test_pc_mode_detail_names_the_active_software_effect() -> None:
+    host = _Host()
+    host._tr = lambda key, **_: {"software_fx.effect_rainbow": "Rainbow"}.get(key, key)
+    host._settings["software_fx"] = {"effect": "rainbow"}
+    host._software_fx_ui = _FakeMode(running=True)
+    status = QtApiBackend(host).status()
+    assert status["pc_mode"] == "effect"
+    assert status["pc_mode_detail"] == "Rainbow"
+
+
+def test_set_pc_mode_reports_failure_when_gate_blocks_start() -> None:
+    host = _Host()
+    host._ambient_ui = _FakeMode(starts=False)  # e.g. Free licence / not connected
+    backend = QtApiBackend(host)
+    assert backend.set_pc_mode("screen") is False
+    assert host._ambient_ui.activated == 1
+    assert backend.status()["pc_mode"] is None
 
 
 def test_devices_lists_primary_and_mirror_with_names() -> None:

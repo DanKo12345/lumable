@@ -14,12 +14,21 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from app.local_api.mobile_page import MOBILE_PAGE
+from app.local_api.pairing import PairingAttemptLimiter
 from app.local_api.router import MAX_BODY_BYTES, ApiRouter
 from app.local_api.sse import SseBroker
 
 DEFAULT_PORT = 7345
 LOOPBACK = "127.0.0.1"
 _SSE_HEARTBEAT_SECONDS = 15.0
+
+
+def _record_pairing_success(
+    limiter: PairingAttemptLimiter, method: str, path: str, client: str, status: int
+) -> None:
+    if method == "POST" and path == "/pair" and status == 200:
+        limiter.record_success(client)
 
 
 class ApiServer:
@@ -30,11 +39,15 @@ class ApiServer:
         host: str = LOOPBACK,
         port: int = DEFAULT_PORT,
         broker: SseBroker | None = None,
+        mobile_page: str | None = None,
+        pairing_limiter: PairingAttemptLimiter | None = None,
     ) -> None:
         self._router = router
         self._broker = broker
         self._host = host or LOOPBACK
         self._port = int(port)
+        self._mobile_page = mobile_page or MOBILE_PAGE
+        self._pairing_limiter = pairing_limiter or PairingAttemptLimiter()
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -53,7 +66,8 @@ class ApiServer:
         if self._httpd is not None:
             return
         self._httpd = ThreadingHTTPServer(
-            (self._host, self._port), _make_handler(self._router, self._broker)
+            (self._host, self._port),
+            _make_handler(self._router, self._broker, self._mobile_page, self._pairing_limiter),
         )
         # If the caller asked for an ephemeral port (0), record the real one.
         self._port = self._httpd.server_address[1]
@@ -72,7 +86,12 @@ class ApiServer:
             thread.join(timeout=2.0)
 
 
-def _make_handler(router: ApiRouter, broker: SseBroker | None) -> type[BaseHTTPRequestHandler]:
+def _make_handler(
+    router: ApiRouter,
+    broker: SseBroker | None,
+    mobile_page: str,
+    pairing_limiter: PairingAttemptLimiter,
+) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
         # Keep the console quiet — the app has its own logging.
         def log_message(self, *_args: Any) -> None:
@@ -120,6 +139,12 @@ def _make_handler(router: ApiRouter, broker: SseBroker | None) -> type[BaseHTTPR
                 broker.unsubscribe(subscriber)
 
         def _dispatch(self, method: str) -> None:
+            path = self._path()
+            pairing_request = method == "POST" and path == "/pair"
+            client = self.client_address[0]
+            if pairing_request and not pairing_limiter.allow_attempt(client):
+                self._json(429, {"error": "too many pairing attempts; try again later"})
+                return
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
@@ -128,6 +153,7 @@ def _make_handler(router: ApiRouter, broker: SseBroker | None) -> type[BaseHTTPR
             body = self.rfile.read(min(max(length, 0), MAX_BODY_BYTES + 1)) if length > 0 else b""
             headers = dict(self.headers.items())
             response = router.handle(method, self.path, headers, body)
+            _record_pairing_success(pairing_limiter, method, path, client, response.status)
             payload = json.dumps(response.body).encode("utf-8")
             self.send_response(response.status)
             self.send_header("Content-Type", "application/json")
@@ -135,9 +161,25 @@ def _make_handler(router: ApiRouter, broker: SseBroker | None) -> type[BaseHTTPR
             self.end_headers()
             self.wfile.write(payload)
 
+        def _serve_mobile_page(self) -> None:
+            payload = mobile_page.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            # The page inherits LumaBLE's selected language at server startup.
+            # Avoid a phone keeping an old English page after the language changes.
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
         def do_GET(self) -> None:
-            if broker is not None and self._path() == "/events":
+            path = self._path()
+            if broker is not None and path == "/events":
                 self._stream_events()
+                return
+            # Browsers hitting the root get the mobile remote; tools still get JSON.
+            if path == "/" and "text/html" in (self.headers.get("Accept") or ""):
+                self._serve_mobile_page()
                 return
             self._dispatch("GET")
 

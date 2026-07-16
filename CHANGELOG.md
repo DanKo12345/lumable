@@ -2,6 +2,19 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.3.1] - 2026-07-16
+
+Your phone becomes a remote for the whole light setup on your PC. Open a QR, pair once, and control screen sync, music reaction, DIY effects and quick scenes from any browser — no app to install.
+
+### Added
+- Phone remote (Free): scan a QR from the "Open on phone" window, enter a one-time code, and a touch-friendly remote opens in the browser — power, brightness, colour swatches, a full HSV colour picker, recent colours, and quick-mode scenes. Works on iPhone and Android, no install and no account.
+- Control the PC's live modes from the phone: Screen sync, Music reaction, software Effect and DIY run as one-tap buttons that show which one is **active**, with a Stop, plus a "Turn everything off" master. This is the real difference from a manufacturer's Bluetooth app — the phone drives the powerful modes running on your PC, not just one strip.
+- Live status over Server-Sent Events on the phone (with polling as a fallback), quiet "Sent" / "No connection" feedback, and the active strip's name in the header.
+- Paired-phones controls in the API card: see how many phones are connected and disconnect them all with one button.
+
+### Security
+- The app token never leaves the PC: the QR carries only the address, and a phone pairs with a short one-time code that becomes a revocable, expiring session. Pairing attempts are rate-limited against code guessing. LAN access stays off by default; turning the API off or regenerating the token drops every paired phone.
+
 ## [0.3.0] - 2026-07-14
 
 LumaBLE becomes a local automation node: a small, secure HTTP API lets Home Assistant, AutoHotkey and your own scripts control the strip.

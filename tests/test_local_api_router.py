@@ -12,6 +12,7 @@ class FakeBackend:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
         self._quick_modes = {"gaming", "chill"}
+        self.pc_mode_starts = True
 
     def app_version(self) -> str:
         return "0.3.0"
@@ -37,6 +38,12 @@ class FakeBackend:
     def apply_quick_mode(self, key):
         self.calls.append(("quick", key))
         return key in self._quick_modes
+
+    def set_pc_mode(self, mode):
+        self.calls.append(("pc_mode", mode))
+        if not self.pc_mode_starts:
+            return False
+        return mode in {"screen", "music", "effect", "diy", "off"}
 
 
 def _router():
@@ -164,3 +171,94 @@ def test_oversized_body_is_413() -> None:
 
 def test_path_normalization_ignores_query_and_trailing_slash() -> None:
     assert _router().handle("GET", "/status/?foo=1", AUTH).status == 200
+
+
+# ── session auth + pairing ───────────────────────────────────────────────
+def _session_router():
+    return ApiRouter(
+        FakeBackend(),
+        TOKEN,
+        session_authorizer=lambda t: t == "good-session",
+        pair_handler=lambda code: "good-session" if code == "123456" else None,
+    )
+
+
+def test_valid_session_token_is_accepted() -> None:
+    resp = _session_router().handle("GET", "/status", {"Authorization": "Bearer good-session"})
+    assert resp.status == 200
+
+
+def test_invalid_session_token_is_rejected() -> None:
+    resp = _session_router().handle("GET", "/status", {"Authorization": "Bearer bad-session"})
+    assert resp.status == 401
+
+
+def test_pair_exchanges_code_for_session() -> None:
+    resp = _session_router().handle("POST", "/pair", body=_body({"code": "123456"}))
+    assert resp.status == 200
+    assert resp.body["session"] == "good-session"
+
+
+def test_pair_rejects_bad_code() -> None:
+    assert _session_router().handle("POST", "/pair", body=_body({"code": "000000"})).status == 401
+
+
+def test_pair_is_unauthenticated() -> None:
+    # No Authorization header at all, still reaches the pair handler.
+    assert _session_router().handle("POST", "/pair", body=_body({"code": "123456"})).status == 200
+
+
+def test_pair_unavailable_without_handler() -> None:
+    assert _router().handle("POST", "/pair", AUTH, _body({"code": "123456"})).status == 404
+
+
+def test_revoked_sessions_lose_api_access() -> None:
+    # End-to-end with a real PairingManager: pairing grants access; "Disconnect
+    # all phones" (revoke_all) takes it away again.
+    from app.local_api.pairing import PairingManager
+
+    pairing = PairingManager()
+    router = ApiRouter(
+        FakeBackend(),
+        TOKEN,
+        session_authorizer=pairing.is_valid_session,
+        pair_handler=pairing.pair,
+    )
+    session = router.handle("POST", "/pair", body=_body({"code": pairing.new_code()})).body["session"]
+    auth = {"Authorization": f"Bearer {session}"}
+    assert router.handle("GET", "/status", auth).status == 200
+    assert pairing.session_count() == 1
+
+    pairing.revoke_all()
+    assert router.handle("GET", "/status", auth).status == 401
+    assert pairing.session_count() == 0
+
+
+# ── PC hub modes ─────────────────────────────────────────────────────────
+def test_pc_mode_triggers_backend() -> None:
+    backend = FakeBackend()
+    resp = ApiRouter(backend, TOKEN).handle("POST", "/pc-mode", AUTH, _body({"mode": "music"}))
+    assert resp.status == 200
+    assert resp.body["mode"] == "music"
+    assert ("pc_mode", "music") in backend.calls
+
+
+def test_pc_mode_off_stops() -> None:
+    backend = FakeBackend()
+    resp = ApiRouter(backend, TOKEN).handle("POST", "/pc-mode", AUTH, _body({"mode": "off"}))
+    assert resp.status == 200
+    assert ("pc_mode", "off") in backend.calls
+
+
+def test_pc_mode_rejects_unknown() -> None:
+    assert _router().handle("POST", "/pc-mode", AUTH, _body({"mode": "laser"})).status == 400
+    assert _router().handle("POST", "/pc-mode", AUTH, _body({})).status == 400
+
+
+def test_pc_mode_returns_409_when_it_cannot_start() -> None:
+    # Valid mode, but the desktop refused to start it (Free licence / no strip).
+    backend = FakeBackend()
+    backend.pc_mode_starts = False
+    resp = ApiRouter(backend, TOKEN).handle("POST", "/pc-mode", AUTH, _body({"mode": "music"}))
+    assert resp.status == 409
+    assert "error" in resp.body

@@ -518,6 +518,13 @@ class DiyUiController:
         if self._fx.is_running():
             self._stop_run()
 
+    def activate(self) -> bool:
+        """Run the current DIY effect as if its Run button was pressed. Returns
+        whether it actually started (a gate may have blocked it)."""
+        self._host.diy_run_button.setChecked(True)
+        self._toggle_run()
+        return self.is_running()
+
     def shutdown(self) -> None:
         self._fx.stop()
 

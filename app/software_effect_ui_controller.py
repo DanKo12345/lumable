@@ -52,6 +52,13 @@ class SoftwareEffectUiController:
         if self._fx.is_running():
             self._stop()
 
+    def activate(self) -> bool:
+        """Start the software effect as if its toggle was pressed. Returns
+        whether it actually started (a gate may have blocked it)."""
+        self._host.software_fx_toggle.setChecked(True)
+        self._toggle()
+        return self.is_running()
+
     def shutdown(self) -> None:
         self._fx.stop()
 

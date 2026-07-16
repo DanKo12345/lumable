@@ -318,6 +318,7 @@ class UiLocalizationController:
         host.api_lan_warning.setText(host._tr("api.lan_warning"))
         host.api_security_note.setText(host._tr("api.security_note"))
         host.api_help_button.setText(host._tr("api.help"))
+        host.api_pair_button.setText(host._tr("api.pair"))
         advanced_open = host.api_advanced_toggle.isChecked()
         host.api_advanced_toggle.setText(host._tr("api.advanced_hide" if advanced_open else "api.advanced"))
         host._local_api.relocalize()
