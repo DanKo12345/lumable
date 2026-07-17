@@ -12,10 +12,12 @@ from app.update_checker import UpdateChecker, UpdateResult
 
 class UpdateController:
     AUTO_CHECK_INTERVAL_SECONDS = 6 * 60 * 60
+    UPDATE_REMINDER_INTERVAL_SECONDS = 24 * 60 * 60
     RATE_LIMIT_COOLDOWN_SECONDS = 600
 
     def __init__(self, host: Any, current_version: str, update_url: str, releases_url: str) -> None:
         self._host = host
+        self._current_version = current_version.strip()
         self._releases_url = releases_url.strip()
         self._checker = UpdateChecker(current_version, update_url, releases_url)
         self.result: UpdateResult | None = None
@@ -102,16 +104,25 @@ class UpdateController:
         self._host._log(self._host._tr("updates.current", version=result.info.current_version))
 
     def _notify_update(self, info, was_silent: bool) -> None:
-        # Show the pop-up only for the quiet auto-check (a manual check already
-        # surfaces the result on the button), and only once per version so it
-        # never nags after the user dismissed it.
+        # Manual checks already surface the result on the button. For background
+        # checks, repeat the reminder at a humane interval while the app is old.
         if not was_silent:
             return
         settings = getattr(self._host, "_settings", None)
         if isinstance(settings, dict):
-            if str(settings.get("updates_notified_version", "")) == info.latest_version:
+            now = int(time())
+            notified_version = str(settings.get("updates_notified_version", ""))
+            try:
+                notified_at = int(settings.get("updates_notified_at", 0) or 0)
+            except (TypeError, ValueError):
+                notified_at = 0
+            if (
+                notified_version == info.latest_version
+                and 0 <= now - notified_at < self.UPDATE_REMINDER_INTERVAL_SECONDS
+            ):
                 return
             settings["updates_notified_version"] = info.latest_version
+            settings["updates_notified_at"] = now
             save_settings(settings)
         show = getattr(self._host, "_show_update_overlay", None)
         if callable(show):
@@ -136,17 +147,21 @@ class UpdateController:
         settings = getattr(self._host, "_settings", {})
         if not isinstance(settings, dict):
             return True
+        if str(settings.get("updates_last_auto_check_version", "")) != self._current_version:
+            return True
         try:
             last_check_at = float(settings.get("updates_last_auto_check_at", 0) or 0)
         except (TypeError, ValueError):
             last_check_at = 0.0
-        return time() - last_check_at >= self.AUTO_CHECK_INTERVAL_SECONDS
+        elapsed = time() - last_check_at
+        return elapsed < 0 or elapsed >= self.AUTO_CHECK_INTERVAL_SECONDS
 
     def _mark_silent_check_attempted(self) -> None:
         settings = getattr(self._host, "_settings", None)
         if not isinstance(settings, dict):
             return
         settings["updates_last_auto_check_at"] = int(time())
+        settings["updates_last_auto_check_version"] = self._current_version
         save_settings(settings)
 
     def _start_check_animation(self) -> None:

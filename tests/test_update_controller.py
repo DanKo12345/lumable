@@ -21,7 +21,13 @@ class FakeHost:
         self.check_update_button = FakeButton()
         self.logs: list[str] = []
         self._update_result = None
-        self._settings = {"updates_last_auto_check_at": 0}
+        self._settings = {
+            "updates_last_auto_check_at": 0,
+            "updates_last_auto_check_version": "",
+            "updates_notified_version": "",
+            "updates_notified_at": 0,
+        }
+        self.update_overlays: list[object] = []
 
     def _tr(self, key: str, **kwargs: object) -> str:
         if kwargs:
@@ -31,6 +37,9 @@ class FakeHost:
 
     def _log(self, message: str) -> None:
         self.logs.append(message)
+
+    def _show_update_overlay(self, info: object) -> None:
+        self.update_overlays.append(info)
 
 
 class RunningChecker:
@@ -124,7 +133,7 @@ def test_manual_click_uses_running_background_check_animation() -> None:
 def test_silent_update_check_skips_recent_attempt(monkeypatch) -> None:
     monkeypatch.setattr("app.update_controller.time", lambda: 2_000.0)
     host = FakeHost()
-    host._settings["updates_last_auto_check_at"] = 1_900
+    host._settings.update({"updates_last_auto_check_at": 1_900, "updates_last_auto_check_version": "0.1.1"})
     controller = UpdateController(host, "0.1.1", "", "")
     checker = ConfiguredChecker()
     controller._checker = checker
@@ -148,4 +157,49 @@ def test_silent_update_check_records_attempt(monkeypatch) -> None:
 
     assert checker.check_calls == 1
     assert host._settings["updates_last_auto_check_at"] == 90_000
-    assert saved_settings == [{"updates_last_auto_check_at": 90_000}]
+    assert host._settings["updates_last_auto_check_version"] == "0.1.1"
+    assert saved_settings == [host._settings]
+
+
+def test_silent_update_check_runs_after_app_version_changes(monkeypatch) -> None:
+    monkeypatch.setattr("app.update_controller.time", lambda: 2_000.0)
+    host = FakeHost()
+    host._settings.update({"updates_last_auto_check_at": 1_999, "updates_last_auto_check_version": "0.1.0"})
+    controller = UpdateController(host, "0.1.1", "", "")
+    checker = ConfiguredChecker()
+    controller._checker = checker
+
+    controller.check_silent()
+
+    assert checker.check_calls == 1
+
+
+def test_silent_update_check_ignores_future_timestamp(monkeypatch) -> None:
+    monkeypatch.setattr("app.update_controller.time", lambda: 2_000.0)
+    host = FakeHost()
+    host._settings.update({"updates_last_auto_check_at": 9_999, "updates_last_auto_check_version": "0.1.1"})
+    controller = UpdateController(host, "0.1.1", "", "")
+    checker = ConfiguredChecker()
+    controller._checker = checker
+
+    controller.check_silent()
+
+    assert checker.check_calls == 1
+
+
+def test_update_reminder_reappears_after_a_day(monkeypatch) -> None:
+    saved_settings: list[dict[str, object]] = []
+    monkeypatch.setattr("app.update_controller.save_settings", lambda settings: saved_settings.append(dict(settings)))
+    host = FakeHost()
+    controller = UpdateController(host, "0.1.1", "", "")
+    info = type("Info", (), {"latest_version": "0.2.0"})()
+
+    monkeypatch.setattr("app.update_controller.time", lambda: 100_000.0)
+    controller._notify_update(info, was_silent=True)
+    controller._notify_update(info, was_silent=True)
+
+    monkeypatch.setattr("app.update_controller.time", lambda: 100_000.0 + 24 * 60 * 60)
+    controller._notify_update(info, was_silent=True)
+
+    assert len(host.update_overlays) == 2
+    assert len(saved_settings) == 2

@@ -234,7 +234,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "quick_mode": "",
     "custom_quick_modes": [],
     "updates_last_auto_check_at": 0,
+    "updates_last_auto_check_version": "",
     "updates_notified_version": "",
+    "updates_notified_at": 0,
     "license": {
         "activated": False,
         "edition": "free",
@@ -709,9 +711,19 @@ def validate_settings(data: Any) -> dict[str, Any]:
             0,
             4_102_444_800,
         ),
+        "updates_last_auto_check_version": _coerce_str(
+            data.get("updates_last_auto_check_version"),
+            DEFAULT_SETTINGS["updates_last_auto_check_version"],
+        ),
         "updates_notified_version": _coerce_str(
             data.get("updates_notified_version"),
             DEFAULT_SETTINGS["updates_notified_version"],
+        ),
+        "updates_notified_at": _coerce_int(
+            data.get("updates_notified_at"),
+            DEFAULT_SETTINGS["updates_notified_at"],
+            0,
+            4_102_444_800,
         ),
         "license": validate_license_state(data.get("license", DEFAULT_SETTINGS["license"])),
         "window_width": _coerce_int(data.get("window_width"), DEFAULT_SETTINGS["window_width"], 800, 7680),
