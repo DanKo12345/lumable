@@ -27,4 +27,4 @@ Lucide Icons
 License: ISC
 Project: https://lucide.dev
 Used for small interface icons. The bundled icon license is also stored in
-app/assets/icons/lucide/LICENSE.
+app/assets/icons/lucide/LICENSE-LUCIDE.txt.

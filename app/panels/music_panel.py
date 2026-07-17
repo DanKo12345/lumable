@@ -14,7 +14,7 @@ _BANDS = (("bass", "music.band_bass"), ("mid", "music.band_mid"), ("treble", "mu
 
 
 def build_music_section(host: PanelHost) -> GlassCard:
-    host.music_card = host._card(host._tr("music.title"), host._tr("music.subtitle"), icon="effects")
+    host.music_card = host._card(host._tr("music.title"), host._tr("music.subtitle"), icon="audio-lines")
     host.music_card.setMinimumHeight(host._sz(196))
 
     # Pro badge shown when music sync isn't unlocked (toggled by the controller).

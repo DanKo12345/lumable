@@ -12,6 +12,8 @@ from app.hotkeys import ACTIONS as HOTKEY_ACTIONS
 from app.hotkeys import DEFAULT_HOTKEYS, parse_hotkey
 from app.license import validate_license_state
 from app.local_api.config import validate_api_settings
+from app.scene_store import normalize_group
+from app.scenes import normalize_scene, unwrap_scene, wrap_scene
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(user_data_dir("LumaBLE", False, roaming=True))
@@ -218,6 +220,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "onboarding_seen": False,
     "device_names": {},
+    "scenes": [],
+    "device_groups": [],
     "api": {
         "enabled": False,
         "port": 7345,
@@ -601,6 +605,36 @@ def validate_schedule(data: Any) -> dict[str, Any]:
     }
 
 
+def validate_scenes(data: Any) -> list[dict[str, Any]]:
+    """Keep valid scene envelopes (re-canonicalised), drop corrupt ones, cap the
+    count. Tolerates a bare scene dict saved by an older build."""
+    if not isinstance(data, list):
+        return []
+    scenes: list[dict[str, Any]] = []
+    for entry in data:
+        scene = unwrap_scene(entry)
+        if scene is None and isinstance(entry, dict) and "state" in entry:
+            scene = normalize_scene(entry)
+        if scene is not None:
+            scenes.append(wrap_scene(scene))
+        if len(scenes) >= 50:
+            break
+    return scenes
+
+
+def validate_device_groups(data: Any) -> list[dict[str, Any]]:
+    if not isinstance(data, list):
+        return []
+    groups: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in data:
+        group = normalize_group(entry)
+        if group and group["name"] and group["group_id"] not in seen:
+            seen.add(group["group_id"])
+            groups.append(group)
+    return groups
+
+
 def validate_settings(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         data = {}
@@ -664,6 +698,8 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "diy_saved": validate_diy_saved(data.get("diy_saved", [])),
         "timers": validate_timers(data.get("timers", DEFAULT_SETTINGS["timers"])),
         "device_names": validate_device_names(data.get("device_names", DEFAULT_SETTINGS["device_names"])),
+        "scenes": validate_scenes(data.get("scenes", [])),
+        "device_groups": validate_device_groups(data.get("device_groups", [])),
         "api": validate_api_settings(data.get("api", DEFAULT_SETTINGS["api"])),
         "quick_mode": quick_mode,
         "custom_quick_modes": custom_quick_modes,

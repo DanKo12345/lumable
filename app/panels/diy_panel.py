@@ -12,7 +12,7 @@ from app.widgets.segmented_control import SegmentedControl
 
 
 def build_diy_section(host: PanelHost) -> GlassCard:
-    host.diy_card = host._card(host._tr("diy.title"), host._tr("diy.subtitle"), icon="effects")
+    host.diy_card = host._card(host._tr("diy.title"), host._tr("diy.subtitle"), icon="pen-tool")
     host.diy_card.setMinimumHeight(host._sz(300))
 
     # Pro badge — clickable, opens the Pro window (feature is Pro-gated).

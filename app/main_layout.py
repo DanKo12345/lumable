@@ -28,6 +28,7 @@ from app.panels import (
     build_hotkeys_section,
     build_local_api_section,
     build_music_section,
+    build_scenes_section,
     build_schedule_section,
     build_software_effects_section,
     build_timers_section,
@@ -76,6 +77,7 @@ def _build_settings_card(host):
 # rarely-touched setup (device, schedule, app settings, diagnostics).
 _NAV_SECTIONS = (
     ("color", "nav.color", (build_color_section,)),
+    ("scenes", "nav.scenes", (build_scenes_section,)),
     ("effects", "nav.effects", (build_effects_section, build_software_effects_section, build_diy_section)),
     ("ambient", "nav.ambient", (build_ambient_section,)),
     ("music", "nav.music", (build_music_section,)),

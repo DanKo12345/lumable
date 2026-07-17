@@ -1,0 +1,295 @@
+"""Pure, Qt-free core for LumaBLE scenes.
+
+A *scene* is one saved light state that every surface — the PC UI, the phone
+remote, hotkeys and the Local API — can trigger through a single model, instead
+of each re-implementing "set this look". The design notes (0.3.2 Scenes
+Foundation):
+
+- **Optional state fields.** A field that is ``None`` means "leave it as it is",
+  distinct from a field set to a value ("apply this"). So a "dim everything"
+  scene can carry only ``brightness`` and touch nothing else.
+- **Tagged effect.** ``effect`` is a small union ``{kind, ref, speed}`` where
+  ``kind`` is ``firmware`` (ref = int code), ``software`` (ref = key) or ``diy``
+  (ref = effect id). One int can't stand in for three incompatible subsystems.
+- **Stable targets.** A scene points at ``primary`` / ``all`` / a ``group_id``
+  (a stable id, never a display name), so renames don't break saved scenes.
+- **Capability-aware apply.** :func:`plan_apply` turns a scene's state + a target
+  capability map into an ordered, best-effort action list plus a report of the
+  fields it had to skip (e.g. no CCT hardware). It never raises and never does
+  "all or nothing".
+- **Versioned + validated.** Scenes round-trip through a versioned envelope with
+  a checksum and are normalised defensively on read, because they live for years
+  in profiles and shared codes.
+
+This module is intentionally free of Qt and any I/O so it stays trivially
+testable; the store and the (main-thread) apply service build on top of it.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import hashlib
+import json
+import uuid
+from typing import Any
+
+SCENE_TYPE = "scene"
+SCENE_VERSION = 1
+SHARE_PREFIX = "LUMASCENE1-"
+
+EFFECT_KINDS = frozenset({"firmware", "software", "diy"})
+TARGET_KINDS = frozenset({"primary", "all", "group"})
+PC_MODES = frozenset({"screen", "music", "effect", "diy"})
+
+_MAX_NAME = 40
+_MAX_ICON = 32
+_CCT_MIN, _CCT_MAX = 1000, 10000
+
+# Canonical application order. Streams are stopped first (by the apply service),
+# then the light state is set, and a PC mode — if any — is started last so it
+# takes ownership of the strip after the base look is in place.
+STATE_FIELDS = ("power", "rgb", "cct", "brightness", "effect", "pc_mode")
+
+
+def new_scene_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _clamp(value: Any, low: int, high: int, default: int) -> int:
+    try:
+        return max(low, min(high, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _norm_hex(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if len(text) == 7 and text[0] == "#":
+        try:
+            int(text[1:], 16)
+            return text.upper()
+        except ValueError:
+            return ""
+    return ""
+
+
+def _norm_rgb(raw: Any) -> list[int] | None:
+    if isinstance(raw, dict) and all(k in raw for k in ("r", "g", "b")):
+        raw = [raw["r"], raw["g"], raw["b"]]
+    if not isinstance(raw, (list, tuple)) or len(raw) != 3:
+        return None
+    return [_clamp(raw[0], 0, 255, 0), _clamp(raw[1], 0, 255, 0), _clamp(raw[2], 0, 255, 0)]
+
+
+def _norm_effect(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    kind = raw.get("kind")
+    if kind not in EFFECT_KINDS:
+        return None
+    ref = raw.get("ref")
+    if kind == "firmware":
+        try:
+            ref = max(0, min(255, int(ref)))
+        except (TypeError, ValueError):
+            return None
+    else:
+        ref = str(ref or "").strip()
+        if not ref:
+            return None
+    speed = raw.get("speed")
+    if speed is not None:
+        speed = _clamp(speed, 0, 100, 50)
+    return {"kind": kind, "ref": ref, "speed": speed}
+
+
+def _norm_target(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {"kind": "primary", "group_id": None}
+    kind = raw.get("kind")
+    if kind not in TARGET_KINDS:
+        kind = "primary"
+    group_id = raw.get("group_id")
+    group_id = str(group_id).strip() if group_id else None
+    if kind == "group" and not group_id:
+        kind = "primary"  # a group target with no id is meaningless
+    return {"kind": kind, "group_id": group_id if kind == "group" else None}
+
+
+def _norm_state(raw: Any) -> dict[str, Any]:
+    raw = raw if isinstance(raw, dict) else {}
+    power = raw.get("power")
+    cct = _clamp(raw["cct"], _CCT_MIN, _CCT_MAX, _CCT_MIN) if raw.get("cct") is not None else None
+    brightness = _clamp(raw["brightness"], 0, 100, 100) if raw.get("brightness") is not None else None
+    pc_mode = raw.get("pc_mode")
+    return {
+        "power": bool(power) if isinstance(power, bool) else None,
+        "rgb": _norm_rgb(raw["rgb"]) if raw.get("rgb") is not None else None,
+        "cct": cct,
+        "brightness": brightness,
+        "effect": _norm_effect(raw["effect"]) if raw.get("effect") is not None else None,
+        "pc_mode": pc_mode if pc_mode in PC_MODES else None,
+    }
+
+
+def normalize_scene(raw: Any) -> dict[str, Any] | None:
+    """Coerce any dict into a valid, canonical scene (safe defaults, clamped
+    ranges, a generated id if missing). Returns ``None`` only for non-dict input,
+    so a corrupt-but-shaped JSON blob degrades gracefully instead of crashing."""
+    if not isinstance(raw, dict):
+        return None
+    return {
+        "scene_id": (str(raw.get("scene_id") or "").strip() or new_scene_id()),
+        "name": str(raw.get("name") or "").strip()[:_MAX_NAME],
+        "icon": str(raw.get("icon") or "").strip()[:_MAX_ICON],
+        "color": _norm_hex(raw.get("color")),
+        "target": _norm_target(raw.get("target")),
+        "state": _norm_state(raw.get("state")),
+    }
+
+
+def make_scene(
+    name: str,
+    state: dict[str, Any],
+    *,
+    target: dict[str, Any] | None = None,
+    icon: str = "",
+    color: str = "",
+    scene_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a normalised scene from parts (generates an id when not given)."""
+    scene = normalize_scene(
+        {
+            "scene_id": scene_id,
+            "name": name,
+            "icon": icon,
+            "color": color,
+            "target": target,
+            "state": state,
+        }
+    )
+    assert scene is not None  # input is always a dict here
+    return scene
+
+
+# ── storage envelope (versioned + checksummed) ────────────────────────────
+def _checksum(payload: dict[str, Any]) -> str:
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def _migrate(payload: Any, version: int) -> Any:
+    # Only v1 exists today. Future readers add ``if version < N: payload = ...``
+    # here so old profiles keep opening after the schema evolves.
+    return payload
+
+
+def wrap_scene(scene: dict[str, Any]) -> dict[str, Any]:
+    """Wrap a scene for on-disk storage: type + version + payload + checksum."""
+    normalized = normalize_scene(scene) or {}
+    return {
+        "type": SCENE_TYPE,
+        "version": SCENE_VERSION,
+        "payload": normalized,
+        "checksum": _checksum(normalized),
+    }
+
+
+def unwrap_scene(data: Any) -> dict[str, Any] | None:
+    """Read a stored envelope back to a scene, or ``None`` if it is the wrong
+    type, a newer version, or fails its checksum. The checksum is **mandatory**
+    for this format: a missing or non-matching one is treated as corruption."""
+    if not isinstance(data, dict) or data.get("type") != SCENE_TYPE:
+        return None
+    version = data.get("version")
+    if not isinstance(version, int) or version < 1 or version > SCENE_VERSION:
+        return None
+    payload = _migrate(data.get("payload"), version)
+    checksum = data.get("checksum")
+    if not isinstance(checksum, str) or not checksum or not isinstance(payload, dict):
+        return None
+    if _checksum(payload) != checksum:
+        return None
+    return normalize_scene(payload)
+
+
+# ── portable share code (distinct sentinel, not a DIY effect) ─────────────
+def encode_scene(scene: dict[str, Any]) -> str:
+    """Encode a scene to a portable ``LUMASCENE1-<base64>`` code."""
+    payload = {"t": SCENE_TYPE, "v": SCENE_VERSION, "scene": normalize_scene(scene) or {}}
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return SHARE_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def decode_scene(code: str) -> dict[str, Any] | None:
+    """Decode a shared scene code back to a scene, or ``None`` if invalid."""
+    if not isinstance(code, str) or not code.strip().startswith(SHARE_PREFIX):
+        return None
+    body = code.strip()[len(SHARE_PREFIX):]
+    try:
+        raw = base64.urlsafe_b64decode(body.encode("ascii"))
+        payload = json.loads(raw.decode("utf-8"))
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("t") != SCENE_TYPE:
+        return None
+    version = payload.get("v")
+    if not isinstance(version, int) or version < 1 or version > SCENE_VERSION:
+        return None
+    return normalize_scene(_migrate(payload.get("scene"), version))
+
+
+# ── capability-aware apply planning ───────────────────────────────────────
+def _supports(capabilities: dict[str, Any] | None, name: str, default: bool) -> bool:
+    value = (capabilities or {}).get(name)
+    return default if value is None else bool(value)
+
+
+def plan_apply(state: dict[str, Any], capabilities: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Turn a scene's ``state`` + a target's capabilities into an ordered,
+    best-effort plan.
+
+    Returns ``{"actions": [...], "skipped": [...]}``. Only fields present in the
+    scene are considered; a present field the target can't do (e.g. ``cct`` on a
+    plain RGB strip) is reported in ``skipped`` with a reason, never silently
+    dropped and never a hard failure. Actions come out in canonical order so a
+    PC ``pc_mode`` starts after the base light state is set.
+    """
+    state = state if isinstance(state, dict) else {}
+    actions: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+
+    if isinstance(state.get("power"), bool):
+        actions.append({"op": "power", "on": state["power"]})
+
+    rgb = state.get("rgb")
+    if rgb is not None:
+        if _supports(capabilities, "rgb", True):
+            actions.append({"op": "color", "rgb": list(rgb)})
+        else:
+            skipped.append({"field": "rgb", "reason": "unsupported"})
+
+    cct = state.get("cct")
+    if cct is not None:
+        if _supports(capabilities, "cct", False):  # most cheap strips have no white channel
+            actions.append({"op": "cct", "value": cct})
+        else:
+            skipped.append({"field": "cct", "reason": "unsupported"})
+
+    brightness = state.get("brightness")
+    if brightness is not None:
+        actions.append({"op": "brightness", "value": brightness})
+
+    effect = state.get("effect")
+    if effect is not None:
+        if effect.get("kind") == "firmware" and not _supports(capabilities, "firmware_effects", True):
+            skipped.append({"field": "effect", "reason": "unsupported"})
+        else:
+            actions.append({"op": "effect", "effect": effect})
+
+    pc_mode = state.get("pc_mode")
+    if pc_mode is not None:
+        actions.append({"op": "pc_mode", "mode": pc_mode})
+
+    return {"actions": actions, "skipped": skipped}

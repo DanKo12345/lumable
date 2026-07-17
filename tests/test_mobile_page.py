@@ -88,3 +88,17 @@ def test_mobile_page_has_pc_modes_with_active_state() -> None:
     assert "error.status === 409" in page
     assert '"mode_unavailable": "Needs Pro or a strip"' in page
     assert "pc_mode_detail" in page  # shows which effect is running, not just "Effect"
+
+
+def test_mobile_page_has_scenes_client() -> None:
+    page = build_mobile_page({"scenes": "My scenes", "save_scene": "Save now", "scenes_empty": "Empty"})
+
+    assert '"scenes": "My scenes"' in page
+    assert "/scenes/apply" in page
+    assert "/scenes/save" in page
+    assert "/scenes/delete" in page
+    assert "async function loadScenes(" in page
+    assert "async function applyScene(" in page
+    assert "async function saveScene(" in page
+    assert "function escapeHtml(" in page  # user-entered scene names are escaped
+    assert 'id="scenes"' in page

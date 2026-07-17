@@ -40,15 +40,19 @@ class _Power:
 
 
 class _Combo:
-    def __init__(self, codes: dict[int, int]) -> None:
+    def __init__(self, codes: dict[int, int], current_code: int = 0) -> None:
         self._codes = codes  # code -> index
         self.current = -1
+        self.current_code = current_code  # 0 = solid / no firmware effect
 
     def findData(self, code: int) -> int:
         return self._codes.get(int(code), -1)
 
     def setCurrentIndex(self, index: int) -> None:
         self.current = index
+
+    def currentData(self):
+        return self.current_code
 
 
 class _Ble:
@@ -76,7 +80,8 @@ class _Host(QObject):
         self.green_slider = _Slider(20)
         self.blue_slider = _Slider(30)
         self.brightness_slider = _Slider(80)
-        self.effect_combo = _Combo({7: 3})
+        self.speed_slider = _Slider(60)
+        self.effect_combo = _Combo({7: 3, 12: 5})
         self._ble = _Ble()
         self._is_connected = True
         self._active_mode_key = "gaming"
@@ -84,7 +89,11 @@ class _Host(QObject):
         self._settings = {"last_device_address": "AA:BB", "last_device_name": "Strip", "device_names": {"AA:BB": "Desk"}}
         self.toggled = 0
         self.applied = 0
+        self.stops = 0
         self.activated: list[str] = []
+
+    def stop_streams(self, **_):
+        self.stops += 1
 
     @contextlib.contextmanager
     def _suppress_signals(self):
@@ -154,6 +163,49 @@ def test_set_pc_mode_off_stops_all_streams() -> None:
 
 def test_set_pc_mode_unknown_is_rejected() -> None:
     assert _backend().set_pc_mode("laser") is False
+
+
+# ── scenes (integration with the real QtApiBackend) ───────────────────────
+def test_save_scene_snapshots_current_state(monkeypatch) -> None:
+    import app.local_api.backend as backend_mod
+
+    monkeypatch.setattr(backend_mod, "save_settings", lambda *_a, **_k: None)
+    host = _Host()
+    host.effect_combo.current_code = 12  # a firmware effect is active
+    backend = QtApiBackend(host)
+
+    scene = backend.save_scene("Look")
+    assert scene is not None
+    assert scene["state"]["power"] is True
+    assert scene["state"]["rgb"] == [10, 20, 30]
+    assert scene["state"]["brightness"] == 80
+    assert scene["state"]["effect"] == {"kind": "firmware", "ref": 12, "speed": 60}
+    assert [s["name"] for s in backend.list_scenes()] == ["Look"]
+
+
+def test_apply_scene_stops_streams_then_applies_to_the_connected_set(monkeypatch) -> None:
+    # 0.3.2 applies to all connected strips (no per-strip BLE addressing yet);
+    # this proves the stop-first ordering and that the light is actually pushed.
+    import app.local_api.backend as backend_mod
+
+    monkeypatch.setattr(backend_mod, "save_settings", lambda *_a, **_k: None)
+    host = _Host()
+    backend = QtApiBackend(host)
+    scene = backend.save_scene("Look")
+    host.toggled = host.applied = host.stops = 0
+
+    report = backend.apply_scene(scene["scene_id"])
+    assert report is not None
+    assert host.stops >= 1               # a live stream is stopped before applying
+    assert "color" in report["applied"]
+    assert host.applied >= 1             # colour was actually pushed to the strip
+
+
+def test_apply_unknown_scene_returns_none(monkeypatch) -> None:
+    import app.local_api.backend as backend_mod
+
+    monkeypatch.setattr(backend_mod, "save_settings", lambda *_a, **_k: None)
+    assert QtApiBackend(_Host()).apply_scene("nope") is None
 
 
 def test_pc_mode_detail_names_the_active_software_effect() -> None:

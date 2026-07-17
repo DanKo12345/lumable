@@ -35,6 +35,10 @@ _KNOWN_ROUTES: dict[str, set[str]] = {
     "/effect": {"POST"},
     "/quick-mode": {"POST"},
     "/pc-mode": {"POST"},
+    "/scenes": {"GET"},
+    "/scenes/save": {"POST"},
+    "/scenes/apply": {"POST"},
+    "/scenes/delete": {"POST"},
 }
 
 # PC "hub" modes the phone can trigger (plus "off" to stop and return to manual).
@@ -61,6 +65,10 @@ class ApiBackend(Protocol):
     def set_effect(self, code: int, speed: int | None, device_id: str | None) -> None: ...
     def apply_quick_mode(self, key: str) -> bool: ...
     def set_pc_mode(self, mode: str) -> bool: ...
+    def list_scenes(self) -> list[dict[str, Any]]: ...
+    def save_scene(self, name: str) -> dict[str, Any] | None: ...
+    def apply_scene(self, scene_id: str) -> dict[str, Any] | None: ...
+    def delete_scene(self, scene_id: str) -> bool: ...
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -113,6 +121,10 @@ class ApiRouter:
                     "POST /effect": "{code, speed?}",
                     "POST /quick-mode": "{key}",
                     "POST /pc-mode": "{mode: screen|music|effect|diy|off}",
+                    "GET /scenes": "saved scenes",
+                    "POST /scenes/save": "{name} — snapshot current state",
+                    "POST /scenes/apply": "{scene_id}",
+                    "POST /scenes/delete": "{scene_id}",
                 }
                 body["auth"] = "Send 'Authorization: Bearer <token>' on every request except /health and /."
             return ApiResponse(200, body)
@@ -144,6 +156,8 @@ class ApiRouter:
             return ApiResponse(200, dict(self._backend.status()))
         if path == "/devices":
             return ApiResponse(200, {"devices": list(self._backend.devices())})
+        if path == "/scenes":
+            return ApiResponse(200, {"scenes": list(self._backend.list_scenes())})
         return ApiResponse(404, {"error": "not found"})
 
     # ── POST ──────────────────────────────────────────────────────────
@@ -204,7 +218,40 @@ class ApiRouter:
                 return ApiResponse(409, {"error": "mode could not start (needs Pro or a connected strip)"})
             return ApiResponse(200, {"ok": True, "mode": normalized})
 
+        scene_response = self._handle_scene_post(path, data)
+        if scene_response is not None:
+            return scene_response
+
         return ApiResponse(404, {"error": "not found"})
+
+    def _handle_scene_post(self, path: str, data: dict[str, Any]) -> ApiResponse | None:
+        if path == "/scenes/save":
+            name = data.get("name")
+            if not isinstance(name, str) or not name.strip():
+                return ApiResponse(400, {"error": "'name' is required"})
+            scene = self._backend.save_scene(name.strip())
+            if scene is None:
+                return ApiResponse(400, {"error": "scene could not be saved"})
+            return ApiResponse(200, {"scene": scene})
+
+        if path == "/scenes/apply":
+            scene_id = data.get("scene_id")
+            if not isinstance(scene_id, str) or not scene_id.strip():
+                return ApiResponse(400, {"error": "'scene_id' is required"})
+            report = self._backend.apply_scene(scene_id.strip())
+            if report is None:
+                return ApiResponse(404, {"error": "scene not found"})
+            return ApiResponse(200, {"ok": True, "report": report})
+
+        if path == "/scenes/delete":
+            scene_id = data.get("scene_id")
+            if not isinstance(scene_id, str) or not scene_id.strip():
+                return ApiResponse(400, {"error": "'scene_id' is required"})
+            if not self._backend.delete_scene(scene_id.strip()):
+                return ApiResponse(404, {"error": "scene not found"})
+            return ApiResponse(200, {"ok": True})
+
+        return None
 
     def authorize(self, headers: dict[str, str] | None) -> bool:
         """Public auth check for raw request headers (used by the SSE stream,

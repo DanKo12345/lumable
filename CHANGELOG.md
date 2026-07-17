@@ -2,6 +2,22 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.3.2] - 2026-07-17
+
+Scenes: save a whole look and bring it back with one click, from the PC, your phone or the API — the first piece of a single lighting model that everything shares.
+
+### Added
+- Scenes (Free): a new **Scenes** section. Save the current look — power, colour, brightness and the active built-in effect — under a name, then recall it instantly. Saving under an existing name overwrites it (no duplicates), each scene shows a colour dot, and scenes are one shared model used by the desktop, the phone remote and the Local API.
+- Scenes on the phone remote: a Scenes card lists your saved scenes with colour dots; tap to apply, or save the current look on the spot.
+- Local API scene endpoints: `GET /scenes`, `POST /scenes/save`, `POST /scenes/apply` and `POST /scenes/delete`, documented in `docs/local-api.md`. `GET /status` now also reports `name`, the active built-in `effect`, and the active `pc_mode`.
+- Interface icons were given distinct, meaningful glyphs (Scenes, screen sync, music, software effects, DIY) so cards no longer share a look-alike symbol.
+
+### Fixed
+- Scrolling the settings page no longer accidentally changes the value under the cursor (language, FPS, device or effect dropdowns); the page scrolls instead, and a closed dropdown ignores the wheel.
+
+### Notes
+- A scene applies to every connected strip in this release. Per-strip and group targeting (and a target selector in the UI) arrive with BLE addressed routing in **0.3.3**.
+
 ## [0.3.1] - 2026-07-16
 
 Your phone becomes a remote for the whole light setup on your PC. Open a QR, pair once, and control screen sync, music reaction, DIY effects and quick scenes from any browser — no app to install.

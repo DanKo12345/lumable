@@ -13,7 +13,7 @@ _REGIONS = ("full", "center", "bottom", "top")
 
 
 def build_ambient_section(host: PanelHost) -> GlassCard:
-    host.ambient_card = host._card(host._tr("ambient.title"), host._tr("ambient.subtitle"), icon="color")
+    host.ambient_card = host._card(host._tr("ambient.title"), host._tr("ambient.subtitle"), icon="monitor")
     host.ambient_card.setMinimumHeight(host._sz(196))
 
     # Pro badge shown when screen sync isn't unlocked (toggled by the controller).

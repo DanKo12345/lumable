@@ -27,6 +27,11 @@ _FALLBACK_LABELS = {
     "pc_diy": "DIY",
     "pc_active": "active",
     "pc_stop": "Stop",
+    "scenes": "Scenes",
+    "save_scene": "Save current",
+    "scenes_empty": "No scenes yet",
+    "scene_name_prompt": "Scene name",
+    "scene_saved": "Saved",
     "brightness": "Brightness",
     "colour": "Colour",
     "quick_modes": "Quick modes",
@@ -110,6 +115,13 @@ _TEMPLATE = """<!DOCTYPE html>
   .pc-active .pc-active-text b { color:var(--live); }
   #pcStop { flex:0 0 auto; min-height:44px; padding:10px 18px; border-color:var(--warn); color:var(--warn); }
   .wide { width:100%; margin-top:10px; color:var(--muted); }
+  .chip-btn { width:auto; min-height:38px; padding:8px 14px; color:var(--muted); font-size:14px; }
+  .scenes { display:flex; flex-direction:column; gap:8px; }
+  .scene-row { display:flex; gap:8px; }
+  .scene-apply { flex:1; text-align:left; font-weight:650; display:flex; align-items:center; gap:10px; }
+  .scene-dot { width:14px; height:14px; flex:0 0 14px; border-radius:5px; border:1px solid rgba(255,255,255,.25); }
+  .scene-del { flex:0 0 auto; width:50px; min-height:52px; color:var(--muted); }
+  .scenes .muted { padding:6px 2px; }
   .palette-toggle { width:100%; min-height:46px; margin-top:12px; color:var(--muted); background:transparent; }
   .palette-toggle[aria-expanded="true"] { color:var(--text); border-color:var(--accent); background:var(--accent-soft); }
   .picker {
@@ -157,6 +169,7 @@ _TEMPLATE = """<!DOCTYPE html>
   <section id="remote" class="hide">
     <div class="card"><div class="status"><span class="dot" id="conn"></span><span id="status" class="muted" aria-live="polite">...</span></div></div>
     <div class="card"><div class="row"><button class="power-on" id="btnOn" onclick="power(true)"></button><button class="power-off" id="btnOff" onclick="power(false)"></button></div><button class="wide" id="btnAllOff" onclick="masterOff()"></button></div>
+    <div class="card"><div class="value-line"><span class="section-title" id="scenesLabel"></span><button class="chip-btn" id="saveScene" onclick="saveScene()"></button></div><div class="scenes" id="scenes"></div></div>
     <div class="card"><div class="section-title" id="pcLabel"></div><div class="grid pc" id="pcModes"></div><div class="pc-active hide" id="pcActive"><span class="pc-active-text" id="pcActiveText"></span><button id="pcStop" onclick="pcMode('off')"></button></div></div>
     <div class="card"><div class="value-line"><span class="section-title" id="brightnessLabel"></span><span class="value" id="brightnessValue">100%</span></div><input type="range" id="bri" min="0" max="100" value="100" oninput="queueBrightness(this.value)"></div>
     <div class="card"><div class="colour-head"><span class="colour-chip" id="colourChip"></span><div><div class="label" id="colourLabel"></div><div class="hex" id="hex">#FFFFFF</div></div></div><div class="grid" id="swatches"></div><div class="label recent-label hide" id="recentLabel"></div><div class="grid hide" id="recent"></div><button class="palette-toggle" id="paletteToggle" aria-expanded="false" aria-controls="picker" onclick="togglePalette()"></button><div class="picker" id="picker" aria-hidden="true"><div class="picker-head"><span class="section-title" id="customColourLabel"></span><span class="hex" id="pickerHex">#FFFFFF</span></div><canvas id="sv" aria-label="Colour palette"></canvas><input class="hue" id="hue" type="range" min="0" max="360" value="0" oninput="setHue(this.value)"></div></div>
@@ -192,6 +205,8 @@ function text() {
   $("#pcLabel").textContent = TEXT.pc_modes;
   $("#btnAllOff").textContent = TEXT.all_off;
   $("#pcStop").textContent = TEXT.pc_stop;
+  $("#scenesLabel").textContent = TEXT.scenes;
+  $("#saveScene").textContent = TEXT.save_scene;
   updatePaletteToggle();
 }
 function show(paired) { $("#pair").classList.toggle("hide", paired); $("#remote").classList.toggle("hide", !paired); }
@@ -215,7 +230,7 @@ async function pair() {
   try {
     const response = await fetch("/pair", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({code})});
     if (!response.ok) { $("#pairError").textContent = TEXT.pair_invalid; return; }
-    const data = await response.json(); token=data.session; localStorage.setItem("lumable_session", token); show(true); startLive();
+    const data = await response.json(); token=data.session; localStorage.setItem("lumable_session", token); show(true); startLive(); loadScenes();
   } catch (_) { $("#pairError").textContent = TEXT.pair_failed; }
 }
 let toastTimer=0;
@@ -256,6 +271,37 @@ async function pcMode(mode) {
   setTimeout(refresh, 200);
 }
 async function masterOff() { try { await post("/pc-mode", {mode:"off"}, true); } catch (_) {} await post("/power", {on:false}); setTimeout(refresh, 160); }
+let scenes=[];
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+async function loadScenes() {
+  try { const data=await (await api("/scenes")).json(); scenes=data.scenes || []; renderScenes(); } catch (_) {}
+}
+function renderScenes() {
+  const el=$("#scenes");
+  if (!scenes.length) { el.innerHTML=`<div class="muted">${TEXT.scenes_empty}</div>`; return; }
+  // The id goes in a data attribute (not an inline handler) and a delegated
+  // listener reads it, so a scene id can never break out into markup/JS.
+  el.innerHTML=scenes.map(s => `<div class="scene-row"><button class="scene-apply" data-scene-id="${escapeHtml(s.scene_id)}"><span class="scene-dot" style="background:${(s.color && escapeHtml(s.color)) || 'var(--line)'}"></span>${escapeHtml(s.name)}</button><button class="scene-del" data-scene-id="${escapeHtml(s.scene_id)}" aria-label="delete">&#10005;</button></div>`).join("");
+}
+function installScenes() {
+  $("#scenes").addEventListener("click", event => {
+    const apply=event.target.closest(".scene-apply");
+    if (apply) { applyScene(apply.dataset.sceneId); return; }
+    const del=event.target.closest(".scene-del");
+    if (del) deleteScene(del.dataset.sceneId);
+  });
+}
+async function applyScene(id) {
+  try { await post("/scenes/apply", {scene_id:id}, true); flash(TEXT.sent, false); } catch (_) { flash(TEXT.send_failed, true); }
+  setTimeout(refresh, 200);
+}
+async function saveScene() {
+  const name=(prompt(TEXT.scene_name_prompt) || "").trim(); if (!name) return;
+  try { await post("/scenes/save", {name}, true); flash(TEXT.scene_saved, false); loadScenes(); } catch (_) { flash(TEXT.send_failed, true); }
+}
+async function deleteScene(id) {
+  try { await post("/scenes/delete", {scene_id:id}, true); loadScenes(); } catch (_) { flash(TEXT.send_failed, true); }
+}
 function rgbHex(r,g,b) { return "#" + [r,g,b].map(v => Number(v).toString(16).padStart(2,"0")).join("").toUpperCase(); }
 function paintColour(r,g,b, syncPicker) {
   const value = `rgb(${r},${g},${b})`; document.documentElement.style.setProperty("--live", value);
@@ -368,7 +414,7 @@ function build() {
   $("#modes").innerHTML=MODES.map(mode=>`<button data-mode="${mode}" onclick="quick('${mode}')">${TEXT['mode_'+mode]}</button>`).join("");
   $("#pcModes").innerHTML=PC_MODES.map(mode=>`<button data-pc="${mode}" onclick="pcMode('${mode}')">${TEXT['pc_'+mode]}</button>`).join("");
 }
-text(); build(); installPicker(); renderRecent(); paintColour(255,255,255,true); show(!!token); if (token) startLive();
+text(); build(); installPicker(); installScenes(); renderRecent(); paintColour(255,255,255,true); show(!!token); if (token) { startLive(); loadScenes(); }
 </script>
 </body>
 </html>

@@ -14,9 +14,12 @@ from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 
+from app import scene_store
 from app.app_info import APP_VERSION
 from app.device_names import device_display_name
 from app.quick_modes import QUICK_MODE_MAP
+from app.scene_apply import SceneApplyService, scene_from_status
+from app.storage import save_settings
 
 _CALL_TIMEOUT_SECONDS = 3.0
 
@@ -92,6 +95,19 @@ class QtApiBackend:
     def set_pc_mode(self, mode: str) -> bool:
         return self._invoker.call(lambda: self._set_pc_mode(mode))
 
+    # ── scenes ────────────────────────────────────────────────────────
+    def list_scenes(self) -> list[dict[str, Any]]:
+        return self._invoker.call(self._list_scenes)
+
+    def save_scene(self, name: str) -> dict[str, Any] | None:
+        return self._invoker.call(lambda: self._save_scene(name))
+
+    def apply_scene(self, scene_id: str) -> dict[str, Any] | None:
+        return self._invoker.call(lambda: self._apply_scene(scene_id))
+
+    def delete_scene(self, scene_id: str) -> bool:
+        return self._invoker.call(lambda: self._delete_scene(scene_id))
+
     # ── main-thread implementations ───────────────────────────────────
     def _build_status(self) -> dict[str, Any]:
         host = self._host
@@ -112,9 +128,23 @@ class QtApiBackend:
             },
             "mode": getattr(host, "_active_mode_key", None) or None,
             "name": name,
+            "effect": self._active_firmware_effect(),
             "pc_mode": (pc := self._active_pc_mode()),
             "pc_mode_detail": self._pc_mode_detail(pc),
         }
+
+    def _active_firmware_effect(self) -> dict[str, Any] | None:
+        # The controller's built-in effect currently selected (code 0 = solid, so
+        # "no effect"). Speed comes from the effect-speed slider. Kept defensive
+        # so a fake host without these widgets simply reports no effect.
+        host = self._host
+        combo = getattr(host, "effect_combo", None)
+        code = combo.currentData() if combo is not None and hasattr(combo, "currentData") else 0
+        if not isinstance(code, int) or code == 0:
+            return None
+        slider = getattr(host, "speed_slider", None)
+        speed = int(slider.value()) if slider is not None and hasattr(slider, "value") else None
+        return {"kind": "firmware", "ref": int(code), "speed": speed}
 
     def _pc_mode_detail(self, mode: str | None) -> str:
         # For "effect", the phone can't see which software effect is running, so
@@ -233,3 +263,36 @@ class QtApiBackend:
             return False
         host._activate_quick_mode(key)
         return True
+
+    # ── scene main-thread implementations ─────────────────────────────
+    def _settings(self) -> dict[str, Any]:
+        settings = self._host._settings
+        return settings if isinstance(settings, dict) else {}
+
+    def _list_scenes(self) -> list[dict[str, Any]]:
+        return scene_store.list_scenes(self._settings())
+
+    def _save_scene(self, name: str) -> dict[str, Any] | None:
+        scene = scene_from_status(self._build_status(), str(name or ""))
+        saved = scene_store.save_scene(self._settings(), scene)
+        if saved is not None:
+            save_settings(self._host._settings)
+        return saved
+
+    def _apply_scene(self, scene_id: str) -> dict[str, Any] | None:
+        scene = scene_store.get_scene(self._settings(), str(scene_id or ""))
+        if scene is None:
+            return None
+        # HONEST LIMITATION (0.3.2): the BLE layer has no per-strip addressing yet,
+        # so every command mirrors to all connected strips regardless of device_id.
+        # We therefore apply to the whole set (device_ids=None) rather than pretend
+        # a scene's target is honoured. The scene model already carries a target and
+        # SceneApplyService can route per-device; wiring the BLE addressed path and
+        # exposing target/group in the UI lands in 0.3.3.
+        return SceneApplyService(self).apply(scene)
+
+    def _delete_scene(self, scene_id: str) -> bool:
+        removed = scene_store.delete_scene(self._settings(), str(scene_id or ""))
+        if removed:
+            save_settings(self._host._settings)
+        return removed

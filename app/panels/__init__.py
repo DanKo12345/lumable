@@ -9,6 +9,7 @@ from .effects_panel import build_effects_section
 from .hotkeys_panel import build_hotkeys_section
 from .local_api_panel import build_local_api_section
 from .music_panel import build_music_section
+from .scenes_panel import build_scenes_section
 from .schedule_panel import build_schedule_section
 from .software_effects_panel import build_software_effects_section
 from .timers_panel import build_timers_section
@@ -25,6 +26,7 @@ __all__ = [
     "build_hotkeys_section",
     "build_local_api_section",
     "build_music_section",
+    "build_scenes_section",
     "build_schedule_section",
     "build_software_effects_section",
     "build_timers_section",

@@ -5,6 +5,7 @@ from collections.abc import Callable
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QApplication,
     QComboBox,
     QFrame,
@@ -34,6 +35,27 @@ class StaticPopupComboBox(QComboBox):
         self._app_filter_installed = False
         self._open_fade: QPropertyAnimation | None = None
         self._open_slide: QPropertyAnimation | None = None
+
+    def wheelEvent(self, event) -> None:
+        """Pass closed-combo wheel input to the page rather than changing values."""
+        if self._popup is not None and self._popup.isVisible():
+            event.ignore()
+            return
+
+        parent = self.parentWidget()
+        while parent is not None:
+            if isinstance(parent, QAbstractScrollArea):
+                delta = event.pixelDelta().y()
+                if not delta:
+                    # QWheelEvent angle deltas use 120 units per traditional notch.
+                    delta = round(event.angleDelta().y() / 4)
+                if delta:
+                    scrollbar = parent.verticalScrollBar()
+                    scrollbar.setValue(scrollbar.value() - delta)
+                    event.accept()
+                    return
+            parent = parent.parentWidget()
+        event.ignore()
 
     def _popup_host(self):
         return self.window()

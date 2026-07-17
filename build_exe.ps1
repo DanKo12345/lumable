@@ -29,6 +29,7 @@ if ([version]$version -lt [version]"3.11") {
     --add-data "THIRD_PARTY_NOTICES.txt;." `
     --collect-all "soundcard" `
     --collect-all "sounddevice" `
+    --collect-all "segno" `
     --exclude-module "PySide6.QtQml" `
     --exclude-module "PySide6.QtQmlMeta" `
     --exclude-module "PySide6.QtQmlModels" `

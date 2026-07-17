@@ -31,6 +31,7 @@ class UiLocalizationController:
 
         self._apply_device_texts()
         self._apply_color_texts()
+        self._apply_scenes_texts()
         self._apply_effect_texts()
         self._apply_config_texts()
         self._apply_schedule_texts()
@@ -303,6 +304,15 @@ class UiLocalizationController:
                 host.diy_card.subtitle_label.setText(host._tr("diy.subtitle"))
             host.diy_lock_label.setText(host._tr("diy.pro_locked"))
             host._diy_ui.relocalize()
+
+    def _apply_scenes_texts(self) -> None:
+        host = self._host
+        if getattr(host, "scenes_card", None) is None:
+            return
+        host.scenes_card.title_label.setText(host._tr("scenes.title"))
+        if host.scenes_card.subtitle_label is not None:
+            host.scenes_card.subtitle_label.setText(host._tr("scenes.subtitle"))
+        host._scene_ui.relocalize()
 
     def _apply_local_api_texts(self) -> None:
         host = self._host

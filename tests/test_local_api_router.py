@@ -13,6 +13,7 @@ class FakeBackend:
         self.calls: list[tuple] = []
         self._quick_modes = {"gaming", "chill"}
         self.pc_mode_starts = True
+        self._scenes: list[dict] = []
 
     def app_version(self) -> str:
         return "0.3.0"
@@ -44,6 +45,25 @@ class FakeBackend:
         if not self.pc_mode_starts:
             return False
         return mode in {"screen", "music", "effect", "diy", "off"}
+
+    def list_scenes(self):
+        return list(self._scenes)
+
+    def save_scene(self, name):
+        scene = {"scene_id": "s1", "name": name, "state": {}}
+        self._scenes.append(scene)
+        return scene
+
+    def apply_scene(self, scene_id):
+        self.calls.append(("apply_scene", scene_id))
+        if any(s["scene_id"] == scene_id for s in self._scenes):
+            return {"applied": ["power"], "skipped": []}
+        return None
+
+    def delete_scene(self, scene_id):
+        before = len(self._scenes)
+        self._scenes = [s for s in self._scenes if s["scene_id"] != scene_id]
+        return len(self._scenes) != before
 
 
 def _router():
@@ -262,3 +282,41 @@ def test_pc_mode_returns_409_when_it_cannot_start() -> None:
     resp = ApiRouter(backend, TOKEN).handle("POST", "/pc-mode", AUTH, _body({"mode": "music"}))
     assert resp.status == 409
     assert "error" in resp.body
+
+
+# ── scenes ───────────────────────────────────────────────────────────────
+def test_scenes_save_list_apply_delete_flow() -> None:
+    backend = FakeBackend()
+    router = ApiRouter(backend, TOKEN)
+
+    saved = router.handle("POST", "/scenes/save", AUTH, _body({"name": "Movie"}))
+    assert saved.status == 200
+    scene_id = saved.body["scene"]["scene_id"]
+
+    listed = router.handle("GET", "/scenes", AUTH)
+    assert listed.status == 200
+    assert [s["name"] for s in listed.body["scenes"]] == ["Movie"]
+
+    applied = router.handle("POST", "/scenes/apply", AUTH, _body({"scene_id": scene_id}))
+    assert applied.status == 200
+    assert applied.body["report"]["applied"] == ["power"]
+
+    deleted = router.handle("POST", "/scenes/delete", AUTH, _body({"scene_id": scene_id}))
+    assert deleted.status == 200
+    assert router.handle("GET", "/scenes", AUTH).body["scenes"] == []
+
+
+def test_scene_save_requires_a_name() -> None:
+    assert _router().handle("POST", "/scenes/save", AUTH, _body({})).status == 400
+
+
+def test_apply_unknown_scene_is_404() -> None:
+    assert _router().handle("POST", "/scenes/apply", AUTH, _body({"scene_id": "nope"})).status == 404
+
+
+def test_delete_unknown_scene_is_404() -> None:
+    assert _router().handle("POST", "/scenes/delete", AUTH, _body({"scene_id": "nope"})).status == 404
+
+
+def test_scenes_require_auth() -> None:
+    assert _router().handle("GET", "/scenes").status == 401

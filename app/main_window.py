@@ -51,6 +51,7 @@ from app.profile_controller import ProfileController
 from app.quick_mode_controller import QuickModeController
 from app.reconnect_controller import ReconnectController
 from app.scene_presets import get_scene_preset
+from app.scene_ui_controller import SceneUiController
 from app.schedule_controller import ScheduleController
 from app.shortcut_controller import ShortcutController
 from app.single_instance import SingleInstance
@@ -181,6 +182,7 @@ class MainWindow(QMainWindow):
         self._music_ui = MusicUiController(self)
         self._software_fx_ui = SoftwareEffectUiController(self)
         self._diy_ui = DiyUiController(self)
+        self._scene_ui = SceneUiController(self)
         self._app_trigger_ui = AppTriggerUiController(self)
         self._app_triggers = AppTriggerController(self)
         self._hotkey_controller = HotkeyController(self)
@@ -426,6 +428,7 @@ class MainWindow(QMainWindow):
         self._music_ui.wire()
         self._software_fx_ui.wire()
         self._diy_ui.wire()
+        self._scene_ui.wire()
         self._app_trigger_ui.wire()
         self._hotkey_ui.wire()
         self._local_api.wire()

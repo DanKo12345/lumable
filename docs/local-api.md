@@ -31,7 +31,7 @@ The API version is `1` (see `GET /health`). Breaking changes will bump it.
 |--------------------|--------------------------|--------------------------------------|
 | `GET /`            | —                        | Index: version + endpoint list (no auth) |
 | `GET /health`      | —                        | Version probe (no auth)              |
-| `GET /status`      | —                        | Current power / colour / brightness / connection / mode |
+| `GET /status`      | —                        | Current power / colour / brightness / connection, plus `name`, `effect`, `mode`, `pc_mode`, `pc_mode_detail` |
 | `GET /devices`     | —                        | Connected controllers (address, name, role) |
 | `GET /events`      | —                        | Live status stream (Server-Sent Events) |
 | `POST /power`      | `{"on": true}`           | Turn the strip on/off (idempotent)   |
@@ -39,12 +39,35 @@ The API version is `1` (see `GET /health`). Breaking changes will bump it.
 | `POST /brightness` | `{"value": 60}`          | Set brightness (0–100)               |
 | `POST /effect`     | `{"code": 5, "speed": 70}` | Built-in effect by code; `speed` optional |
 | `POST /quick-mode` | `{"key": "gaming"}`      | Activate a quick mode                |
+| `POST /pc-mode`    | `{"mode": "screen"}`     | Start a PC mode (`screen`/`music`/`effect`/`diy`) or `off` to stop |
+| `GET /scenes`      | —                        | List saved scenes                    |
+| `POST /scenes/save`| `{"name": "Movie"}`      | Snapshot the current look as a scene |
+| `POST /scenes/apply`| `{"scene_id": "..."}`   | Apply a saved scene                  |
+| `POST /scenes/delete`| `{"scene_id": "..."}` | Delete a saved scene                 |
 
-Optional `"device_id": "<address>"` on any command targets a specific strip;
-omit it to control the group.
+Commands currently apply to **all connected strips**. An optional
+`"device_id": "<address>"` field is accepted but reserved for per-strip targeting
+in a future release (BLE addressed routing); today it does not narrow the target.
 
 Responses are JSON. Errors look like `{"error": "..."}` with a matching HTTP
-status (`400` bad request, `401` unauthorized, `404` not found, `413` too large).
+status (`400` bad request, `401` unauthorized, `404` not found, `409` conflict,
+`413` too large).
+
+## PC modes and scenes
+
+`POST /pc-mode` starts a mode that runs **on the PC** and drives the strip —
+`screen` (screen sync), `music` (music reaction), `effect` (software effect) or
+`diy` (a DIY animation) — and `{"mode":"off"}` stops any of them. If the mode
+can't start (needs Pro, or no strip is connected) the call returns `409`, not a
+false success. `/status` reports the active one in `pc_mode` (with a readable
+`pc_mode_detail`, e.g. the running effect's name).
+
+Scenes are one saved look — power, colour, brightness, a built-in effect and an
+optional PC mode — shared by the desktop app, the phone remote and this API.
+`POST /scenes/save` snapshots the current state under a name (re-using the same
+name overwrites it); `GET /scenes` lists them with their `scene_id`;
+`POST /scenes/apply` recalls one. In this release a scene applies to every
+connected strip (per-strip targeting arrives in a later update).
 
 ## Examples
 
