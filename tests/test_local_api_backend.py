@@ -56,11 +56,30 @@ class _Combo:
 
 
 class _Ble:
-    def __init__(self) -> None:
+    def __init__(self, driver_id: str = "bledom") -> None:
         self.calls: list[tuple] = []
+        self._driver_id = driver_id
 
     def mirror_addresses(self):
         return ["CC:DD"]
+
+    def active_driver_id(self):
+        return self._driver_id
+
+    def supports_effect_speed(self):
+        return True
+
+    def set_color_for_addresses(self, red, green, blue, addresses):
+        self.calls.append(("color_addr", red, green, blue, tuple(addresses)))
+
+    def set_power_for_addresses(self, enabled, addresses):
+        self.calls.append(("power_addr", enabled, tuple(addresses)))
+
+    def set_brightness_for_addresses(self, value, addresses):
+        self.calls.append(("brightness_addr", value, tuple(addresses)))
+
+    def set_effect_for_addresses(self, code, speed, addresses):
+        self.calls.append(("effect_addr", code, speed, tuple(addresses)))
 
     def set_effect(self, code):
         self.calls.append(("effect", code))
@@ -206,6 +225,131 @@ def test_apply_unknown_scene_returns_none(monkeypatch) -> None:
 
     monkeypatch.setattr(backend_mod, "save_settings", lambda *_a, **_k: None)
     assert QtApiBackend(_Host()).apply_scene("nope") is None
+
+
+# ── addressed routing (0.3.3) ─────────────────────────────────────────────
+def test_addressed_mirror_write_leaves_the_desktop_ui_alone() -> None:
+    host = _Host()
+    QtApiBackend(host).set_color(1, 2, 3, "CC:DD")  # a mirror, not the primary
+    assert ("color_addr", 1, 2, 3, ("CC:DD",)) in host._ble.calls
+    assert host.applied == 0  # no whole-set re-send
+    assert (host.red_slider.value(), host.green_slider.value(), host.blue_slider.value()) == (10, 20, 30)
+
+
+def test_addressed_primary_write_syncs_sliders_without_resending() -> None:
+    host = _Host()
+    QtApiBackend(host).set_color(7, 8, 9, "AA:BB")  # the primary
+    assert ("color_addr", 7, 8, 9, ("AA:BB",)) in host._ble.calls
+    assert host.applied == 0  # reflected in the UI, not sent again
+    assert (host.red_slider.value(), host.green_slider.value(), host.blue_slider.value()) == (7, 8, 9)
+
+
+def test_addressed_primary_effect_syncs_combo_and_speed() -> None:
+    host = _Host()
+    QtApiBackend(host).set_effect(12, 70, "AA:BB")
+    assert ("effect_addr", 12, 70, ("AA:BB",)) in host._ble.calls
+    assert host.effect_combo.current == 5  # findData(12) -> index 5
+    assert host.speed_slider.value() == 70  # /status + next snapshot stay truthful
+
+
+def test_addressed_mirror_effect_leaves_primary_ui_alone() -> None:
+    host = _Host()
+    QtApiBackend(host).set_effect(12, 70, "CC:DD")
+    assert ("effect_addr", 12, 70, ("CC:DD",)) in host._ble.calls
+    assert host.speed_slider.value() == 60  # untouched
+    assert host.effect_combo.current == -1
+
+
+def test_whole_set_write_still_uses_the_host_path() -> None:
+    host = _Host()
+    QtApiBackend(host).set_color(4, 5, 6, None)
+    assert host.applied == 1
+    assert all(call[0] != "color_addr" for call in host._ble.calls)
+
+
+def test_scene_targeting_all_uses_the_whole_set(monkeypatch) -> None:
+    import app.local_api.backend as backend_mod
+
+    monkeypatch.setattr(backend_mod, "save_settings", lambda *_a, **_k: None)
+    host = _Host()
+    backend = QtApiBackend(host)
+    scene = backend.save_scene("Look")  # new scenes default to target "all"
+    host._ble.calls.clear()
+
+    report = backend.apply_scene(scene["scene_id"])
+    assert all(call[0] != "color_addr" for call in host._ble.calls)  # host path
+    assert len(report["targets"]) == 2  # primary + mirror, named
+    assert "Desk" in report["targets"]
+
+
+def test_scene_targeting_primary_uses_addressed_writes(monkeypatch) -> None:
+    import app.local_api.backend as backend_mod
+    from app.scene_store import save_scene as store_save_scene
+
+    monkeypatch.setattr(backend_mod, "save_settings", lambda *_a, **_k: None)
+    host = _Host()
+    backend = QtApiBackend(host)
+    scene = backend.save_scene("Desk look")
+    store_save_scene(host._settings, {**scene, "target": {"kind": "primary", "group_id": None}})
+    host._ble.calls.clear()
+    host.applied = 0
+
+    report = backend.apply_scene(scene["scene_id"])
+    assert any(call[0] == "color_addr" and call[4] == ("AA:BB",) for call in host._ble.calls)
+    assert report["targets"] == ["Desk"]
+
+
+def test_group_target_ignores_strips_that_are_not_connected(monkeypatch) -> None:
+    # A saved group may still name a strip that is offline or removed. Sending to
+    # it would be dropped silently while the report claimed the scene reached it.
+    import app.local_api.backend as backend_mod
+    from app.scene_store import save_group
+    from app.scene_store import save_scene as store_save_scene
+
+    monkeypatch.setattr(backend_mod, "save_settings", lambda *_a, **_k: None)
+    host = _Host()
+    backend = QtApiBackend(host)
+    group = save_group(host._settings, "Desk", ["AA:BB", "GONE:99"])  # one is offline
+    scene = backend.save_scene("Group look")
+    store_save_scene(
+        host._settings, {**scene, "target": {"kind": "group", "group_id": group["group_id"]}}
+    )
+    host._ble.calls.clear()
+
+    report = backend.apply_scene(scene["scene_id"])
+    written = {call[4] for call in host._ble.calls if call[0] == "color_addr"}
+    assert written == {("AA:BB",)}  # nothing sent to the offline strip
+    assert report["targets"] == ["Desk"]
+
+
+def test_group_with_no_connected_strips_reports_nothing(monkeypatch) -> None:
+    import app.local_api.backend as backend_mod
+    from app.scene_store import save_group
+    from app.scene_store import save_scene as store_save_scene
+
+    monkeypatch.setattr(backend_mod, "save_settings", lambda *_a, **_k: None)
+    host = _Host()
+    backend = QtApiBackend(host)
+    group = save_group(host._settings, "Ghosts", ["GONE:1", "GONE:2"])
+    scene = backend.save_scene("Ghost look")
+    store_save_scene(
+        host._settings, {**scene, "target": {"kind": "group", "group_id": group["group_id"]}}
+    )
+    host._ble.calls.clear()
+
+    report = backend.apply_scene(scene["scene_id"])
+    assert report["targets"] == []
+    assert all(call[0] != "color_addr" for call in host._ble.calls)
+    assert any(entry.get("reason") == "no_target" for entry in report["skipped"])
+
+
+def test_strip_capabilities_reflect_the_connected_driver() -> None:
+    caps = QtApiBackend(_Host())._strip_capabilities()
+    # bledom (fake default) is RGB with effects, no white channel.
+    assert caps["rgb"] is True
+    assert caps["firmware_effects"] is True
+    assert caps["cct"] is False
+    assert caps["effect_speed"] is True  # runtime query on the live driver
 
 
 def test_pc_mode_detail_names_the_active_software_effect() -> None:

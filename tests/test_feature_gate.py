@@ -5,6 +5,13 @@ import pytest
 from app import feature_gate
 
 
+def test_scenes_are_free_not_a_pro_feature() -> None:
+    """Scenes are Free in 0.3.2 — the dead ``scenes_full`` gate was removed so
+    the Pro window and the source of truth can't advertise them as Pro."""
+    assert "scenes_full" not in feature_gate.PRO_FEATURES
+    assert feature_gate.can_use("scenes_full") is True
+
+
 def test_free_mode_limits_pro_features(monkeypatch) -> None:
     monkeypatch.setattr(feature_gate, "is_license_active", lambda _settings, **_kw: False)
 

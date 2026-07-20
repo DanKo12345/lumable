@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -25,6 +25,7 @@ from app.panels import (
     build_diagnostics_section,
     build_diy_section,
     build_effects_section,
+    build_groups_section,
     build_hotkeys_section,
     build_local_api_section,
     build_music_section,
@@ -33,42 +34,38 @@ from app.panels import (
     build_software_effects_section,
     build_timers_section,
 )
+from app.panels.list_rows import divider, list_container, list_row
 from app.widgets import AccentPreview, LiquidButton
 
 
 def _build_settings_card(host):
-    """App settings (language / FPS / theme / about) as a tidy labelled list."""
+    """App settings as one compact grouped list."""
     card = host._card(host._tr("settings.title"), host._tr("settings.subtitle"), icon="settings")
     build_chrome_controls(host)  # creates host.language_combo / performance_combo / theme_button / about_button
-    # Uniform width so the three value controls line up in one tidy column
-    # instead of each being a different size.
-    for control in (host.language_combo, host.performance_combo, host.theme_button):
+    for control in (host.language_combo, host.performance_combo, host.theme_button, host.about_button):
         control.setFixedWidth(host._sz(170))
-    rows = [
-        ("settings.language", host.language_combo),
-        ("settings.fps", host.performance_combo),
-        ("settings.theme", host.theme_button),
-    ]
+    rows = (
+        ("settings.language", "globe", "#78a7ff", host.language_combo),
+        ("settings.fps", "diagnostics", "#72c7b7", host.performance_combo),
+        ("settings.theme", "sun", "#ffb066", host.theme_button),
+        ("settings.about", "settings", "#a9b0bd", host.about_button),
+    )
+    settings_list, settings_layout = list_container(host)
     host._settings_labels = []
-    for label_key, widget in rows:
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(host._sz(12))
-        label = QLabel(host._tr(label_key))
-        label.setObjectName("sliderLabel")
-        label.setMinimumWidth(host._sz(140))
-        host._settings_labels.append((label_key, label))
-        row.addWidget(label, 0, Qt.AlignVCenter)
-        row.addWidget(widget, 0, Qt.AlignVCenter)
-        row.addStretch(1)
-        card.content_layout.addLayout(row)
-
-    # "About" stands alone (the button is self-describing).
-    about_row = QHBoxLayout()
-    about_row.setContentsMargins(0, host._sz(4), 0, 0)
-    about_row.addWidget(host.about_button, 0, Qt.AlignVCenter)
-    about_row.addStretch(1)
-    card.content_layout.addLayout(about_row)
+    for index, (label_key, icon, tint, control) in enumerate(rows):
+        row, controls, title, _, _ = list_row(
+            host,
+            icon,
+            tint,
+            host._tr(label_key),
+            with_status=False,
+        )
+        host._settings_labels.append((label_key, title))
+        controls.addWidget(control, 0, Qt.AlignVCenter)
+        settings_layout.addWidget(row)
+        if index < len(rows) - 1:
+            settings_layout.addWidget(divider(host))
+    card.content_layout.addWidget(settings_list)
     return card
 
 
@@ -77,7 +74,7 @@ def _build_settings_card(host):
 # rarely-touched setup (device, schedule, app settings, diagnostics).
 _NAV_SECTIONS = (
     ("color", "nav.color", (build_color_section,)),
-    ("scenes", "nav.scenes", (build_scenes_section,)),
+    ("scenes", "nav.scenes", (build_scenes_section, build_groups_section)),
     ("effects", "nav.effects", (build_effects_section, build_software_effects_section, build_diy_section)),
     ("ambient", "nav.ambient", (build_ambient_section,)),
     ("music", "nav.music", (build_music_section,)),
@@ -95,6 +92,57 @@ _NAV_SECTIONS = (
         ),
     ),
 )
+
+_LIVE_LIGHT_SECTIONS = frozenset({"color", "effects", "ambient", "music"})
+
+_NAV_ICONS = {
+    "color": "color",
+    "scenes": "layers-3",
+    "effects": "effects",
+    "ambient": "monitor",
+    "music": "audio-lines",
+    "profiles": "configs",
+    "schedule": "calendar",
+    "settings": "settings",
+}
+
+
+class _CurrentPageStack(QStackedWidget):
+    """Size the stack from the visible page, never from a wider hidden page."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.currentChanged.connect(lambda _index: self.updateGeometry())
+
+    def sizeHint(self) -> QSize:
+        page = self.currentWidget()
+        if page is None:
+            return QSize(0, 0)
+        hint = page.sizeHint()
+        return QSize(0, hint.height())
+
+    def minimumSizeHint(self) -> QSize:
+        page = self.currentWidget()
+        if page is None:
+            return QSize(0, 0)
+        return QSize(0, page.minimumSizeHint().height())
+
+
+class _CenteredContent(QWidget):
+    """Fill the available width up to a cap, then centre the content."""
+
+    def __init__(self, content: QWidget, maximum_width: int) -> None:
+        super().__init__()
+        self._content = content
+        self._maximum_width = maximum_width
+        content.setParent(self)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        width = min(self.width(), self._maximum_width)
+        left = max(0, (self.width() - width) // 2)
+        self._content.setGeometry(left, 0, width, self.height())
 
 
 def build_main_layout(host) -> QWidget:
@@ -130,6 +178,12 @@ def select_section(host, key: str) -> None:
     page = host._nav_pages.get(key)
     if page is not None:
         host._section_stack.setCurrentWidget(page)
+    body_scroll = getattr(host, "body_scroll", None)
+    if body_scroll is not None:
+        body_scroll.verticalScrollBar().setValue(0)
+    preview = getattr(host, "preview", None)
+    if preview is not None:
+        preview.set_compact(key not in _LIVE_LIGHT_SECTIONS)
 
 
 def _on_status_clicked(host) -> None:
@@ -142,7 +196,7 @@ def _on_status_clicked(host) -> None:
 
 
 def _build_sections(host) -> None:
-    host._section_stack = QStackedWidget()
+    host._section_stack = _CurrentPageStack()
     # A stacked widget's size hint is the largest of *all* its pages. Keeping
     # the default horizontal policy made a hidden wide page force the scroll
     # canvas wider than its viewport, clipping the visible card on laptops.
@@ -164,6 +218,8 @@ def _build_sections(host) -> None:
 
         button = LiquidButton(host._tr(label_key), role="nav")
         button.setMinimumHeight(host._sz(44))
+        button.set_icon_kind(_NAV_ICONS[key])
+        button.setIconSize(QSize(host._sz(18), host._sz(18)))
         button.clicked.connect(lambda _checked=False, k=key: select_section(host, k))
         host._nav_buttons[key] = button
 
@@ -208,9 +264,7 @@ def _build_sidebar(host) -> QWidget:
     dot_size = host._sz(9)
     host.device_status_dot = QLabel()
     host.device_status_dot.setFixedSize(dot_size, dot_size)
-    host.device_status_dot.setStyleSheet(
-        f"background: rgba(255, 255, 255, 0.30); border-radius: {dot_size // 2}px;"
-    )
+    host.device_status_dot.setStyleSheet(f"background: rgba(255, 255, 255, 0.30); border-radius: {dot_size // 2}px;")
     host.device_status = QLabel(host._tr("device.status.not_connected"))
     host.device_status.setObjectName("statusText")
     host.device_status.setStyleSheet("QLabel#statusText { font-size: 12px; font-weight: 600; }")
@@ -243,14 +297,15 @@ def _build_main_area(host) -> QWidget:
     # stretches wider than the section card below it.
     column = QWidget()
     column.setObjectName("contentColumn")
-    column.setMaximumWidth(host._sz(1120))
+    column.setMinimumWidth(0)
+    column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
     layout = QVBoxLayout(column)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(host._sz(10))
 
     # Hero "live light": the big bar that glows the current strip colour.
     host.preview = AccentPreview()
-    host.preview.setMinimumHeight(host._sz(104))
+    host.preview.set_compact(False, animate=False)
     layout.addWidget(host.preview)
 
     # Quick actions under the light: presets on the left, power on the right —
@@ -269,9 +324,10 @@ def _build_main_area(host) -> QWidget:
 
     layout.addWidget(_build_body_scroll(host), 1)
 
-    outer.addStretch(1)
-    outer.addWidget(column, 6)
-    outer.addStretch(1)
+    # The wrapper gives the column all available room up to its cap. A plain
+    # AlignHCenter made Qt use only the content's sizeHint, producing a narrow
+    # card and a large empty area on wide windows.
+    outer.addWidget(_CenteredContent(column, host._sz(1120)), 1)
     return main
 
 
@@ -296,7 +352,10 @@ def _build_body_scroll(host) -> QScrollArea:
         None,
         host.body_scroll.verticalScrollBar(),
     )
-    right_gutter = max(host._sz(16), scrollbar_width + host._sz(10))
+    # QScrollArea already reserves the native scrollbar extent. Keep only a
+    # small visual breath here; the old double reservation made every card look
+    # clipped and shorter than the live-light header above it.
+    right_gutter = max(host._sz(8), scrollbar_width // 3)
     canvas_layout.setContentsMargins(0, 0, right_gutter, 0)
     canvas_layout.setSpacing(0)
     # Cap the section to the same width as the content column so it lines up with

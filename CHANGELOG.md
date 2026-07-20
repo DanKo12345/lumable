@@ -2,6 +2,34 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.3.3] - 2026-07-20
+
+Two strips, told apart: scenes and groups now target the strips you choose, the connection holds steadier, and the interface got a contrast and hierarchy pass.
+
+### Added
+- Scene targets: a scene applies to **all strips**, the **main strip**, or a **group** you define in the new Groups card. The result is reported honestly — which strips were reached, and which settings a controller couldn't do.
+- Per-strip BLE addressing: commands go to individual strips, so a scene on one strip no longer disturbs the others. Global status and sliders keep following the main strip.
+- **Make main**: every extra strip can swap roles with the main one without reconnecting. Names, saved settings, scene targets and auto-reconnect follow the new main strip.
+- Scene tiles replace the saved-scenes dropdown: colour swatch, name and target, keyboard accessible, with the applied scene highlighted until the light is changed by hand.
+- Driver capability matrix (BLEDOM / Triones / MagicHome / BanlanX): unsupported settings are skipped and reported instead of silently failing.
+- The Pro window now shows what you get: six benefit cards with an icon and a one-line description, one clear "Buy LumaBLE Pro" action, and the licence key field tucked behind an "I already have a key" link. Added a close button, and the Activate button animates while a key is being checked.
+
+### Changed
+- Timers and Schedule rebuilt as grouped lists: one setting per row, the value beside its name, clearer on/off state, and Windows autostart as an explicit setting.
+- Button hierarchy: one filled primary action per card, tinted secondary actions, quiet utilities, red destructive confirmations.
+- Button labels pick their colour by measured contrast (WCAG 4.5:1), covering pastel quick-mode accents.
+- Light theme: card shadows, visible language/FPS dropdowns, and grouped lists on their own panel.
+- Colour card is about 18% more compact.
+- Every dialog and popover (Pro, colour picker, About, logs, pairing, updates) now shares one graphite panel colour instead of ten copies of a blue-grey one.
+
+### Fixed
+- Saving a scene and then switching the theme could crash the app.
+- Disabled buttons were indistinguishable from enabled ones.
+- Diagnostics reported ancient crash dumps as recent; the fatal log now rotates at startup and ages out.
+- Steadier reconnection: backoff with jitter, flapping detection, and per-connection write pacing so streaming modes don't flood a controller.
+- Scenes were listed as a Pro feature on the purchase screen, but they are Free — the entry was removed and the stale flag deleted from the feature list.
+- Closing the Pro window while a licence key was being verified could crash the app; the window now waits for the check to finish.
+
 ## [0.3.2] - 2026-07-17
 
 Scenes: save a whole look and bring it back with one click, from the PC, your phone or the API — the first piece of a single lighting model that everything shares.

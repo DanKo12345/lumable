@@ -45,9 +45,10 @@ The API version is `1` (see `GET /health`). Breaking changes will bump it.
 | `POST /scenes/apply`| `{"scene_id": "..."}`   | Apply a saved scene                  |
 | `POST /scenes/delete`| `{"scene_id": "..."}` | Delete a saved scene                 |
 
-Commands currently apply to **all connected strips**. An optional
-`"device_id": "<address>"` field is accepted but reserved for per-strip targeting
-in a future release (BLE addressed routing); today it does not narrow the target.
+Optional `"device_id": "<address>"` on any command targets **one** strip; omit it
+to drive every connected strip. An addressed write goes only to that controller
+and does not move the desktop sliders — unless the address is the primary strip,
+whose state the app's UI and `/status` represent.
 
 Responses are JSON. Errors look like `{"error": "..."}` with a matching HTTP
 status (`400` bad request, `401` unauthorized, `404` not found, `409` conflict,

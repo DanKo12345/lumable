@@ -4,7 +4,7 @@ from PySide6.QtCore import QEvent, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from app.theme import qcolor_from_token, theme_manager
+from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
 from app.widgets.color_swatch import ColorSwatch
 from app.widgets.liquid_button import LiquidButton
 from app.widgets.liquid_slider import LiquidSlider
@@ -219,12 +219,9 @@ class _ColorPickerPanel(QFrame):
         path.addRoundedRect(rect, self.RADIUS, self.RADIUS)
 
         fill = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
-        if theme_manager.is_dark:
-            fill.setColorAt(0.0, QColor(34, 38, 50, 250))
-            fill.setColorAt(1.0, QColor(18, 20, 28, 252))
-        else:
-            fill.setColorAt(0.0, QColor(248, 251, 255, 250))
-            fill.setColorAt(1.0, QColor(219, 232, 255, 250))
+        panel_top, panel_bottom = overlay_panel_colors()
+        fill.setColorAt(0.0, panel_top)
+        fill.setColorAt(1.0, panel_bottom)
         painter.fillPath(path, fill)
 
         shine = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
@@ -329,7 +326,7 @@ class ColorPickerOverlay(QWidget):
         actions.setContentsMargins(ROW_SIDE_MARGIN, 2, ROW_SIDE_MARGIN, 0)
         actions.setSpacing(12)
         cancel_button = LiquidButton(labels["cancel"], "ghost", panel)
-        ok_button = LiquidButton(labels["ok"], "accent_soft", panel)
+        ok_button = LiquidButton(labels["ok"], "accent", panel)
         cancel_button.setFixedHeight(42)
         ok_button.setFixedHeight(42)
         cancel_button.setFixedWidth(180)

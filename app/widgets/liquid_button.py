@@ -178,14 +178,14 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
     @staticmethod
     def _light_palette() -> dict:
         return {
-            "fill_top":    QColor(255, 255, 255, 196),
-            "fill_mid":    QColor(232, 241, 255, 168),
-            "fill_bottom": QColor(190, 212, 246, 168),
-            "body_mid":    QColor(166, 192, 232, 12),
-            "body_bottom": QColor(92,  120, 168, 14),
-            "border_top":  QColor(150, 180, 228, 150),
-            "border_bot":  QColor(108, 142, 200, 132),
-            "text":        QColor("#18243d"),
+            "fill_top": QColor(255, 255, 255, 220),
+            "fill_mid": QColor(248, 249, 251, 196),
+            "fill_bottom": QColor(228, 231, 236, 184),
+            "body_mid": QColor(42, 47, 56, 8),
+            "body_bottom": QColor(42, 47, 56, 12),
+            "border_top": QColor(72, 79, 91, 92),
+            "border_bot": QColor(72, 79, 91, 112),
+            "text": QColor("#202329"),
         }
 
     def paintEvent(self, event):
@@ -267,7 +267,19 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         font.setWeight(QFont.Weight.DemiBold if active else QFont.Weight.Medium)
         painter.setFont(font)
         painter.setPen(text_color)
-        painter.drawText(rect.adjusted(16.0, 0.0, -8.0, 0.0), Qt.AlignLeft | Qt.AlignVCenter, self.text())
+        content = rect.adjusted(16.0, 0.0, -8.0, 0.0)
+        if self._icon_renderer is not None and self._icon_renderer.isValid():
+            requested = self.iconSize()
+            icon_size = float(requested.width() or 18)
+            icon_rect = QRectF(
+                content.left(),
+                content.center().y() - icon_size / 2.0,
+                icon_size,
+                icon_size,
+            )
+            self._draw_svg_icon(painter, icon_rect, text_color)
+            content.setLeft(icon_rect.right() + 10.0)
+        painter.drawText(content, Qt.AlignLeft | Qt.AlignVCenter, self.text())
 
     # ── ghost (Liquid Glass) ───────────────────────────────────────────
     def _paint_ghost(self, painter: QPainter, path: QPainterPath, rect: QRectF, radius: float, lc: dict) -> None:
@@ -278,35 +290,35 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         base_a = 5 + int(3 * self._hover)
         base = QLinearGradient(0, rect.top(), 0, rect.bottom())
         if theme_manager.is_dark:
-            base.setColorAt(0.0,  QColor(255, 255, 255, base_a + 1))
+            base.setColorAt(0.0, QColor(255, 255, 255, base_a + 1))
             base.setColorAt(0.34, QColor(240, 246, 255, base_a))
             base.setColorAt(0.68, QColor(226, 236, 248, max(0, base_a - 1)))
-            base.setColorAt(1.0,  QColor(214, 226, 242, max(0, base_a - 2)))
+            base.setColorAt(1.0, QColor(214, 226, 242, max(0, base_a - 2)))
         else:
             ft, fm, fb = lc["fill_top"], lc["fill_mid"], lc["fill_bottom"]
-            base.setColorAt(0.0,  QColor(ft.red(), ft.green(), ft.blue(), ft.alpha()))
+            base.setColorAt(0.0, QColor(ft.red(), ft.green(), ft.blue(), ft.alpha()))
             base.setColorAt(0.34, QColor(fm.red(), fm.green(), fm.blue(), fm.alpha()))
-            base.setColorAt(0.68, QColor(220, 232, 248, 146))
-            base.setColorAt(1.0,  QColor(fb.red(), fb.green(), fb.blue(), 126))
+            base.setColorAt(0.68, QColor(fm.red(), fm.green(), fm.blue(), 154))
+            base.setColorAt(1.0, QColor(fb.red(), fb.green(), fb.blue(), 126))
         painter.fillPath(path, base)
 
         body = QLinearGradient(0, rect.top(), 0, rect.bottom())
         bm, bb = lc["body_mid"], lc["body_bottom"]
         if theme_manager.is_dark:
-            body.setColorAt(0.0,  QColor(255, 255, 255, 2))
+            body.setColorAt(0.0, QColor(255, 255, 255, 2))
             body.setColorAt(0.42, QColor(160, 160, 166, 4 if enabled else 2))
-            body.setColorAt(1.0,  QColor(12, 13, 16,   6 if enabled else 3))
+            body.setColorAt(1.0, QColor(12, 13, 16, 6 if enabled else 3))
         else:
-            body.setColorAt(0.0,  QColor(255, 255, 255, 8 if enabled else 4))
+            body.setColorAt(0.0, QColor(255, 255, 255, 8 if enabled else 4))
             body.setColorAt(0.42, QColor(bm.red(), bm.green(), bm.blue(), 12 if enabled else 5))
-            body.setColorAt(1.0,  QColor(bb.red(), bb.green(), bb.blue(), 12 if enabled else 5))
+            body.setColorAt(1.0, QColor(bb.red(), bb.green(), bb.blue(), 12 if enabled else 5))
         painter.fillPath(path, body)
 
         # 2. soft top fresnel
         fresnel = QLinearGradient(0, rect.top(), 0, rect.top() + rect.height() * 0.14)
-        fresnel.setColorAt(0.0,  QColor(255, 255, 255, 26 if enabled else 10))
-        fresnel.setColorAt(0.22, QColor(255, 255, 255,  6 if enabled else  2))
-        fresnel.setColorAt(1.0,  QColor(255, 255, 255,  0))
+        fresnel.setColorAt(0.0, QColor(255, 255, 255, 26 if enabled else 10))
+        fresnel.setColorAt(0.22, QColor(255, 255, 255, 6 if enabled else 2))
+        fresnel.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillPath(path, fresnel)
 
         # 3. bottom refraction
@@ -323,18 +335,18 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
                 rect.top() + rect.height() * self._pointer_y * 0.80,
                 rect.width() * 0.74,
             )
-            spec.setColorAt(0.0,  QColor(255, 255, 255, sa))
+            spec.setColorAt(0.0, QColor(255, 255, 255, sa))
             spec.setColorAt(0.22, QColor(255, 255, 255, max(0, sa // 8)))
-            spec.setColorAt(1.0,  QColor(255, 255, 255, 0))
+            spec.setColorAt(1.0, QColor(255, 255, 255, 0))
             painter.fillPath(path, spec)
 
         # 5. ripple
         if self._ripple_opacity > 0.01:
             rr = 8 + self._ripple * max(rect.width(), rect.height()) * 0.9
             ripple = QRadialGradient(self._ripple_x, self._ripple_y, rr)
-            ripple.setColorAt(0.0,  QColor(255, 255, 255, int(24 * self._ripple_opacity)))
-            ripple.setColorAt(0.45, QColor(255, 255, 255, int( 6 * self._ripple_opacity)))
-            ripple.setColorAt(1.0,  QColor(255, 255, 255, 0))
+            ripple.setColorAt(0.0, QColor(255, 255, 255, int(24 * self._ripple_opacity)))
+            ripple.setColorAt(0.45, QColor(255, 255, 255, int(6 * self._ripple_opacity)))
+            ripple.setColorAt(1.0, QColor(255, 255, 255, 0))
             painter.fillRect(self.rect(), ripple)
 
         self._paint_impact(painter, rect)
@@ -346,9 +358,9 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         border_g = QLinearGradient(0, rect.top(), 0, rect.bottom())
         if theme_manager.is_dark:
             border_g.setColorAt(0.0, QColor(255, 255, 255, 36 if enabled else 18))
-            border_g.setColorAt(1.0, QColor(218, 224, 236, 20 if enabled else  9))
+            border_g.setColorAt(1.0, QColor(218, 224, 236, 20 if enabled else 9))
         else:
-            border_g.setColorAt(0.0, QColor(bt.red(),  bt.green(),  bt.blue(),  168 if enabled else 60))
+            border_g.setColorAt(0.0, QColor(bt.red(), bt.green(), bt.blue(), 168 if enabled else 60))
             border_g.setColorAt(1.0, QColor(bb2.red(), bb2.green(), bb2.blue(), 140 if enabled else 52))
         painter.setPen(QPen(QBrush(border_g), 1.0))
         painter.drawRoundedRect(rect, radius, radius)
@@ -393,22 +405,71 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
                 bot.setAlpha(180)
             return top, bot
         if role == "mode":
-            return (QColor(255, 255, 255, 17), QColor(78, 79, 84, 10)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
+            return (
+                (QColor(255, 255, 255, 17), QColor(78, 79, 84, 10))
+                if theme_manager.is_dark
+                else (QColor(ft), QColor(fb))
+            )
         if role == "mode_active":
-            return (QColor(251, 191, 146, 138), QColor(114, 73, 54, 94)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
+            return (
+                (QColor(251, 191, 146, 138), QColor(114, 73, 54, 94))
+                if theme_manager.is_dark
+                else (QColor(ft), QColor(fb))
+            )
         if role == "primary_warm":
-            return (QColor(255, 218, 198, 58), QColor(118, 72, 66, 44)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
+            return (
+                (QColor(255, 218, 198, 58), QColor(118, 72, 66, 44))
+                if theme_manager.is_dark
+                else (QColor(ft), QColor(fb))
+            )
         if role == "accent_soft":
-            return (QColor(255, 255, 255, 18), QColor(222, 222, 228, 10)) if theme_manager.is_dark else (QColor(ft), QColor(fb))
+            return (
+                (QColor(255, 255, 255, 18), QColor(222, 222, 228, 10))
+                if theme_manager.is_dark
+                else (QColor(ft), QColor(fb))
+            )
         if role == "accent":
             top = qcolor_from_token(palette["accent_start"])
-            top.setAlpha(118 if theme_manager.is_dark else ft.alpha())
             bot = qcolor_from_token(palette["accent_end"])
-            bot.setAlpha(78 if theme_manager.is_dark else fb.alpha())
+            if theme_manager.is_dark:
+                top.setAlpha(118)
+                bot.setAlpha(78)
+            else:
+                # Near-opaque, deepened fill: dark enough that the white label
+                # clears 4.5:1 after compositing (the raw accent_start alone
+                # only reaches ~3.2:1).
+                top = QColor(
+                    round(top.red() * 0.4 + bot.red() * 0.6),
+                    round(top.green() * 0.4 + bot.green() * 0.6),
+                    round(top.blue() * 0.4 + bot.blue() * 0.6),
+                ).darker(106)
+                bot = bot.darker(120)
+                top.setAlpha(252)
+                bot.setAlpha(244)
+                top, bot = self._ensure_label_contrast(top, bot)
+            return top, bot
+        if role == "danger":
+            top = qcolor_from_token(palette["danger_start"])
+            bot = qcolor_from_token(palette["danger_end"])
+            if theme_manager.is_dark:
+                top.setAlpha(132)
+                bot.setAlpha(96)
+            else:
+                top = QColor(
+                    round(top.red() * 0.35 + bot.red() * 0.65),
+                    round(top.green() * 0.35 + bot.green() * 0.65),
+                    round(top.blue() * 0.35 + bot.blue() * 0.65),
+                ).darker(108)
+                bot = bot.darker(118)
+                top.setAlpha(252)
+                bot.setAlpha(244)
+                top, bot = self._ensure_label_contrast(top, bot)
             return top, bot
         # primary / fallback
         top = qcolor_from_token(palette["accent_start"])
-        top.setAlpha(126 if role == "primary" and theme_manager.is_dark else 108 if theme_manager.is_dark else ft.alpha())
+        top.setAlpha(
+            126 if role == "primary" and theme_manager.is_dark else 108 if theme_manager.is_dark else ft.alpha()
+        )
         bot = qcolor_from_token(palette["accent_end"])
         bot.setAlpha(88 if role == "primary" and theme_manager.is_dark else 72 if theme_manager.is_dark else fb.alpha())
         return top, bot
@@ -420,7 +481,8 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         is_warm = role == "primary_warm"
         is_soft = role == "accent_soft"
         is_led = role == "led"
-        if role not in {"accent", "primary"} and not is_mode and not is_warm and not is_soft and not is_led:
+        is_danger = role == "danger"
+        if role not in {"accent", "primary"} and not is_mode and not is_warm and not is_soft and not is_led and not is_danger:
             return
         palette = theme_manager.palette
         glow_rect = rect.adjusted(-1.0, -1.0, 1.0, 1.0)
@@ -429,13 +491,15 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         if is_led:
             led = self._led_paint_color()
             glow_color = QColor(led.red(), led.green(), led.blue())
+        elif is_danger:
+            glow_color = qcolor_from_token(palette["danger_start"])
         elif is_warm or role == "mode_active":
             glow_color = QColor(255, 187, 140)
         elif is_soft:
             glow_color = QColor(150, 188, 255) if not theme_manager.is_dark else QColor(255, 255, 255)
         else:
             glow_color = qcolor_from_token(palette["accent_start"])
-        if not theme_manager.is_dark and not is_led:
+        if not theme_manager.is_dark and not is_led and not is_danger:
             glow_color = QColor(120, 160, 255) if is_warm else QColor(168, 198, 244)
         if role == "mode":
             glow_alpha = 8
@@ -468,13 +532,13 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         painter.fillPath(path, base)
 
         shine = QLinearGradient(0, rect.top(), 0, rect.top() + rect.height() * 0.44)
-        shine.setColorAt(0.0,  QColor(255, 255, 255, 116 if enabled else 28))
-        shine.setColorAt(0.18, QColor(255, 255, 255,  38 if enabled else 10))
-        shine.setColorAt(1.0,  QColor(255, 255, 255,   0))
+        shine.setColorAt(0.0, QColor(255, 255, 255, 116 if enabled else 28))
+        shine.setColorAt(0.18, QColor(255, 255, 255, 38 if enabled else 10))
+        shine.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillPath(path, shine)
 
         bot_r = QLinearGradient(0, rect.bottom() - rect.height() * 0.32, 0, rect.bottom())
-        bot_r.setColorAt(0.0, QColor(0, 0, 0,  0))
+        bot_r.setColorAt(0.0, QColor(0, 0, 0, 0))
         bot_r.setColorAt(1.0, QColor(0, 0, 0, 26 if theme_manager.is_dark else 18))
         painter.fillPath(path, bot_r)
 
@@ -487,14 +551,14 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             )
             spec.setColorAt(0.0, QColor(255, 255, 255, sa))
             spec.setColorAt(0.3, QColor(255, 246, 240, sa // 4))
-            spec.setColorAt(1.0, QColor(255, 255, 255,  0))
+            spec.setColorAt(1.0, QColor(255, 255, 255, 0))
             painter.fillPath(path, spec)
 
         if not theme_manager.is_dark:
             unify = QLinearGradient(0, rect.top(), 0, rect.bottom())
-            unify.setColorAt(0.0,  QColor(180, 200, 255, 70))
+            unify.setColorAt(0.0, QColor(180, 200, 255, 70))
             unify.setColorAt(0.48, QColor(140, 170, 255, 50))
-            unify.setColorAt(1.0,  QColor(100, 140, 240, 32))
+            unify.setColorAt(1.0, QColor(100, 140, 240, 32))
             painter.fillPath(path, unify)
 
     # ── accent_soft fill ───────────────────────────────────────────────
@@ -505,35 +569,35 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         base = QLinearGradient(0, rect.top(), 0, rect.bottom())
         base_alpha = (16 if theme_manager.is_dark else 46) + int(8 * self._hover)
         if theme_manager.is_dark:
-            base.setColorAt(0.0,  QColor(255, 255, 255, base_alpha + 3))
+            base.setColorAt(0.0, QColor(255, 255, 255, base_alpha + 3))
             base.setColorAt(0.38, QColor(238, 244, 252, base_alpha))
-            base.setColorAt(1.0,  QColor(214, 224, 240, max(0, base_alpha - 4)))
+            base.setColorAt(1.0, QColor(214, 224, 240, max(0, base_alpha - 4)))
         else:
-            base.setColorAt(0.0,  QColor(ft.red(), ft.green(), ft.blue(), ft.alpha()))
+            base.setColorAt(0.0, QColor(ft.red(), ft.green(), ft.blue(), ft.alpha()))
             base.setColorAt(0.38, QColor(fm.red(), fm.green(), fm.blue(), fm.alpha()))
-            base.setColorAt(1.0,  QColor(fb.red(), fb.green(), fb.blue(), fb.alpha()))
+            base.setColorAt(1.0, QColor(fb.red(), fb.green(), fb.blue(), fb.alpha()))
         painter.fillPath(path, base)
 
         body = QLinearGradient(0, rect.top(), 0, rect.bottom())
         if theme_manager.is_dark:
-            body.setColorAt(0.0,  QColor(255, 255, 255,  1))
-            body.setColorAt(0.46, QColor(160, 160, 166,  4 if enabled else 2))
-            body.setColorAt(1.0,  QColor( 12,  13,  16,  6 if enabled else 3))
+            body.setColorAt(0.0, QColor(255, 255, 255, 1))
+            body.setColorAt(0.46, QColor(160, 160, 166, 4 if enabled else 2))
+            body.setColorAt(1.0, QColor(12, 13, 16, 6 if enabled else 3))
         else:
-            body.setColorAt(0.0,  QColor(255, 255, 255,  8))
+            body.setColorAt(0.0, QColor(255, 255, 255, 8))
             body.setColorAt(0.46, QColor(bm.red(), bm.green(), bm.blue(), 12 if enabled else 5))
-            body.setColorAt(1.0,  QColor(bb.red(), bb.green(), bb.blue(), 14 if enabled else 6))
+            body.setColorAt(1.0, QColor(bb.red(), bb.green(), bb.blue(), 14 if enabled else 6))
         painter.fillPath(path, body)
 
         fresnel = QLinearGradient(0, rect.top(), 0, rect.top() + rect.height() * 0.15)
-        fresnel.setColorAt(0.0,  QColor(255, 255, 255, 24 if enabled else 10))
-        fresnel.setColorAt(0.26, QColor(255, 255, 255,  6 if enabled else  2))
-        fresnel.setColorAt(1.0,  QColor(255, 255, 255,  0))
+        fresnel.setColorAt(0.0, QColor(255, 255, 255, 24 if enabled else 10))
+        fresnel.setColorAt(0.26, QColor(255, 255, 255, 6 if enabled else 2))
+        fresnel.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillPath(path, fresnel)
 
         bot_r = QLinearGradient(0, rect.bottom() - rect.height() * 0.30, 0, rect.bottom())
-        bot_r.setColorAt(0.0, QColor(0, 0, 0,  0))
-        bot_r.setColorAt(1.0, QColor(0, 0, 0,  8 if theme_manager.is_dark else 10))
+        bot_r.setColorAt(0.0, QColor(0, 0, 0, 0))
+        bot_r.setColorAt(1.0, QColor(0, 0, 0, 8 if theme_manager.is_dark else 10))
         painter.fillPath(path, bot_r)
 
         if self._hover > 0.01 and enabled:
@@ -543,16 +607,23 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
                 rect.top() + rect.height() * self._pointer_y * 0.82,
                 rect.width() * 0.76,
             )
-            spec.setColorAt(0.0,  QColor(255, 255, 255, sa))
+            spec.setColorAt(0.0, QColor(255, 255, 255, sa))
             spec.setColorAt(0.28, QColor(255, 255, 255, max(0, sa // 8)))
-            spec.setColorAt(1.0,  QColor(255, 255, 255,  0))
+            spec.setColorAt(1.0, QColor(255, 255, 255, 0))
             painter.fillPath(path, spec)
 
     # ── standard fill (mode / mode_active / accent / primary) ─────────
-    def _paint_standard_fill(self, painter: QPainter, path: QPainterPath, rect: QRectF, top: QColor, bottom: QColor) -> None:
+    def _paint_standard_fill(
+        self, painter: QPainter, path: QPainterPath, rect: QRectF, top: QColor, bottom: QColor
+    ) -> None:
         role = self._role
         is_mode = role in {"mode", "mode_active"}
         enabled = self.isEnabled()
+        if not enabled:
+            top = QColor(top)
+            top.setAlpha(round(top.alpha() * 0.45))
+            bottom = QColor(bottom)
+            bottom.setAlpha(round(bottom.alpha() * 0.45))
         fill = QLinearGradient(0, 0, 0, self.height())
         if role == "mode":
             fill.setColorAt(0.0, top)
@@ -563,11 +634,14 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             fill.setColorAt(1.0, bottom)
         painter.fillPath(path, fill)
 
-        if not theme_manager.is_dark and role in {"mode", "mode_active", "accent", "primary"}:
+        # Only the neutral mode chips get the cool white-blue veil. A filled
+        # accent/primary button must keep its saturation, otherwise the "main
+        # action" washes out to the same weight as every other button.
+        if not theme_manager.is_dark and role in {"mode", "mode_active"}:
             cool = QLinearGradient(0, rect.top(), 0, rect.bottom())
-            cool.setColorAt(0.0,  QColor(226, 238, 255, 84))
+            cool.setColorAt(0.0, QColor(226, 238, 255, 84))
             cool.setColorAt(0.46, QColor(200, 222, 252, 64))
-            cool.setColorAt(1.0,  QColor(166, 196, 244, 40))
+            cool.setColorAt(1.0, QColor(166, 196, 244, 40))
             painter.fillPath(path, cool)
 
         base_haze = 26 if role == "mode_active" else 22 if role == "primary" else 16 if not is_mode else 12
@@ -576,9 +650,11 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             rect.top() - rect.height() * 0.06,
             rect.width() * 0.76,
         )
-        haze.setColorAt(0.0,  QColor(255, 255, 255, base_haze if enabled else 10))
-        haze.setColorAt(0.35, QColor(255, 255, 255, 10 if role in {"primary", "mode_active"} and enabled else 6 if enabled else 3))
-        haze.setColorAt(1.0,  QColor(255, 255, 255, 0))
+        haze.setColorAt(0.0, QColor(255, 255, 255, base_haze if enabled else 10))
+        haze.setColorAt(
+            0.35, QColor(255, 255, 255, 10 if role in {"primary", "mode_active"} and enabled else 6 if enabled else 3)
+        )
+        haze.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.fillRect(self.rect(), haze)
 
         shine_alpha = 82 if role == "mode_active" else 80 if role == "primary" else 64 if not is_mode else 44
@@ -596,13 +672,13 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         if role == "primary_warm":
             g = QLinearGradient(0, rect.top(), 0, rect.bottom())
             if theme_manager.is_dark:
-                g.setColorAt(0.0,  QColor(255, 255, 255, 170 if enabled else 66))
-                g.setColorAt(0.42, QColor(255, 255, 255,  54 if enabled else 22))
-                g.setColorAt(1.0,  QColor(208, 186, 180,  82 if enabled else 34))
+                g.setColorAt(0.0, QColor(255, 255, 255, 170 if enabled else 66))
+                g.setColorAt(0.42, QColor(255, 255, 255, 54 if enabled else 22))
+                g.setColorAt(1.0, QColor(208, 186, 180, 82 if enabled else 34))
             else:
-                g.setColorAt(0.0,  QColor(255, 255, 255, 144 if enabled else 52))
-                g.setColorAt(0.42, QColor(255, 226, 205,  92 if enabled else 30))
-                g.setColorAt(1.0,  QColor(232, 150,  96,  64 if enabled else 22))
+                g.setColorAt(0.0, QColor(255, 255, 255, 144 if enabled else 52))
+                g.setColorAt(0.42, QColor(255, 226, 205, 92 if enabled else 30))
+                g.setColorAt(1.0, QColor(232, 150, 96, 64 if enabled else 22))
             painter.setPen(QPen(g, 1.0))
             painter.drawRoundedRect(rect, radius, radius)
             inner = rect.adjusted(0.8, 0.8, -0.8, -0.8)
@@ -613,18 +689,26 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             painter.drawPath(inner_path)
             painter.setClipping(False)
         elif role == "mode":
-            c = QColor(255, 255, 255, 36) if theme_manager.is_dark else QColor(bb.red(), bb.green(), bb.blue(), bb.alpha())
+            c = (
+                QColor(255, 255, 255, 36)
+                if theme_manager.is_dark
+                else QColor(bb.red(), bb.green(), bb.blue(), bb.alpha())
+            )
             painter.setPen(QPen(c, 1.0))
             painter.drawRoundedRect(rect, radius, radius)
         elif role == "mode_active":
-            c = QColor(255, 205, 170, 132) if theme_manager.is_dark else QColor(bb.red(), bb.green(), bb.blue(), bb.alpha())
+            c = (
+                QColor(255, 205, 170, 132)
+                if theme_manager.is_dark
+                else QColor(bb.red(), bb.green(), bb.blue(), bb.alpha())
+            )
             painter.setPen(QPen(c, 1.0))
             painter.drawRoundedRect(rect, radius, radius)
         elif role == "accent_soft":
             g = QLinearGradient(0, rect.top(), 0, rect.bottom())
             if theme_manager.is_dark:
                 g.setColorAt(0.0, QColor(255, 255, 255, 46 if enabled else 20))
-                g.setColorAt(1.0, QColor(214, 222, 236, 20 if enabled else  8))
+                g.setColorAt(1.0, QColor(214, 222, 236, 20 if enabled else 8))
             else:
                 g.setColorAt(0.0, QColor(bt.red(), bt.green(), bt.blue(), bt.alpha()))
                 g.setColorAt(1.0, QColor(bb.red(), bb.green(), bb.blue(), bb.alpha()))
@@ -643,7 +727,12 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
     def _paint_label(self, painter: QPainter, rect: QRectF, lc: dict) -> None:
         role = self._role
         enabled = self.isEnabled()
-        if role == "mode" and not theme_manager.is_dark:
+        if role in {"accent", "primary", "danger"}:
+            # Filled action button: white label like macOS/iOS by default, but a
+            # quick-mode accent override can dye the fill with a light pastel —
+            # then a white label drops below ~3:1 and must flip to dark.
+            text_color = self._fill_label_color(lc)
+        elif role == "mode" and not theme_manager.is_dark:
             text_color = QColor(lc["text"])
         elif role in {"mode", "mode_active"} and theme_manager.is_dark:
             text_color = QColor("#fff8f4") if role == "mode_active" else QColor("#ecf1ff")
@@ -659,6 +748,58 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             painter.drawText(rect.adjusted(0.0, 1.0, 0.0, 1.0), Qt.AlignCenter, self.text())
         painter.setPen(text_color)
         self._draw_content(painter, rect, text_color)
+
+    @staticmethod
+    def _relative_luminance(color: QColor) -> float:
+        def linear(value: int) -> float:
+            c = value / 255.0
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+        return 0.2126 * linear(color.red()) + 0.7152 * linear(color.green()) + 0.0722 * linear(color.blue())
+
+    @classmethod
+    def _composite_fill_luminance(cls, top: QColor, bottom: QColor) -> float:
+        """Luminance of the fill as it actually reaches the eye: the gradient
+        midpoint composited over the card behind the button."""
+        mid = QColor(
+            round((top.red() + bottom.red()) / 2),
+            round((top.green() + bottom.green()) / 2),
+            round((top.blue() + bottom.blue()) / 2),
+        )
+        backdrop = QColor(26, 27, 30) if theme_manager.is_dark else QColor(248, 249, 251)
+        alpha = ((top.alpha() + bottom.alpha()) / 2.0) / 255.0
+        composite = QColor(
+            round(mid.red() * alpha + backdrop.red() * (1.0 - alpha)),
+            round(mid.green() * alpha + backdrop.green() * (1.0 - alpha)),
+            round(mid.blue() * alpha + backdrop.blue() * (1.0 - alpha)),
+        )
+        return cls._relative_luminance(composite)
+
+    @classmethod
+    def _ensure_label_contrast(cls, top: QColor, bottom: QColor) -> tuple[QColor, QColor]:
+        """Darken a light-theme fill until the white label clears 4.5:1.
+
+        Quick-mode accents dye the fill with light pastels that land in a dead
+        zone where neither white nor dark text reaches 4.5:1 — the fill itself
+        has to give way, the text colour alone cannot fix it.
+        """
+        for _ in range(5):
+            lum = cls._composite_fill_luminance(top, bottom)
+            if 1.05 / (lum + 0.05) >= 4.5:
+                break
+            top = top.darker(108)
+            bottom = bottom.darker(108)
+        return top, bottom
+
+    def _fill_label_color(self, lc: dict) -> QColor:
+        """White or dark label — whichever has the higher WCAG contrast ratio
+        against the effective (composited) fill."""
+        top, bottom = self._role_base_colors(lc)
+        fill_lum = self._composite_fill_luminance(top, bottom)
+        dark = QColor("#1e2633")
+        white_contrast = 1.05 / (fill_lum + 0.05)
+        dark_contrast = (fill_lum + 0.05) / (self._relative_luminance(dark) + 0.05)
+        return QColor("#ffffff") if white_contrast >= dark_contrast else dark
 
     def _draw_content(self, painter: QPainter, rect: QRectF, text_color: QColor) -> None:
         text = self.text()
@@ -677,7 +818,12 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         if icon_size <= 0:
             icon_size = min(17.0, max(14.0, rect.height() * 0.43))
         if not text:
-            icon_rect = QRectF(content_rect.center().x() - icon_size / 2.0, content_rect.center().y() - icon_size / 2.0, icon_size, icon_size)
+            icon_rect = QRectF(
+                content_rect.center().x() - icon_size / 2.0,
+                content_rect.center().y() - icon_size / 2.0,
+                icon_size,
+                icon_size,
+            )
             self._draw_svg_icon(painter, icon_rect, text_color)
             return
 

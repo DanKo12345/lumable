@@ -28,7 +28,7 @@ def build_local_api_section(host: PanelHost) -> GlassCard:
     scripts. Off by default, loopback-only, token-protected. The everyday view is
     just Enable + status; the token, port and LAN access live under Advanced so
     the card doesn't look like a developer panel."""
-    host.api_card = host._card(host._tr("api.title"), host._tr("api.subtitle"), icon="globe")
+    host.api_card = host._card(host._tr("api.title"), host._tr("api.subtitle"), icon="network")
 
     # ── Everyday view: enable + live status (+ reveal eye when on LAN) ──
     top = _row(host)

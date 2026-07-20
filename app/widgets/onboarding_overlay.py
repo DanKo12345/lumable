@@ -178,7 +178,7 @@ class OnboardingOverlay(QWidget):
         self._body.setObjectName("onboardBody")
         self._body.setWordWrap(True)
         self._body.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self._scan_button = LiquidButton(self._labels["scan"], "accent_soft", self._content)
+        self._scan_button = LiquidButton(self._labels["scan"], "accent", self._content)
         self._scan_button.setMinimumHeight(44)
         self._scan_button.clicked.connect(self._on_scan)
         # Stretches above and below centre the icon/title/body group vertically in
@@ -197,7 +197,7 @@ class OnboardingOverlay(QWidget):
         self._back_button = LiquidButton(self._labels["back"], "ghost", self._panel)
         self._back_button.setFixedSize(120, 42)
         self._back_button.clicked.connect(self._prev)
-        self._next_button = LiquidButton(self._labels["next"], "accent_soft", self._panel)
+        self._next_button = LiquidButton(self._labels["next"], "accent", self._panel)
         self._next_button.setFixedSize(150, 42)
         self._next_button.clicked.connect(self._next)
         nav.addWidget(self._back_button)

@@ -88,9 +88,22 @@ class UiLocalizationController:
         add_mirror = getattr(host, "add_mirror_button", None)
         if add_mirror is not None:
             add_mirror.setText(host._tr("device.add_mirror"))
+        for attribute, key in (
+            ("device_primary_heading", "device.primary_section"),
+            ("device_mirrors_heading", "device.mirrors_section"),
+            ("mirror_empty_label", "device.mirrors_empty"),
+            ("rename_device_button", "device.rename_primary"),
+            ("supported_controllers_button", "device.supported"),
+        ):
+            widget = getattr(host, attribute, None)
+            if widget is not None:
+                widget.setText(host._tr(key))
         host.device_status.setText(
             host._tr("device.status.connected") if host._is_connected else host._tr("device.status.not_connected")
         )
+        primary_meta = getattr(host, "device_primary_meta", None)
+        if primary_meta is not None and not host._is_connected:
+            primary_meta.setText(host._tr("device.primary_empty"))
         hint = getattr(host, "device_status_hint", None)
         if hint is not None:
             if host._is_connected:
@@ -147,12 +160,17 @@ class UiLocalizationController:
         host.schedule_runtime_note.setText(host._tr("schedule.runtime_note"))
         host.schedule_toggle_button.setToolTip(host._tr("schedule.toggle_hint"))
         host.schedule_startup_button.setToolTip(host._tr("schedule.startup_hint"))
-        host.schedule_on_label.setText(host._tr("schedule.on"))
-        host.schedule_off_label.setText(host._tr("schedule.off"))
+        host.schedule_master_label.setText(host._tr("schedule.row_master"))
+        host.schedule_on_label.setText(host._tr("schedule.row_on"))
+        host.schedule_off_label.setText(host._tr("schedule.row_off"))
+        host.schedule_days_label.setText(host._tr("schedule.row_days"))
+        host.schedule_startup_label.setText(host._tr("schedule.row_startup"))
+        host.schedule_startup_status.setText(host._tr("schedule.startup_hint"))
         for index, chip in enumerate(getattr(host, "schedule_day_buttons", [])):
             chip.setText(host._tr(f"schedule.day_{index}"))
         if getattr(host, "schedule_lock_label", None) is not None:
-            host.schedule_lock_label.setText(host._tr("schedule.pro_locked"))
+            host.schedule_lock_label.setText(host._tr("common.pro_badge"))
+            host.schedule_lock_label.setToolTip(host._tr("schedule.pro_locked"))
         host.schedule_on_time.set_picker_title(host._tr("schedule.pick_on"))
         host.schedule_off_time.set_picker_title(host._tr("schedule.pick_off"))
         time_picker_labels = {
@@ -215,7 +233,8 @@ class UiLocalizationController:
         running = host._ambient_ui.is_running()
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_on" if running else "ambient.toggle_off"))
         if getattr(host, "ambient_lock_label", None) is not None:
-            host.ambient_lock_label.setText(host._tr("ambient.pro_locked"))
+            host.ambient_lock_label.setText(host._tr("common.pro_badge"))
+            host.ambient_lock_label.setToolTip(host._tr("ambient.pro_locked"))
         host._ambient_ui.refresh_lock()
 
         combo = host.ambient_region_combo
@@ -269,7 +288,8 @@ class UiLocalizationController:
         running = host._music_ui.is_running()
         host.music_toggle_button.setText(host._tr("music.toggle_on" if running else "music.toggle_off"))
         if getattr(host, "music_lock_label", None) is not None:
-            host.music_lock_label.setText(host._tr("music.pro_locked"))
+            host.music_lock_label.setText(host._tr("common.pro_badge"))
+            host.music_lock_label.setToolTip(host._tr("music.pro_locked"))
         if running and getattr(host, "music_status_label", None) is not None:
             host.music_status_label.setText(host._tr("music.listening"))
         captions = getattr(host, "music_band_captions", {})
@@ -302,7 +322,8 @@ class UiLocalizationController:
             host.diy_card.title_label.setText(host._tr("diy.title"))
             if host.diy_card.subtitle_label is not None:
                 host.diy_card.subtitle_label.setText(host._tr("diy.subtitle"))
-            host.diy_lock_label.setText(host._tr("diy.pro_locked"))
+            host.diy_lock_label.setText(host._tr("common.pro_badge"))
+            host.diy_lock_label.setToolTip(host._tr("diy.pro_locked"))
             host._diy_ui.relocalize()
 
     def _apply_scenes_texts(self) -> None:
@@ -312,6 +333,10 @@ class UiLocalizationController:
         host.scenes_card.title_label.setText(host._tr("scenes.title"))
         if host.scenes_card.subtitle_label is not None:
             host.scenes_card.subtitle_label.setText(host._tr("scenes.subtitle"))
+        if getattr(host, "groups_card", None) is not None:
+            host.groups_card.title_label.setText(host._tr("groups.title"))
+            if host.groups_card.subtitle_label is not None:
+                host.groups_card.subtitle_label.setText(host._tr("groups.subtitle"))
         host._scene_ui.relocalize()
 
     def _apply_local_api_texts(self) -> None:

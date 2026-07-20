@@ -98,6 +98,61 @@ def test_apply_reports_no_target_when_resolved_empty() -> None:
     assert all(c[0] != "color" for c in backend.calls)
 
 
+def test_empty_target_never_stops_a_running_stream() -> None:
+    # Applying a scene whose group has no connected strips must not kill the
+    # screen sync / music / DIY the user is running on another strip.
+    backend = FakeBackend()
+    scene = make_scene("Ghost", {"rgb": [1, 2, 3], "brightness": 40, "pc_mode": "screen"})
+
+    report = SceneApplyService(backend).apply(scene, device_ids=[])
+
+    assert backend.calls == []  # no BLE writes and, crucially, no set_pc_mode("off")
+    assert report["applied"] == []
+    reasons = {(entry["field"], entry["reason"]) for entry in report["skipped"]}
+    assert ("color", "no_target") in reasons
+    assert ("brightness", "no_target") in reasons
+    assert ("pc_mode", "no_target") in reasons  # the mode isn't started either
+
+
+def test_mixed_driver_group_reports_per_strip_skips() -> None:
+    # A group can mix controllers: the effect works on one strip and not on the
+    # other. The report must say which strip couldn't take it, not claim success.
+    backend = FakeBackend()
+    scene = make_scene("Group", {"rgb": [1, 2, 3], "effect": {"kind": "firmware", "ref": 12, "speed": 40}})
+
+    def caps_for(device_id):
+        if device_id == "NO-FX":
+            return {"rgb": True, "firmware_effects": False}
+        return {"rgb": True, "firmware_effects": True, "effect_speed": True}
+
+    report = SceneApplyService(backend).apply(
+        scene, device_ids=["OK-FX", "NO-FX"], capabilities_for=caps_for
+    )
+
+    # Colour reached both strips; the effect only the one that supports it.
+    assert ("color", 1, 2, 3, "OK-FX") in backend.calls
+    assert ("color", 1, 2, 3, "NO-FX") in backend.calls
+    assert ("effect", 12, 40, "OK-FX") in backend.calls
+    assert all(call[0] != "effect" or call[3] != "NO-FX" for call in backend.calls)
+    assert {"field": "effect", "reason": "unsupported", "target": "NO-FX"} in report["skipped"]
+    assert "effect" in report["applied"]  # it did land somewhere
+
+
+def test_per_strip_effect_speed_is_resolved_per_target() -> None:
+    backend = FakeBackend()
+    scene = make_scene("Group", {"effect": {"kind": "firmware", "ref": 7, "speed": 80}})
+
+    def caps_for(device_id):
+        supports_speed = device_id == "FAST"
+        return {"firmware_effects": True, "effect_speed": supports_speed}
+
+    report = SceneApplyService(backend).apply(scene, device_ids=["FAST", "SLOW"], capabilities_for=caps_for)
+
+    assert ("effect", 7, 80, "FAST") in backend.calls
+    assert ("effect", 7, None, "SLOW") in backend.calls  # speed dropped, effect kept
+    assert {"field": "effect_speed", "reason": "unsupported", "target": "SLOW"} in report["skipped"]
+
+
 def test_snapshot_captures_light_and_active_mode() -> None:
     status = {"power": True, "color": {"r": 5, "g": 6, "b": 7}, "brightness": 55, "pc_mode": "music"}
     scene = scene_from_status(status, "Now")

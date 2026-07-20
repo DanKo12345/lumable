@@ -4,10 +4,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QHBoxLayout, QLabel
 
+from app.panels.card_header import add_pro_badge
 from app.panels.types import PanelHost
 from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.ambient_preview import AmbientPreview
-from app.widgets.clickable_label import ClickableLabel
 
 _REGIONS = ("full", "center", "bottom", "top")
 
@@ -17,18 +17,7 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
     host.ambient_card.setMinimumHeight(host._sz(196))
 
     # Pro badge shown when screen sync isn't unlocked (toggled by the controller).
-    host.ambient_lock_label = ClickableLabel(host._tr("ambient.pro_locked"))
-    host.ambient_lock_label.setObjectName("proBadge")
-    host.ambient_lock_label.setStyleSheet(
-        "QLabel#proBadge { background: rgba(143, 191, 255, 0.16); color: #9fc0ff;"
-        " padding: 5px 12px; border-radius: 11px; }"
-        "QLabel#proBadge:hover { background: rgba(143, 191, 255, 0.26); }"
-    )
-    host.ambient_lock_label.setCursor(Qt.PointingHandCursor)
-    host.ambient_lock_label.clicked.connect(host._show_license_overlay)
-    host.ambient_lock_label.hide()
-    host.ambient_card.content_layout.addWidget(host.ambient_lock_label, 0, Qt.AlignLeft)
-
+    host.ambient_lock_label = add_pro_badge(host, host.ambient_card, "ambient.pro_locked")
     row = QHBoxLayout()
     row.setSpacing(10)
     row.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)

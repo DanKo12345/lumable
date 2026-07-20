@@ -3,10 +3,10 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from app.panels.card_header import add_pro_badge
 from app.panels.types import PanelHost
 from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.ambient_preview import AmbientPreview
-from app.widgets.clickable_label import ClickableLabel
 from app.widgets.color_swatch import ColorSwatch
 from app.widgets.segmented_control import SegmentedControl
 
@@ -18,18 +18,7 @@ def build_music_section(host: PanelHost) -> GlassCard:
     host.music_card.setMinimumHeight(host._sz(196))
 
     # Pro badge shown when music sync isn't unlocked (toggled by the controller).
-    host.music_lock_label = ClickableLabel(host._tr("music.pro_locked"))
-    host.music_lock_label.setObjectName("proBadge")
-    host.music_lock_label.setStyleSheet(
-        "QLabel#proBadge { background: rgba(143, 191, 255, 0.16); color: #9fc0ff;"
-        " padding: 5px 12px; border-radius: 11px; }"
-        "QLabel#proBadge:hover { background: rgba(143, 191, 255, 0.26); }"
-    )
-    host.music_lock_label.setCursor(Qt.PointingHandCursor)
-    host.music_lock_label.clicked.connect(host._show_license_overlay)
-    host.music_lock_label.hide()
-    host.music_card.content_layout.addWidget(host.music_lock_label, 0, Qt.AlignLeft)
-
+    host.music_lock_label = add_pro_badge(host, host.music_card, "music.pro_locked")
     row = QHBoxLayout()
     row.setSpacing(10)
     row.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)

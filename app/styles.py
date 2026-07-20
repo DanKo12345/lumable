@@ -57,9 +57,9 @@ def build_theme_stylesheet(tokens: dict[str, str], scale: float = 1.0) -> str:
     T = tokens
     is_dark = qcolor_from_token(T["text"]).lightness() > 180
     css = "".join([
-        _base_styles(T),
+        _base_styles(T, is_dark),
         _hero_styles(T, is_dark),
-        _card_styles(T),
+        _card_styles(T, is_dark),
         _form_styles(T, is_dark),
         _scrollbar_styles(T, is_dark),
     ])
@@ -86,7 +86,7 @@ def build_tooltip_stylesheet(tokens: dict[str, str]) -> str:
     """
 
 
-def _base_styles(T: dict) -> str:
+def _base_styles(T: dict, is_dark: bool) -> str:
     return f"""
         QMainWindow, #rootWidget, #bodyCanvas, #bodyScroll, QScrollArea {{
             background: transparent;
@@ -118,11 +118,76 @@ def _base_styles(T: dict) -> str:
             font-weight: 600;
             padding-left: 2px;
         }}
+        #deviceSectionLabel {{
+            color: {T["text_soft"]};
+            font-size: 12px;
+            font-weight: 700;
+        }}
+        #deviceStripRow {{
+            background: {T["chip"]};
+            border: 1px solid {T["chip_border"]};
+            border-radius: 10px;
+        }}
+        #deviceStripTitle {{
+            color: {T["text"]};
+            font-size: 13px;
+            font-weight: 700;
+        }}
+        #deviceStripMeta {{
+            color: {T["muted"]};
+            font-size: 11px;
+            font-weight: 600;
+        }}
+        #sceneFormHeading {{
+            color: {T["text"]};
+            font-size: 12px;
+            font-weight: 700;
+        }}
+        #sceneDivider {{
+            background: {T["chip_border"]};
+            border: 0;
+            max-height: 1px;
+            min-height: 1px;
+        }}
+        #sceneHint {{
+            color: {T["muted"]};
+            font-size: 11px;
+            font-weight: 500;
+        }}
+        #sceneEmptyHint {{
+            color: {T["muted"]};
+            font-size: 12px;
+            font-weight: 500;
+            padding: 2px 0;
+        }}
+        #emptyState {{
+            background: {T["field"]};
+            border: none;
+            border-radius: 14px;
+        }}
+        #emptyStateText {{
+            background: transparent;
+            border: none;
+            color: {T["muted"]};
+            font-size: 12px;
+            font-weight: 600;
+        }}
         #deviceOnboardingHint {{
             color: {T["text_soft"]};
             font-size: 12px;
             font-weight: 600;
             padding: 2px 2px 0 2px;
+        }}
+        #proBadge {{
+            background: {"rgba(143, 191, 255, 0.16)" if is_dark else "rgba(77, 130, 245, 0.16)"};
+            color: {"#9fc0ff" if is_dark else "#2f5fc0"};
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 10px 2px 10px;
+            border-radius: 9px;
+        }}
+        #proBadge:hover {{
+            background: {"rgba(143, 191, 255, 0.26)" if is_dark else "rgba(77, 130, 245, 0.26)"};
         }}
         #scheduleNote {{
             color: {T["muted"]};
@@ -148,18 +213,21 @@ def _base_styles(T: dict) -> str:
 # ── hero panel ────────────────────────────────────────────────────────
 
 def _hero_styles(T: dict, is_dark: bool) -> str:
+    # Light theme: the combo sits on a near-white card, so a white-on-white
+    # gradient with a white border disappears entirely. Match the ghost
+    # LiquidButton material instead: white top, faint grey bottom, grey border.
     lang_bg = (
         "qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-        " stop:0 rgba(255,255,255,0.74),"
-        " stop:0.46 rgba(236,244,255,0.66),"
-        " stop:1 rgba(198,218,248,0.50))"
+        " stop:0 rgba(255,255,255,0.92),"
+        " stop:0.46 rgba(246,249,253,0.85),"
+        " stop:1 rgba(228,233,241,0.78))"
         if not is_dark else
         "qlineargradient(x1:0, y1:0, x2:0, y2:1,"
         " stop:0 rgba(255,255,255,0.14),"
         " stop:0.48 rgba(255,255,255,0.08),"
         " stop:1 rgba(255,255,255,0.045))"
     )
-    lang_border = "rgba(255, 255, 255, 0.56)" if not is_dark else "rgba(255, 255, 255, 0.13)"
+    lang_border = "rgba(72, 79, 91, 0.36)" if not is_dark else "rgba(255, 255, 255, 0.13)"
     return f"""
         #heroPanel {{
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -224,7 +292,7 @@ def _hero_styles(T: dict, is_dark: bool) -> str:
 
 # ── glass cards ───────────────────────────────────────────────────────
 
-def _card_styles(T: dict) -> str:
+def _card_styles(T: dict, is_dark: bool) -> str:
     return f"""
         #glassCard {{
             background: transparent;
@@ -248,20 +316,47 @@ def _card_styles(T: dict) -> str:
             line-height: 1.25em;
             qproperty-alignment: 'AlignLeft | AlignTop';
         }}
-        QFrame#timerBlock {{
-            background: {T["field"]};
+        QFrame#settingsList {{
+            /* On light the card surface and the "field" token are nearly the
+               same blue-white, so the list needs its own brighter panel to read
+               as a group at all. */
+            background: {T["field"] if is_dark else "rgba(255, 255, 255, 0.78)"};
             border: 1px solid {T["field_border"]};
             border-radius: 14px;
         }}
-        #timerConnect {{
-            color: {T["text_soft"]};
-            font-size: 12px;
-            font-weight: 500;
+        #settingsRow {{
+            background: transparent;
+            border: 0;
+            border-radius: 12px;
         }}
-        #timerStatus {{
-            color: {T["text_soft"]};
+        /* A running timer keeps a soft highlight so the active row reads at a
+           glance without shouting. */
+        #settingsRow[active="true"] {{
+            background: {T["list_hover"]};
+        }}
+        #settingsRowTitle {{
+            color: {T["text"]};
+            font-size: 14px;
+            font-weight: 650;
+            letter-spacing: 0.1px;
+        }}
+        #settingsRowCaption {{
+            color: {T["muted"]};
             font-size: 11px;
             font-weight: 500;
+        }}
+        #settingsRowStatus {{
+            color: {T["muted"]};
+            font-size: 11px;
+            font-weight: 500;
+        }}
+        #settingsRowStatus[active="true"] {{
+            color: {T["text_soft"]};
+            font-weight: 650;
+        }}
+        #settingsIdentity, #settingsControls, #settingsDividerHolder {{
+            background: transparent;
+            border: 0;
         }}
     """
 

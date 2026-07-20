@@ -236,9 +236,9 @@ class EffectPreviewStrip(QWidget):
         if is_dark:
             # Opaque charcoal (slightly lighter than the card) so the pill is
             # always visible and never blends away or reads as a blue bar.
-            base.setColorAt(0.0, QColor(40, 44, 56, 255))
-            base.setColorAt(0.55, QColor(31, 34, 45, 255))
-            base.setColorAt(1.0, QColor(24, 27, 36, 255))
+            base.setColorAt(0.0, QColor(42, 43, 48, 255))
+            base.setColorAt(0.55, QColor(32, 33, 37, 255))
+            base.setColorAt(1.0, QColor(24, 25, 28, 255))
         else:
             base.setColorAt(0.0, QColor(255, 255, 255, 198))
             base.setColorAt(0.55, QColor(236, 244, 255, 172))

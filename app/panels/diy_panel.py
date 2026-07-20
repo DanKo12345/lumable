@@ -3,9 +3,9 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel
 
+from app.panels.card_header import add_pro_badge
 from app.panels.types import PanelHost
 from app.widgets import GlassCard, StaticPopupComboBox
-from app.widgets.clickable_label import ClickableLabel
 from app.widgets.diy_preview_strip import DiyPreviewStrip
 from app.widgets.drag_reorder_list import DragReorderList
 from app.widgets.segmented_control import SegmentedControl
@@ -16,18 +16,7 @@ def build_diy_section(host: PanelHost) -> GlassCard:
     host.diy_card.setMinimumHeight(host._sz(300))
 
     # Pro badge — clickable, opens the Pro window (feature is Pro-gated).
-    host.diy_lock_label = ClickableLabel(host._tr("diy.pro_locked"))
-    host.diy_lock_label.setObjectName("proBadge")
-    host.diy_lock_label.setStyleSheet(
-        "QLabel#proBadge { background: rgba(143, 191, 255, 0.16); color: #9fc0ff;"
-        " padding: 5px 12px; border-radius: 11px; }"
-        "QLabel#proBadge:hover { background: rgba(143, 191, 255, 0.26); }"
-    )
-    host.diy_lock_label.setCursor(Qt.PointingHandCursor)
-    host.diy_lock_label.clicked.connect(host._show_license_overlay)
-    host.diy_lock_label.hide()
-    host.diy_card.content_layout.addWidget(host.diy_lock_label, 0, Qt.AlignLeft)
-
+    host.diy_lock_label = add_pro_badge(host, host.diy_card, "diy.pro_locked")
     # Saved-effects library: pick one to load, then save / delete / share / import.
     saved_row = QHBoxLayout()
     saved_row.setSpacing(10)
@@ -89,7 +78,7 @@ def build_diy_section(host: PanelHost) -> GlassCard:
 
     # Run / stop.
     run_row = QHBoxLayout()
-    host.diy_run_button = host._button(host._tr("diy.run"), "accent_soft")
+    host.diy_run_button = host._button(host._tr("diy.run"), "accent")
     host.diy_run_button.setCheckable(True)
     host.diy_run_button.setMinimumWidth(host._sz(168))
     host.diy_run_button.setMinimumHeight(host._sz(46))

@@ -11,6 +11,7 @@ from app.widgets import (
     GlassCard,
     LiquidButton,
     LiquidSlider,
+    SceneTileGrid,
     StaticPopupComboBox,
     TimeButton,
     ValueChip,
@@ -30,6 +31,13 @@ class PanelHost(Protocol):
     last_device_label: QLabel
     device_onboarding_label: QLabel
     device_status: QLabel
+    device_primary_meta: QLabel
+    scenes_create_heading: QLabel
+    scenes_saved_heading: QLabel
+    scenes_empty_label: QLabel
+    scenes_empty_state: QWidget
+    scenes_grid: SceneTileGrid
+    groups_empty_state: QWidget
     connect_button: LiquidButton
     disconnect_button: LiquidButton
     logs_toggle_button: LiquidButton

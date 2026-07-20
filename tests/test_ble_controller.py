@@ -644,3 +644,130 @@ def test_ordered_write_candidates_skips_notify_and_prefers_selected() -> None:
     controller._write_characteristics = [notify, other_write, write]
 
     assert controller._ordered_write_candidates() == [write, other_write]
+
+
+def _promote_scenario_controller() -> tuple:
+    """Build a controller with one live primary and two mirrors."""
+    from app.ble import DeviceConnection
+
+    controller = BleController.__new__(BleController)
+    sinks: dict[str, list] = {"status": [], "mirrors": [], "primary": []}
+
+    class FakeSignal:
+        def __init__(self, target: list) -> None:
+            self._target = target
+
+        def emit(self, *args) -> None:
+            self._target.append(args)
+
+    class FakeClient:
+        def __init__(self, tag: str) -> None:
+            self.tag = tag
+            self.is_connected = True
+
+    class FakeDevice:
+        def __init__(self, name: str, address: str) -> None:
+            self.name = name
+            self.address = address
+
+    controller._client = FakeClient("primary")
+    controller._device = FakeDevice("Desk", "AA:BB:CC")
+    controller._driver = object()
+    controller._write_characteristic = "char-primary"
+    controller._write_characteristics = ["char-primary"]
+    controller._preferred_payload_indices = {"a": 0}
+    controller._pacer = "pacer-primary"
+    controller._reconnect_address = "AA:BB:CC"
+    controller._mirror_connections = [
+        DeviceConnection(
+            address="DD:EE:FF",
+            client=FakeClient("tv"),
+            device=FakeDevice("TV", "DD:EE:FF"),
+            driver=object(),
+            write_characteristic="char-tv",
+            write_characteristics=["char-tv"],
+            preferred_payload_indices={"b": 1},
+        ),
+        DeviceConnection(
+            address="11:22:33",
+            client=FakeClient("bed"),
+            device=FakeDevice("Bed", "11:22:33"),
+            driver=object(),
+            write_characteristic="char-bed",
+            write_characteristics=["char-bed"],
+            preferred_payload_indices={"c": 2},
+        ),
+    ]
+    controller.status_changed = FakeSignal(sinks["status"])
+    controller.mirrors_changed = FakeSignal(sinks["mirrors"])
+    controller.primary_changed = FakeSignal(sinks["primary"])
+    return controller, sinks
+
+
+def test_promote_mirror_swaps_roles_without_reconnecting() -> None:
+    async def scenario() -> None:
+        controller, sinks = _promote_scenario_controller()
+        old_primary_client = controller._client
+
+        await controller._promote_mirror("DD:EE:FF")
+
+        # The promoted mirror is now the primary, with all of its own handles.
+        assert controller._device.address == "DD:EE:FF"
+        assert controller._client.tag == "tv"
+        assert controller._write_characteristic == "char-tv"
+        assert controller._write_characteristics == ["char-tv"]
+        assert controller._preferred_payload_indices == {"b": 1}
+        # The old primary became a mirror; nothing was disconnected.
+        assert controller.mirror_addresses() == ["11:22:33", "AA:BB:CC"]
+        assert old_primary_client.is_connected is True
+        assert controller._client.is_connected is True
+        # Reconnect must now chase the new main strip.
+        assert controller._reconnect_address == "DD:EE:FF"
+        assert sinks["primary"] == [("DD:EE:FF", "TV")]
+        assert sinks["mirrors"] == [(["11:22:33", "AA:BB:CC"],)]
+        assert any("primary_changed" in args[0] for args in sinks["status"])
+
+    asyncio.run(scenario())
+
+
+def test_promote_mirror_keeps_the_old_primary_pacer_with_its_connection() -> None:
+    async def scenario() -> None:
+        controller, _ = _promote_scenario_controller()
+
+        await controller._promote_mirror("DD:EE:FF")
+
+        parked = [conn for conn in controller._mirror_connections if conn.address == "AA:BB:CC"]
+        assert len(parked) == 1
+        # Pacing state travels with the connection, not with the "primary" role.
+        assert parked[0].pacer == "pacer-primary"
+        assert controller._pacer != "pacer-primary"
+
+    asyncio.run(scenario())
+
+
+def test_promote_mirror_ignores_unknown_or_current_address() -> None:
+    async def scenario() -> None:
+        for address in ("DE:AD:BE", "AA:BB:CC", ""):
+            controller, sinks = _promote_scenario_controller()
+
+            await controller._promote_mirror(address)
+
+            assert controller._device.address == "AA:BB:CC"
+            assert controller._reconnect_address == "AA:BB:CC"
+            assert sinks["primary"] == []
+            assert sinks["mirrors"] == []
+
+    asyncio.run(scenario())
+
+
+def test_promote_mirror_does_nothing_without_a_live_primary() -> None:
+    async def scenario() -> None:
+        controller, sinks = _promote_scenario_controller()
+        controller._client = None
+
+        await controller._promote_mirror("DD:EE:FF")
+
+        assert sinks["primary"] == []
+        assert len(controller._mirror_connections) == 2
+
+    asyncio.run(scenario())

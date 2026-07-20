@@ -3,7 +3,7 @@
 A *scene* is one saved light state that every surface — the PC UI, the phone
 remote, hotkeys and the Local API — can trigger through a single model, instead
 of each re-implementing "set this look". The design notes (0.3.2 Scenes
-Foundation):
+Foundation, extended with targets in 0.3.3):
 
 - **Optional state fields.** A field that is ``None`` means "leave it as it is",
   distinct from a field set to a value ("apply this"). So a "dim everything"
@@ -35,7 +35,10 @@ import uuid
 from typing import Any
 
 SCENE_TYPE = "scene"
-SCENE_VERSION = 1
+# v2: scenes default to targeting *all* connected strips. In v1 the target field
+# existed but was never honoured (every scene applied to everything), so a stored
+# v1 target was not a real user choice — see _migrate.
+SCENE_VERSION = 2
 SHARE_PREFIX = "LUMASCENE1-"
 
 EFFECT_KINDS = frozenset({"firmware", "software", "diy"})
@@ -105,15 +108,17 @@ def _norm_effect(raw: Any) -> dict[str, Any] | None:
 
 
 def _norm_target(raw: Any) -> dict[str, Any]:
+    # "all" is the default: a scene the user saved without picking a target should
+    # keep doing what it always did — drive every connected strip.
     if not isinstance(raw, dict):
-        return {"kind": "primary", "group_id": None}
+        return {"kind": "all", "group_id": None}
     kind = raw.get("kind")
     if kind not in TARGET_KINDS:
-        kind = "primary"
+        kind = "all"
     group_id = raw.get("group_id")
     group_id = str(group_id).strip() if group_id else None
     if kind == "group" and not group_id:
-        kind = "primary"  # a group target with no id is meaningless
+        kind = "all"  # a group target with no id is meaningless
     return {"kind": kind, "group_id": group_id if kind == "group" else None}
 
 
@@ -180,8 +185,16 @@ def _checksum(payload: dict[str, Any]) -> str:
 
 
 def _migrate(payload: Any, version: int) -> Any:
-    # Only v1 exists today. Future readers add ``if version < N: payload = ...``
-    # here so old profiles keep opening after the schema evolves.
+    """Bring an older stored scene up to the current schema.
+
+    v1 -> v2: the target field existed but was ignored (every scene drove all
+    strips), so its stored value was never a deliberate choice. Rewrite any
+    legacy target to ``all`` so updating LumaBLE doesn't silently narrow existing
+    scenes to one strip. Only scenes saved after the target selector exists carry
+    a real ``primary``/``group`` choice.
+    """
+    if isinstance(payload, dict) and version < 2:
+        return {**payload, "target": {"kind": "all", "group_id": None}}
     return payload
 
 
@@ -205,13 +218,15 @@ def unwrap_scene(data: Any) -> dict[str, Any] | None:
     version = data.get("version")
     if not isinstance(version, int) or version < 1 or version > SCENE_VERSION:
         return None
-    payload = _migrate(data.get("payload"), version)
+    stored = data.get("payload")
     checksum = data.get("checksum")
-    if not isinstance(checksum, str) or not checksum or not isinstance(payload, dict):
+    if not isinstance(checksum, str) or not checksum or not isinstance(stored, dict):
         return None
-    if _checksum(payload) != checksum:
+    # Verify integrity against what was actually written, *then* migrate — a
+    # migrated payload would never match the stored checksum.
+    if _checksum(stored) != checksum:
         return None
-    return normalize_scene(payload)
+    return normalize_scene(_migrate(stored, version))
 
 
 # ── portable share code (distinct sentinel, not a DIY effect) ─────────────
@@ -283,8 +298,14 @@ def plan_apply(state: dict[str, Any], capabilities: dict[str, Any] | None = None
 
     effect = state.get("effect")
     if effect is not None:
-        if effect.get("kind") == "firmware" and not _supports(capabilities, "firmware_effects", True):
+        kind = effect.get("kind")
+        if kind == "firmware" and not _supports(capabilities, "firmware_effects", True):
             skipped.append({"field": "effect", "reason": "unsupported"})
+        elif kind == "firmware" and effect.get("speed") is not None and not _supports(capabilities, "effect_speed", True):
+            # The effect itself is supported but its speed control isn't (e.g. a
+            # BanlanX variant without speed): run the effect, drop the speed.
+            actions.append({"op": "effect", "effect": {**effect, "speed": None}})
+            skipped.append({"field": "effect_speed", "reason": "unsupported"})
         else:
             actions.append({"op": "effect", "effect": effect})
 

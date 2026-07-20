@@ -11,9 +11,39 @@ from app.crash_logging import (
     _cleanup_old_version_logs,
     _display_path,
     _exception_log_path,
+    _rotate_fatal_log,
     _trim_fatal_log,
     write_exception_report,
 )
+
+# ── _rotate_fatal_log ─────────────────────────────────────────────────
+
+def test_rotate_fatal_log_moves_dump_into_dated_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(crash_logging, "CRASH_LOG_DIR", tmp_path)
+    fatal = tmp_path / "fatal-crashes.log"
+    monkeypatch.setattr(crash_logging, "FATAL_LOG_PATH", fatal)
+    fatal.write_text("Fatal Python error: Segmentation fault\n", encoding="utf-8")
+
+    _rotate_fatal_log()
+
+    assert not fatal.exists()
+    rotated = list(tmp_path.glob("*-fatal.log"))
+    assert len(rotated) == 1
+    assert "Segmentation fault" in rotated[0].read_text(encoding="utf-8")
+
+
+def test_rotate_fatal_log_leaves_empty_or_missing_log_alone(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(crash_logging, "CRASH_LOG_DIR", tmp_path)
+    fatal = tmp_path / "fatal-crashes.log"
+    monkeypatch.setattr(crash_logging, "FATAL_LOG_PATH", fatal)
+
+    _rotate_fatal_log()  # missing file
+    assert list(tmp_path.glob("*-fatal.log")) == []
+
+    fatal.write_text("", encoding="utf-8")
+    _rotate_fatal_log()  # empty file
+    assert fatal.exists()
+    assert list(tmp_path.glob("*-fatal.log")) == []
 
 # ── _display_path ─────────────────────────────────────────────────────
 

@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
-from app.theme import qcolor_from_token, theme_manager
+from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
 from app.widgets.liquid_button import LiquidButton
 from app.widgets.themed_line_edit import ThemedLineEdit
 
@@ -15,7 +23,12 @@ class _ProfileActionPanel(QFrame):
     def __init__(self, parent: QWidget | None = None, *, height: int = 248) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(460, height)
+        # Width is fixed for a stable dialog shape, but the height only sets a
+        # floor: long localized messages must be able to grow the panel instead
+        # of being clipped.
+        self.setFixedWidth(460)
+        self.setMinimumHeight(height)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -26,12 +39,9 @@ class _ProfileActionPanel(QFrame):
         path.addRoundedRect(rect, self.RADIUS, self.RADIUS)
 
         fill = QLinearGradient(rect.topLeft(), rect.bottomRight())
-        if theme_manager.is_dark:
-            fill.setColorAt(0.0, QColor(34, 38, 50, 250))
-            fill.setColorAt(1.0, QColor(18, 20, 28, 252))
-        else:
-            fill.setColorAt(0.0, QColor(250, 252, 255, 252))
-            fill.setColorAt(1.0, QColor(222, 235, 255, 252))
+        panel_top, panel_bottom = overlay_panel_colors()
+        fill.setColorAt(0.0, panel_top)
+        fill.setColorAt(1.0, panel_bottom)
         painter.fillPath(path, fill)
 
         shine = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
@@ -103,7 +113,7 @@ class ProfileRenameOverlay(QWidget):
         cancel_button = LiquidButton(labels["cancel"], "ghost", self._panel)
         cancel_button.setFixedSize(136, 42)
         cancel_button.clicked.connect(self.close_overlay)
-        ok_button = LiquidButton(labels["ok"], "accent_soft", self._panel)
+        ok_button = LiquidButton(labels["ok"], "accent", self._panel)
         ok_button.setFixedSize(136, 42)
         ok_button.clicked.connect(self._accept)
         buttons.addWidget(cancel_button)
@@ -209,7 +219,13 @@ class ProfileRenameOverlay(QWidget):
 class ProfileConfirmOverlay(ProfileRenameOverlay):
     confirmed = Signal()
 
-    def __init__(self, labels: dict[str, str], parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        labels: dict[str, str],
+        parent: QWidget | None = None,
+        *,
+        confirm_role: str = "accent",
+    ) -> None:
         QWidget.__init__(self, parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -253,7 +269,11 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         message.setObjectName("profileActionMessage")
         message.setWordWrap(True)
         message.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        message.setFixedSize(382, 58)
+        # Fixed width keeps the wrap predictable; the height follows the text so
+        # longer translations wrap instead of being cut off.
+        message.setFixedWidth(382)
+        message.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
+        message.setMinimumHeight(58)
         panel_layout.addLayout(title_row)
         panel_layout.addWidget(message, 0, Qt.AlignHCenter)
         panel_layout.addStretch(1)
@@ -264,11 +284,14 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         cancel_button = LiquidButton(labels["cancel"], "ghost", self._panel)
         cancel_button.setFixedSize(144, 42)
         cancel_button.clicked.connect(self.close_overlay)
-        delete_button = LiquidButton(labels["delete"], "accent_soft", self._panel)
-        delete_button.setFixedSize(156, 42)
-        delete_button.clicked.connect(self._accept_confirm)
+        # The same dialog confirms both constructive actions ("make primary",
+        # "try driver") and destructive ones (delete) — the caller picks the
+        # role so a destructive confirm reads as red, not as the default action.
+        confirm_button = LiquidButton(labels["confirm"], confirm_role, self._panel)
+        confirm_button.setFixedSize(156, 42)
+        confirm_button.clicked.connect(self._accept_confirm)
         buttons.addWidget(cancel_button)
-        buttons.addWidget(delete_button)
+        buttons.addWidget(confirm_button)
         buttons.addStretch(1)
         panel_layout.addLayout(buttons)
 
@@ -298,10 +321,9 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
                 font-weight: 800;
             }}
             #profileActionMessage {{
-                color: {palette["text_soft"]};
+                color: {palette["text"]};
                 font-size: 12px;
                 font-weight: 600;
-                line-height: 1.35em;
                 background: {palette["field"]};
                 border: 1px solid {palette["field_border"]};
                 border-radius: 14px;

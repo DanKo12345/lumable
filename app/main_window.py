@@ -280,7 +280,7 @@ class MainWindow(QMainWindow):
             "title": self._tr("protocol.offer_title"),
             "message": self._tr("protocol.offer_message", driver=driver_name),
             "cancel": self._tr("dialog.cancel"),
-            "delete": self._tr("protocol.try"),
+            "confirm": self._tr("protocol.try"),
         }
         overlay = ProfileConfirmOverlay(labels, self)
         self._protocol_offer_overlay = overlay
@@ -406,7 +406,9 @@ class MainWindow(QMainWindow):
             self._slider_labels[key] = label
         layout.addWidget(label)
         layout.addWidget(slider, 1)
-        layout.addWidget(value, 0)
+        # Centred, so the chip keeps its own compact height instead of
+        # stretching to the full (slider-driven) row height.
+        layout.addWidget(value, 0, Qt.AlignVCenter)
         return layout
 
     def _install_smooth_scroll(self, widget, step: int = 58, duration: int = 180):
@@ -432,6 +434,16 @@ class MainWindow(QMainWindow):
         self._app_trigger_ui.wire()
         self._hotkey_ui.wire()
         self._local_api.wire()
+        # Manual power and PC-mode starts (screen sync, music, software FX, DIY)
+        # also mean the strip no longer shows the applied scene.
+        for scene_breaker in (
+            self.power_button,
+            self.ambient_toggle_button,
+            self.music_toggle_button,
+            self.software_fx_toggle,
+            self.diy_run_button,
+        ):
+            scene_breaker.clicked.connect(self._note_manual_scene_change)
         self._wire_shortcuts()
 
     def _wire_device_events(self):
@@ -495,6 +507,18 @@ class MainWindow(QMainWindow):
         self.temperature_value.activated.connect(
             lambda: self._edit_slider_value(self.temperature_slider, self.temperature_value, suffix="K")
         )
+        # Any hand-made change to the light means the strip no longer shows the
+        # applied scene — drop the tile highlight (the scene controller ignores
+        # the programmatic echoes of its own apply).
+        for slider in (
+            self.red_slider,
+            self.green_slider,
+            self.blue_slider,
+            self.brightness_slider,
+            self.temperature_slider,
+        ):
+            slider.valueChanged.connect(self._note_manual_scene_change)
+        self.effect_combo.currentIndexChanged.connect(self._note_manual_scene_change)
 
     def _wire_rgb_slider_events(self):
         for slider, label in (
@@ -553,6 +577,7 @@ class MainWindow(QMainWindow):
         self._ble.devices_discovered.connect(self._ble_events.populate_devices)
         self._ble.connected_changed.connect(self._ble_events.on_connected_changed)
         self._ble.mirrors_changed.connect(self._ble_events.refresh_mirror_list)
+        self._ble.primary_changed.connect(self._ble_events.on_primary_changed)
         self._ble.protocol_candidate_found.connect(self._offer_protocol_candidate)
         self._reconnect_ctrl.wire()
         self._ble.error_occurred.connect(self._show_error)
@@ -968,8 +993,14 @@ class MainWindow(QMainWindow):
     def _sync_quick_mode_from_state(self, preferred: str | None = None):
         self._quick_mode_ctrl.sync_from_state(preferred)
 
+    def _note_manual_scene_change(self, *_args) -> None:
+        scene_ui = getattr(self, "_scene_ui", None)
+        if scene_ui is not None:
+            scene_ui.note_manual_light_change()
+
     def _activate_quick_mode(self, mode_key: str):
         self._quick_mode_ctrl.activate(mode_key)
+        self._note_manual_scene_change()
 
     def _activate_custom_quick_mode(self, index: int) -> None:
         self._quick_mode_ctrl.activate_custom(index)

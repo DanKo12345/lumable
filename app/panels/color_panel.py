@@ -76,7 +76,7 @@ def build_color_section(host: PanelHost) -> GlassCard:
     color_actions = QHBoxLayout()
     color_actions.setSpacing(ACTION_SPACING)
     # Power lives in the persistent top region now; the card keeps colour picking.
-    host.pick_color_button = host._button(host._tr("color.pick"), "ghost")
+    host.pick_color_button = host._button(host._tr("color.pick"), "accent_soft")
     color_actions.addWidget(host.pick_color_button, 1)
     host.color_card.content_layout.addLayout(color_actions)
     return host.color_card

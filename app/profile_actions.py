@@ -100,9 +100,9 @@ class ProfileActions:
             "title": host._tr("configs.delete_confirm_title"),
             "message": host._tr("configs.delete_confirm_text", name=localization_manager.profile_name(profile)),
             "cancel": host._tr("dialog.cancel"),
-            "delete": host._tr("configs.delete_confirm"),
+            "confirm": host._tr("configs.delete_confirm"),
         }
-        overlay = ProfileConfirmOverlay(labels, host)
+        overlay = ProfileConfirmOverlay(labels, host, confirm_role="danger")
         self._confirm_overlay = overlay
         overlay.confirmed.connect(self._delete_selected_profile_after_confirm)
         overlay.closed.connect(lambda: setattr(self, "_confirm_overlay", None))

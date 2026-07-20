@@ -1,76 +1,106 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTime
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-from app.constants import ACTION_SPACING, ROW_SPACING_TIGHT
+from app.panels.card_header import add_pro_badge
+from app.panels.list_rows import (
+    BTN_H,
+    BTN_W,
+    CHIP_H,
+    divider,
+    half_cell,
+    list_container,
+    list_row,
+    v_divider,
+)
 from app.panels.types import PanelHost
 from app.widgets import GlassCard, TimeButton
-from app.widgets.clickable_label import ClickableLabel
 from app.widgets.day_toggle import DayToggle
+
+_TIME_W = 88
+_DAY_W = 44
+_DAY_H = 34
+
+# One hue per meaning: the schedule itself, lights-on, lights-off, and the
+# neutral rows that only configure when it runs.
+_MASTER_TINT = "#8fbfff"
+_ON_TINT = "#ffb066"
+_OFF_TINT = "#8f9bff"
+_NEUTRAL_TINT = "#a9b0bd"
 
 
 def build_schedule_section(host: PanelHost) -> GlassCard:
     host.schedule_card = host._card(host._tr("schedule.title"), host._tr("schedule.subtitle"), icon="schedule")
     host.schedule_card.setMinimumHeight(host._sz(180))
+    host.schedule_lock_label = add_pro_badge(host, host.schedule_card, "schedule.pro_locked")
 
-    # Pro badge shown when scheduling isn't unlocked (toggled by the controller).
-    # Clicking it opens the Pro/license window, same as clicking the toggle.
-    host.schedule_lock_label = ClickableLabel(host._tr("schedule.pro_locked"))
-    host.schedule_lock_label.setObjectName("proBadge")
-    host.schedule_lock_label.setStyleSheet(
-        "QLabel#proBadge { background: rgba(143, 191, 255, 0.16); color: #9fc0ff;"
-        " padding: 5px 12px; border-radius: 11px; }"
-        "QLabel#proBadge:hover { background: rgba(143, 191, 255, 0.26); }"
+    schedule_list, list_layout = list_container(host)
+
+    # ── Master switch: everything below only matters when this is on ──────────
+    master_row, master_controls, host.schedule_master_label, host.schedule_master_status, _ = list_row(
+        host, "power", _MASTER_TINT, host._tr("schedule.row_master")
     )
-    host.schedule_lock_label.setCursor(Qt.PointingHandCursor)
-    host.schedule_lock_label.clicked.connect(host._show_license_overlay)
-    host.schedule_lock_label.hide()
-    host.schedule_card.content_layout.addWidget(host.schedule_lock_label, 0, Qt.AlignLeft)
-
-    row = QHBoxLayout()
-    row.setSpacing(0)
-
-    left = QHBoxLayout()
-    left.setContentsMargins(0, 0, 0, 0)
-    left.setSpacing(10)
-    left.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    host.schedule_row = master_row
     host.schedule_toggle_button = host._button(host._tr("schedule.toggle_off"), "ghost")
     host.schedule_toggle_button.setCheckable(True)
-    host.schedule_toggle_button.setFixedSize(host._sz(86), host._sz(42))
+    host.schedule_toggle_button.setFixedSize(host._sz(BTN_W), host._sz(BTN_H))
     host.schedule_toggle_button.setToolTip(host._tr("schedule.toggle_hint"))
-    host.schedule_startup_button = host._button(host._tr("schedule.startup_off"), "ghost")
-    host.schedule_startup_button.setCheckable(True)
-    host.schedule_startup_button.setFixedSize(host._sz(138), host._sz(42))
-    host.schedule_startup_button.setToolTip(host._tr("schedule.startup_hint"))
-    left.addWidget(host.schedule_toggle_button)
-    left.addWidget(host.schedule_startup_button)
+    master_controls.addWidget(host.schedule_toggle_button, 0, Qt.AlignVCenter)
+    list_layout.addWidget(master_row)
+    list_layout.addWidget(divider(host))
 
-    times = QHBoxLayout()
-    times.setContentsMargins(0, 0, 0, 0)
-    times.setSpacing(ACTION_SPACING)
-    times.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-    host.schedule_on_time = _time_group(host, times, "schedule.on", QTime(19, 0))
-    host.schedule_off_time = _time_group(host, times, "schedule.off", QTime(23, 0))
+    # ── The two moments of the day, side by side: they are one decision ───────
+    when_row = QWidget()
+    when_layout = QHBoxLayout(when_row)
+    when_layout.setContentsMargins(0, 0, 0, 0)
+    when_layout.setSpacing(0)
+    host.schedule_on_time, host.schedule_on_label, on_cell = _time_cell(
+        host, "sun", _ON_TINT, "schedule.row_on", "schedule.pick_on", QTime(19, 0)
+    )
+    host.schedule_off_time, host.schedule_off_label, off_cell = _time_cell(
+        host, "moon", _OFF_TINT, "schedule.row_off", "schedule.pick_off", QTime(23, 0)
+    )
+    when_layout.addWidget(on_cell, 1)
+    when_layout.addWidget(v_divider(host))
+    when_layout.addWidget(off_cell, 1)
+    list_layout.addWidget(when_row)
+    list_layout.addWidget(divider(host))
 
-    row.addLayout(left, 1)
-    row.addLayout(times, 1)
-    row.addStretch(1)
-    host.schedule_card.content_layout.addLayout(row)
-
-    # Day-of-week chips (Mon..Sun) — the schedule only fires on the selected days.
-    days_row = QHBoxLayout()
-    days_row.setContentsMargins(0, host._sz(4), 0, 0)
-    days_row.setSpacing(host._sz(6))
-    days_row.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    # ── Day-of-week chips — seven of them, so they get the full width ─────────
+    days_row, days_controls, host.schedule_days_label, _, _ = list_row(
+        host, "calendar", _NEUTRAL_TINT, host._tr("schedule.row_days"), with_status=False
+    )
     host.schedule_day_buttons = []
+    # One tight group with an even gap: Mon…Sun should read as a sequence, not
+    # as seven separate objects scattered across the card.
+    chips_box = QWidget()
+    chips_box.setObjectName("settingsControls")
+    chips = QHBoxLayout(chips_box)
+    chips.setContentsMargins(0, 0, 0, 0)
+    chips.setSpacing(host._sz(6))
     for index in range(7):
         chip = DayToggle(host._tr(f"schedule.day_{index}"), lambda: host._theme_tokens)
-        chip.setFixedSize(host._sz(44), host._sz(34))
+        chip.setFixedSize(host._sz(_DAY_W), host._sz(_DAY_H))
         host.schedule_day_buttons.append(chip)
-        days_row.addWidget(chip)
-    days_row.addStretch(1)
-    host.schedule_card.content_layout.addLayout(days_row)
+        chips.addWidget(chip, 0, Qt.AlignVCenter)
+    days_controls.addWidget(chips_box, 0, Qt.AlignVCenter)
+    list_layout.addWidget(days_row)
+    list_layout.addWidget(divider(host))
+
+    # ── Windows autostart: the only row that outlives the running app ─────────
+    startup_row, startup_controls, host.schedule_startup_label, host.schedule_startup_status, _ = list_row(
+        host, "settings", _NEUTRAL_TINT, host._tr("schedule.row_startup")
+    )
+    host.schedule_startup_status.setText(host._tr("schedule.startup_hint"))
+    host.schedule_startup_button = host._button(host._tr("schedule.startup_off"), "ghost")
+    host.schedule_startup_button.setCheckable(True)
+    host.schedule_startup_button.setFixedSize(host._sz(BTN_W), host._sz(BTN_H))
+    host.schedule_startup_button.setToolTip(host._tr("schedule.startup_hint"))
+    startup_controls.addWidget(host.schedule_startup_button, 0, Qt.AlignVCenter)
+    list_layout.addWidget(startup_row)
+
+    host.schedule_card.content_layout.addWidget(schedule_list)
 
     host.schedule_runtime_note = QLabel(host._tr("schedule.runtime_note"))
     host.schedule_runtime_note.setObjectName("scheduleNote")
@@ -79,21 +109,18 @@ def build_schedule_section(host: PanelHost) -> GlassCard:
     return host.schedule_card
 
 
-def _time_group(host: PanelHost, parent_layout: QHBoxLayout, label_key: str, default_time: QTime) -> TimeButton:
-    group = QHBoxLayout()
-    group.setSpacing(ROW_SPACING_TIGHT)
-    group.setAlignment(Qt.AlignVCenter)
-    label = QLabel(host._tr(label_key))
-    label.setObjectName("sliderLabel")
-    label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-    label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+def _time_cell(
+    host: PanelHost,
+    kind: str,
+    tint: str,
+    title_key: str,
+    picker_key: str,
+    default_time: QTime,
+) -> tuple[TimeButton, QLabel, QWidget]:
+    cell, layout, title_label = half_cell(host, kind, tint, host._tr(title_key))
     editor = TimeButton(default_time.toString("HH:mm"))
-    editor.set_picker_title(host._tr(label_key))
-    group.addWidget(label)
-    group.addWidget(editor)
-    parent_layout.addLayout(group, 0)
-    if label_key == "schedule.on":
-        host.schedule_on_label = label
-    else:
-        host.schedule_off_label = label
-    return editor
+    editor.set_picker_title(host._tr(picker_key))
+    editor.setFixedSize(host._sz(_TIME_W), host._sz(CHIP_H))
+    layout.addWidget(editor, 0, Qt.AlignVCenter)
+    layout.addStretch(1)
+    return editor, title_label, cell

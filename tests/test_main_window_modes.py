@@ -35,6 +35,38 @@ def test_brightness_slider_does_not_auto_activate_quick_mode() -> None:
         app.processEvents()
 
 
+def test_manual_power_toggle_clears_the_active_scene(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        # Keep the click out of the real BLE stack: set_power would kick off a
+        # connect/reconnect loop that the test teardown then waits on forever.
+        monkeypatch.setattr(window._ble, "set_power", lambda *_a, **_k: None)
+        window._scene_ui._set_active_scene("scene-power")
+        window.power_button.click()
+        assert window._scene_ui._active_scene_id == ""
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_starting_a_pc_mode_clears_the_active_scene(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        # Disconnected, so the FX toggle raises the "not connected" error —
+        # which is a modal dialog that would block the offscreen test forever.
+        monkeypatch.setattr(window._ui_feedback, "show_error", lambda *_a, **_k: None)
+        window._scene_ui._set_active_scene("scene-fx")
+        window.software_fx_toggle.click()
+        assert window._scene_ui._active_scene_id == ""
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def test_edition_badge_shows_free_and_pro(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow()

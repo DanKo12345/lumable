@@ -7,12 +7,14 @@ from .color_picker_overlay import ColorPickerOverlay
 from .color_swatch import ColorSwatch
 from .effect_preview_strip import EffectPreviewStrip
 from .glass_card import GlassCard
+from .icon_tile import IconTile
 from .license_overlay import LicenseOverlay
 from .liquid_button import LiquidButton
 from .liquid_slider import LiquidSlider
 from .logs_overlay import LogsOverlay
 from .profile_action_overlay import ProfileConfirmOverlay, ProfileRenameOverlay
 from .profile_list_delegate import ProfileListDelegate
+from .scene_tile_grid import SceneTileData, SceneTileGrid
 from .section_icon import SectionIcon
 from .smooth_scroll_filter import SmoothScrollFilter
 from .static_popup_combo_box import StaticPopupComboBox
@@ -31,6 +33,7 @@ __all__ = [
     "ColorSwatch",
     "EffectPreviewStrip",
     "GlassCard",
+    "IconTile",
     "LicenseOverlay",
     "LiquidButton",
     "LiquidSlider",
@@ -38,6 +41,8 @@ __all__ = [
     "ProfileConfirmOverlay",
     "ProfileListDelegate",
     "ProfileRenameOverlay",
+    "SceneTileData",
+    "SceneTileGrid",
     "SectionIcon",
     "SmoothScrollFilter",
     "StaticPopupComboBox",

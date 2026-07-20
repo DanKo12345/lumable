@@ -166,75 +166,20 @@ class AuroraBackground(QWidget):
         else:
             pulse = (math.sin(self._phase * 0.46) + 1.0) * 0.5
             drift = (math.cos(self._phase * 0.34 + 0.55) + 1.0) * 0.5
-            sweep = (math.sin(self._phase * 0.26 + 0.9) + 1.0) * 0.5
-
-            wave = QLinearGradient(
-                w * (0.06 + sweep * 0.06),
-                h * (0.08 + drift * 0.06),
-                w * (0.94 - sweep * 0.05),
-                h * (0.94 - drift * 0.05),
-            )
-            wave_top = qcolor_from_token(palette["window_start"])
-            wave_bottom = qcolor_from_token(palette["window_end"])
-            wave_top.setAlpha(int(16 + pulse * 10))
-            wave_bottom.setAlpha(int(20 + drift * 10))
-            wave.setColorAt(0.0, wave_top)
-            wave.setColorAt(
-                0.50,
-                QColor(wave_top.red(), wave_top.green(), wave_top.blue(), int(8 + pulse * 6)),
-            )
-            wave.setColorAt(1.0, wave_bottom)
-            painter.fillRect(self.rect(), wave)
-
-            veil = QLinearGradient(w * (0.04 + drift * 0.06), 0, w * (0.96 - drift * 0.04), h)
-            veil_left = QColor(255, 255, 255, int(12 + pulse * 8))
-            veil_mid = QColor(165, 196, 255, int(12 + drift * 10))
-            veil_right = QColor(255, 255, 255, 0)
-            veil.setColorAt(0.0, veil_left)
-            veil.setColorAt(0.50, veil_mid)
-            veil.setColorAt(1.0, veil_right)
+            # Keep the light canvas neutral. A moving white sheen gives it depth
+            # without tinting the whole workspace blue or purple; the strip
+            # colour is introduced separately by the Lumen glow below.
+            veil = QLinearGradient(w * (0.08 + drift * 0.04), 0, w * 0.92, h)
+            veil.setColorAt(0.0, QColor(255, 255, 255, int(16 + pulse * 6)))
+            veil.setColorAt(0.48, QColor(255, 255, 255, int(7 + drift * 4)))
+            veil.setColorAt(1.0, QColor(255, 255, 255, 0))
             painter.fillRect(self.rect(), veil)
-
-            bloom = QRadialGradient(
-                w * (0.34 + sweep * 0.18),
-                h * (0.40 + pulse * 0.08),
-                max(w, h) * 0.66,
-            )
-            bloom_core = QColor(150, 195, 255, int(12 + pulse * 8))
-            bloom_mid = QColor(176, 196, 255, int(8 + drift * 6))
-            bloom_edge = QColor(176, 196, 255, 0)
-            bloom.setColorAt(0.0, bloom_core)
-            bloom.setColorAt(0.46, bloom_mid)
-            bloom.setColorAt(1.0, bloom_edge)
-            painter.fillRect(self.rect(), bloom)
-
-        # Colourful drifting orbs only in the light theme; the dark canvas stays
-        # near-black with the faint corner dye above.
-        if not self._dark:
-            orbs = [
-                (0.16, 0.14, 0.42, QColor(80, 140, 255, 70)),
-                (0.78, 0.18, 0.28, QColor(130, 90, 255, 55)),
-                (0.52, 0.78, 0.38, QColor(60, 185, 210, 42)),
-            ]
-            orb_damp = 0.28 if self._accent_enabled else 1.0
-            for ox, oy, size, color in orbs:
-                cx = (ox + math.sin(self._phase + ox) * 0.03) * w
-                cy = (oy + math.cos(self._phase + oy) * 0.03) * h
-                radius = size * max(w, h)
-                grad = QRadialGradient(cx, cy, radius)
-                core = QColor(color)
-                core.setAlpha(round(color.alpha() * orb_damp))
-                grad.setColorAt(0.0, core)
-                edge = QColor(color)
-                edge.setAlpha(0)
-                grad.setColorAt(1.0, edge)
-                painter.fillRect(self.rect(), grad)
 
         # ── Lumen glow: the strip colour as a large, slowly breathing light ──
         if self._accent_enabled:
             r, g, b = self._accent_rgb
             pulse = (math.sin(self._phase * 1.5) + 1.0) * 0.5
-            core_alpha = int((32 + pulse * 18) if self._dark else (22 + pulse * 12))
+            core_alpha = int((32 + pulse * 18) if self._dark else (9 + pulse * 6))
 
             top = QRadialGradient(
                 w * 0.5,
@@ -252,7 +197,7 @@ class AuroraBackground(QWidget):
                 h * (1.02 - drift * 0.05),
                 max(w, h) * 0.62,
             )
-            low_alpha = int(core_alpha * 0.55)
+            low_alpha = int(core_alpha * (0.55 if self._dark else 0.28))
             low.setColorAt(0.0, QColor(r, g, b, low_alpha))
             low.setColorAt(1.0, QColor(r, g, b, 0))
             painter.fillRect(self.rect(), low)

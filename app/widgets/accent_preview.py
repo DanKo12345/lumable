@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QLabel, QSizePolicy, QVBoxLayout
 
@@ -9,23 +9,28 @@ from app.theme import theme_manager
 
 
 class AccentPreview(QFrame):
+    FULL_HEIGHT = 132
+    COMPACT_HEIGHT = 54
+
     def __init__(self):
         super().__init__()
         self.setObjectName("previewFrame")
         self.setAttribute(Qt.WA_TranslucentBackground)
         self._color = QColor(88, 182, 255)
         self._brightness = 100
-        self.setMinimumHeight(190)
+        self.setMinimumHeight(0)
+        self.setMaximumHeight(self.FULL_HEIGHT)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout = QVBoxLayout(self)
+        self._layout = layout
         # Generous side/top margins so the coloured glow has room to render —
         # the effect is clipped to this widget's bounds, so margins must be at
         # least the glow's blur radius or the aura gets cut off.
-        layout.setContentsMargins(38, 36, 38, 38)
-        layout.setSpacing(10)
+        layout.setContentsMargins(24, 16, 24, 14)
+        layout.setSpacing(7)
         self.swatch = QFrame()
         self.swatch.setObjectName("previewSwatch")
-        self.swatch.setMinimumHeight(82)
+        self.swatch.setMinimumHeight(62)
         # Coloured glow beneath the swatch — makes it read as real light. Its
         # strength tracks brightness, so a dim strip glows softly without the
         # colour itself going dark (the colour stays recognisable at any %).
@@ -36,7 +41,45 @@ class AccentPreview(QFrame):
         self.info_label = QLabel()
         self.info_label.setObjectName("previewInfo")
         layout.addWidget(self.info_label)
+        self._compact = False
+        self._height_animation = QPropertyAnimation(self, b"maximumHeight", self)
+        self._height_animation.setDuration(240)
+        self._height_animation.setEasingCurve(QEasingCurve.OutCubic)
         self._refresh()
+
+    def set_compact(self, compact: bool, *, animate: bool = True) -> None:
+        """Switch between the live-light hero and the compact status strip."""
+        compact = bool(compact)
+        if compact == self._compact and not animate:
+            return
+        self._compact = compact
+        target = self.COMPACT_HEIGHT if compact else self.FULL_HEIGHT
+        self._height_animation.stop()
+
+        if compact:
+            self.info_label.hide()
+            self._layout.setContentsMargins(12, 7, 12, 7)
+            self._layout.setSpacing(0)
+            self.swatch.setMinimumHeight(38)
+            self.swatch.setMaximumHeight(38)
+        else:
+            self._layout.setContentsMargins(24, 16, 24, 14)
+            self._layout.setSpacing(7)
+            self.swatch.setMinimumHeight(62)
+            self.swatch.setMaximumHeight(16777215)
+            self.info_label.show()
+
+        # Re-style the swatch: the corner radius depends on the compact state
+        # (a radius over half the box height makes Qt draw square corners).
+        self._refresh()
+
+        if not animate or not self.isVisible():
+            self.setMaximumHeight(target)
+            return
+        start = max(self.COMPACT_HEIGHT, min(self.FULL_HEIGHT, self.height()))
+        self._height_animation.setStartValue(start)
+        self._height_animation.setEndValue(target)
+        self._height_animation.start()
 
     def set_color(self, color: QColor):
         self._color = color
@@ -59,11 +102,14 @@ class AccentPreview(QFrame):
         top = color.lighter(116)
         bottom = color.darker(106)
         border = "rgba(255,255,255,0.22)" if theme_manager.is_dark else "rgba(80,110,180,0.35)"
+        # Full capsule in compact mode; the radius must stay at or below half the
+        # swatch height, otherwise Qt silently falls back to square corners.
+        radius = 19 if self._compact else 20
         self.swatch.setStyleSheet(
             "QFrame#previewSwatch { "
             f"background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
             f"stop:0 {top.name()}, stop:0.5 {color.name()}, stop:1 {bottom.name()}); "
-            f"border: 1px solid {border}; border-radius: 20px; }}"
+            f"border: 1px solid {border}; border-radius: {radius}px; }}"
         )
         glow = QColor(color)
         glow.setAlpha(int(75 + self._brightness * 1.6))  # brighter strip → stronger glow

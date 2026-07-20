@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.theme import qcolor_from_token, theme_manager
+from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
 from app.widgets.liquid_button import LiquidButton
 
 # Rolling digit display
@@ -212,12 +212,9 @@ class _TimePickerPanel(QFrame):
         path.addRoundedRect(rect, self.RADIUS, self.RADIUS)
 
         fill = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
-        if theme_manager.is_dark:
-            fill.setColorAt(0.0, QColor(34, 38, 50, 250))
-            fill.setColorAt(1.0, QColor(18, 20, 28, 252))
-        else:
-            fill.setColorAt(0.0, QColor(248, 251, 255, 250))
-            fill.setColorAt(1.0, QColor(219, 232, 255, 250))
+        panel_top, panel_bottom = overlay_panel_colors()
+        fill.setColorAt(0.0, panel_top)
+        fill.setColorAt(1.0, panel_bottom)
         painter.fillPath(path, fill)
 
         shine = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
@@ -365,7 +362,7 @@ class _TimePickerOverlay(QWidget):
         picker_row.addStretch(1)
         panel_layout.addLayout(picker_row)
 
-        apply_button = LiquidButton(labels["ok"], "accent_soft", self._panel_widget)
+        apply_button = LiquidButton(labels["ok"], "accent", self._panel_widget)
         apply_button.setFixedSize(128, 42)
         apply_button.clicked.connect(self.accept)
         panel_layout.addWidget(apply_button, 0, Qt.AlignHCenter)

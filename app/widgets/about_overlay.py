@@ -6,7 +6,7 @@ from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRe
 from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from app.theme import qcolor_from_token, theme_manager
+from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
 from app.widgets.liquid_button import LiquidButton
 
 ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "icon.ico"
@@ -29,12 +29,9 @@ class _AboutPanel(QFrame):
         path.addRoundedRect(rect, self.RADIUS, self.RADIUS)
 
         fill = QLinearGradient(rect.topLeft(), rect.bottomRight())
-        if theme_manager.is_dark:
-            fill.setColorAt(0.0, QColor(34, 38, 50, 250))
-            fill.setColorAt(1.0, QColor(18, 20, 28, 252))
-        else:
-            fill.setColorAt(0.0, QColor(250, 252, 255, 252))
-            fill.setColorAt(1.0, QColor(222, 235, 255, 252))
+        panel_top, panel_bottom = overlay_panel_colors()
+        fill.setColorAt(0.0, panel_top)
+        fill.setColorAt(1.0, panel_bottom)
         painter.fillPath(path, fill)
 
         shine = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())

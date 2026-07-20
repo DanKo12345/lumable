@@ -108,7 +108,7 @@ def build_configs_section(host: PanelHost) -> GlassCard:
     host.profile_name = ThemedLineEdit()
     host.profile_name.setMinimumHeight(host._control_height)
     host.profile_name.setPlaceholderText(host._tr("configs.placeholder"))
-    host.save_profile_button = host._button(host._tr("configs.save"), "accent_soft")
+    host.save_profile_button = host._button(host._tr("configs.save"), "accent")
     host.save_profile_button.setMinimumWidth(SAVE_BUTTON_MIN_WIDTH)
     config_top.addWidget(host.profile_name, 1)
     config_top.addWidget(host.save_profile_button)

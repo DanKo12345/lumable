@@ -1,7 +1,34 @@
 from __future__ import annotations
 
-from app.diagnostics import build_diagnostics_report, sanitize_report_text
+import os
+import time
+
+import app.diagnostics as diagnostics
+from app.diagnostics import _read_recent_crash_logs, build_diagnostics_report, sanitize_report_text
 from app.localization import localization_manager
+
+
+def test_recent_crash_logs_skip_empty_and_stale_files(tmp_path, monkeypatch) -> None:
+    """An old fatal dump must not resurface in every report: empty logs and
+    logs past the retention window are excluded, fresh ones stay."""
+    monkeypatch.setattr(diagnostics, "CRASH_LOG_DIR", tmp_path)
+
+    fresh = tmp_path / "20260718-120000-unhandled.log"
+    fresh.write_text("Traceback: recent crash", encoding="utf-8")
+
+    stale = tmp_path / "20250101-000000-fatal.log"
+    stale.write_text("Fatal Python error: ancient dump", encoding="utf-8")
+    old = time.time() - 60 * 60 * 24 * 30  # 30 days — past the 14-day window
+    os.utime(stale, (old, old))
+
+    empty_fatal = tmp_path / "fatal-crashes.log"  # freshly rotated → empty
+    empty_fatal.write_text("", encoding="utf-8")
+
+    excerpts = _read_recent_crash_logs()
+
+    assert len(excerpts) == 1
+    assert excerpts[0].startswith(fresh.name)
+    assert "ancient dump" not in "\n".join(excerpts)
 
 
 def test_diagnostics_report_includes_device_driver_and_write_characteristic() -> None:
@@ -74,6 +101,44 @@ def test_diagnostics_report_normalizes_localized_session_logs() -> None:
     assert "Supported commands" not in report
     assert "Recent BLE history" not in report
     assert "Recent crash logs" not in report
+
+
+def test_diagnostics_report_explains_the_last_disconnect() -> None:
+    # The reason plus how long the link lasted is what separates "out of range"
+    # from "flapping every few seconds" when reading a user's report.
+    localization_manager.set_language("en")
+    report = build_diagnostics_report(
+        {
+            "connected": False,
+            "device": {"name": "Desk strip", "address": "AA:BB"},
+            "driver": {"id": "bledom", "name": "BLEDOM"},
+            "write": {},
+            "commands": {},
+            "history": {"last_disconnect_reason": "out_of_range", "last_session_seconds": 7.4},
+        },
+        [],
+        include_crashes=False,
+    )
+    assert "Last disconnect" in report
+    assert "out of range" in report
+    assert "(7s)" in report
+
+
+def test_diagnostics_report_omits_disconnect_line_when_never_dropped() -> None:
+    localization_manager.set_language("en")
+    report = build_diagnostics_report(
+        {
+            "connected": True,
+            "device": {"name": "Desk strip", "address": "AA:BB"},
+            "driver": {"id": "bledom", "name": "BLEDOM"},
+            "write": {},
+            "commands": {},
+            "history": {},
+        },
+        [],
+        include_crashes=False,
+    )
+    assert "Last disconnect" not in report
 
 
 def test_diagnostics_report_normalizes_localized_ble_history() -> None:
@@ -197,7 +262,7 @@ def test_diagnostics_report_uses_current_language_for_report_labels() -> None:
         include_crashes=False,
     )
 
-    assert "Версия: 0.3.2" in report
+    assert "Версия: 0.3.3" in report
     assert "Устройство" in report
     assert "Подключено: да" in report
     assert "Поддерживаемые команды" in report

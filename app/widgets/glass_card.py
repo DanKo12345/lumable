@@ -17,7 +17,7 @@ class GlassCard(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(22, 18, 22, 20)
+        outer.setContentsMargins(20, 16, 20, 18)
         outer.setSpacing(4)
         self.icon_widget = SectionIcon(icon, self) if icon else None
         self.header_widget = QWidget(self)
@@ -58,12 +58,32 @@ class GlassCard(QFrame):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        rect = QRectF(self.rect()).adjusted(2.0, 2.0, -2.0, -2.0)
-        radius = 22.0
-        path_bg = QPainterPath()
-        path_bg.addRoundedRect(rect, radius, radius)
         palette = theme_manager.palette
         is_dark = theme_manager.is_dark
+        # Light theme reserves a few px at the bottom/sides for the soft shadow.
+        if is_dark:
+            rect = QRectF(self.rect()).adjusted(2.0, 2.0, -2.0, -2.0)
+        else:
+            rect = QRectF(self.rect()).adjusted(3.0, 2.0, -3.0, -5.0)
+        radius = 18.0
+        path_bg = QPainterPath()
+        path_bg.addRoundedRect(rect, radius, radius)
+
+        if not is_dark:
+            # Soft contact shadow: a few stacked translucent rings below the
+            # card. Painted (not a QGraphicsDropShadowEffect) to keep card
+            # repaints cheap, and subtracted from the card body so the
+            # translucent fill above stays clean.
+            shadow = QColor(26, 34, 52)
+            for spread, dy, alpha in ((2.6, 2.6, 9), (1.6, 1.6, 14), (0.8, 0.9, 20)):
+                ring = QPainterPath()
+                ring.addRoundedRect(
+                    rect.adjusted(-spread, dy, spread, dy + spread * 0.6),
+                    radius + spread,
+                    radius + spread,
+                )
+                shadow.setAlpha(alpha)
+                painter.fillPath(ring.subtracted(path_bg), shadow)
 
         # Translucent surface: the ambient light behind (already tinted with the
         # strip colour) shows softly through, so the card "lives" with the glow
@@ -96,9 +116,11 @@ class GlassCard(QFrame):
             edge.setColorAt(0.0, QColor(255, 255, 255, 60))
             edge.setColorAt(1.0, QColor(255, 255, 255, 22))
         else:
-            # Visible cool border on light cards (a white top edge vanished on
-            # the light background, leaving cards looking borderless/flat).
-            edge.setColorAt(0.0, QColor(120, 140, 190, 135))
-            edge.setColorAt(1.0, QColor(120, 140, 190, 85))
+            border = qcolor_from_token(palette["surface_border"])
+            border.setAlpha(105)
+            edge.setColorAt(0.0, border)
+            border_bottom = QColor(border)
+            border_bottom.setAlpha(64)
+            edge.setColorAt(1.0, border_bottom)
         painter.setPen(QPen(QBrush(edge), 1.0))
         painter.drawRoundedRect(rect, radius, radius)

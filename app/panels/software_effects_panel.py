@@ -10,9 +10,7 @@ from app.widgets.ambient_preview import AmbientPreview
 
 
 def build_software_effects_section(host: PanelHost) -> GlassCard:
-    host.software_fx_card = host._card(
-        host._tr("software_fx.title"), host._tr("software_fx.subtitle"), icon="cpu"
-    )
+    host.software_fx_card = host._card(host._tr("software_fx.title"), host._tr("software_fx.subtitle"), icon="orbit")
     host.software_fx_card.setMinimumHeight(host._sz(190))
 
     row = QHBoxLayout()

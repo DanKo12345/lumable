@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
+from PySide6.QtCore import QObject, QTimer
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.device_names import device_display_name, sanitize_device_name
 from app.storage import save_settings
 from app.types import BleEventHost
-from app.widgets import ProfileRenameOverlay
+from app.widgets import ProfileConfirmOverlay, ProfileRenameOverlay
 
 
 def _is_plausible_ble_address(address: str) -> bool:
@@ -25,7 +26,43 @@ class BleEventHandler:
     def __init__(self, host: BleEventHost) -> None:
         self._host = host
         self._mirror_scan_pending = False
+        self._mirror_search_phase = 0
+        # MainWindow is a QObject in production, while the small unit-test host
+        # deliberately is not. Keep the timer parented in the app without making
+        # the non-Qt handler tests depend on a widget fixture.
+        self._mirror_search_timer = QTimer(host if isinstance(host, QObject) else None)
+        self._mirror_search_timer.setInterval(420)
+        self._mirror_search_timer.timeout.connect(self._animate_mirror_search)
         self._rename_overlay: ProfileRenameOverlay | None = None
+        self._promote_overlay: ProfileConfirmOverlay | None = None
+
+    def _set_mirror_searching(self, searching: bool) -> None:
+        """Give the secondary-strip search its own visible progress state."""
+        host = self._host
+        heading = getattr(host, "device_mirrors_heading", None)
+        button = getattr(host, "add_mirror_button", None)
+        if searching:
+            self._mirror_search_phase = 1
+            if heading is not None:
+                heading.setText(f"{host._tr('device.mirror_searching')}{'.' * self._mirror_search_phase}")
+            if button is not None:
+                button.setEnabled(False)
+            self._mirror_search_timer.start()
+            return
+        self._mirror_search_timer.stop()
+        if heading is not None:
+            heading.setText(host._tr("device.mirrors_section"))
+        if button is not None:
+            button.setEnabled(bool(host._is_connected))
+
+    def _animate_mirror_search(self) -> None:
+        if not self._mirror_scan_pending:
+            self._mirror_search_timer.stop()
+            return
+        self._mirror_search_phase = self._mirror_search_phase % 3 + 1
+        heading = getattr(self._host, "device_mirrors_heading", None)
+        if heading is not None:
+            heading.setText(f"{self._host._tr('device.mirror_searching')}{'.' * self._mirror_search_phase}")
 
     def _device_names(self) -> dict[str, str]:
         names = self._host._settings.get("device_names") if isinstance(self._host._settings, dict) else {}
@@ -53,6 +90,47 @@ class BleEventHandler:
         overlay.nameSelected.connect(lambda text, a=address: self._apply_device_name(a, text))
         overlay.closed.connect(lambda: setattr(self, "_rename_overlay", None))
         overlay.open()
+
+    def promote_device(self, address: str, name: str = "") -> None:
+        """Ask before swapping which strip is the main one."""
+        host = self._host
+        address = str(address).strip()
+        if not address or self._promote_overlay is not None:
+            return
+        label = name or self._display_name(address)
+        overlay = ProfileConfirmOverlay(
+            {
+                "title": host._tr("device.make_primary"),
+                "message": host._tr("device.make_primary_confirm", name=label),
+                "cancel": host._tr("dialog.cancel"),
+                "confirm": host._tr("device.make_primary"),
+            },
+            host,
+        )
+        self._promote_overlay = overlay
+        overlay.confirmed.connect(lambda a=address: host._ble.promote_mirror_to_primary(a))
+        overlay.closed.connect(lambda: setattr(self, "_promote_overlay", None))
+        overlay.open()
+
+    def on_primary_changed(self, address: str, name: str) -> None:
+        """The main strip swapped places with a mirror — follow it everywhere."""
+        host = self._host
+        address = str(address).strip()
+        if not address:
+            return
+        display = self._display_name(address, str(name or "").strip())
+        if isinstance(host._settings, dict):
+            host._settings["last_device_address"] = address
+            host._settings["last_device_name"] = display
+            save_settings(host._settings)
+        self._relabel_device_combo()
+        self._sync_last_device_hint(name=display, address=address)
+        self.refresh_mirror_list(host._ble.mirror_addresses())
+        # Scene targets ("primary"/groups) and the group member chips are keyed
+        # off the current primary, so they have to be rebuilt too.
+        scene_ui = getattr(host, "_scene_ui", None)
+        if scene_ui is not None:
+            scene_ui.refresh()
 
     def _apply_device_name(self, address: str, text: str) -> None:
         host = self._host
@@ -156,6 +234,7 @@ class BleEventHandler:
             # This scan was triggered by "Add strip" while already connected —
             # don't touch the primary connect flow, just add the found mirror.
             self._mirror_scan_pending = False
+            self._set_mirror_searching(False)
             self._handle_mirror_scan_result(devices)
             return
         host._devices = devices
@@ -219,6 +298,13 @@ class BleEventHandler:
         if add_mirror is not None:
             add_mirror.setEnabled(connected)
         host.device_status.setText(host._tr("device.status.connected") if connected else host._tr("device.status.not_connected"))
+        primary_meta = getattr(host, "device_primary_meta", None)
+        if primary_meta is not None:
+            if connected:
+                name = self._device_name_for_address(address) or address or ""
+                primary_meta.setText(f"{name}  |  {address}" if name and address and name != address else name)
+            else:
+                primary_meta.setText(host._tr("device.primary_empty"))
         update_dot = getattr(host, "_update_status_dot", None)
         if callable(update_dot):
             update_dot()
@@ -328,6 +414,9 @@ class BleEventHandler:
         label.setVisible(should_show)
 
     def show_error(self, message: str) -> None:
+        if self._mirror_scan_pending:
+            self._mirror_scan_pending = False
+            self._set_mirror_searching(False)
         self._host._connect_in_progress = False
         self._host._scan_in_progress = False
         if not self._host._is_connected:
@@ -393,6 +482,8 @@ class BleEventHandler:
         if not host._is_connected or host._connect_in_progress or host._scan_in_progress:
             return
         self._mirror_scan_pending = True
+        host._scan_in_progress = True
+        self._set_mirror_searching(True)
         self.log(host._tr("device.mirror_scanning"))
         host._ble.scan()
 
@@ -424,17 +515,32 @@ class BleEventHandler:
                     break
             name = self._display_name(address, advertised)
             row = QWidget()
+            row.setObjectName("deviceStripRow")
             row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setContentsMargins(host._sz(14), host._sz(9), host._sz(12), host._sz(9))
             row_layout.setSpacing(8)
-            label = QLabel(host._tr("device.mirror_item", name=name, address=address))
-            label.setObjectName("lastDeviceHint")
+            info = QVBoxLayout()
+            info.setSpacing(host._sz(2))
+            label = QLabel(name)
+            label.setObjectName("deviceStripTitle")
+            address_label = QLabel(address)
+            address_label.setObjectName("deviceStripMeta")
+            info.addWidget(label)
+            info.addWidget(address_label)
+            # Swap roles with the main strip — both links stay up.
+            promote = host._button(host._tr("device.make_primary"), "ghost")
+            promote.clicked.connect(lambda _checked=False, a=address, n=name: self.promote_device(a, n))
             rename = host._button(host._tr("device.rename"), "ghost")
             rename.clicked.connect(lambda _checked=False, a=address: self.rename_device(a))
             remove = host._button(host._tr("device.mirror_remove"), "ghost")
             remove.clicked.connect(lambda _checked=False, a=address: host._ble.remove_mirror_device(a))
-            row_layout.addWidget(label, 1)
+            row_layout.addLayout(info, 1)
+            row_layout.addWidget(promote)
             row_layout.addWidget(rename)
             row_layout.addWidget(remove)
             layout.addWidget(row)
         container.setVisible(bool(addresses))
+        # Show the "how to add one" hint exactly when the list is empty.
+        empty_label = getattr(host, "mirror_empty_label", None)
+        if empty_label is not None:
+            empty_label.setVisible(not addresses)

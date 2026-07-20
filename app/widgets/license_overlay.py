@@ -15,18 +15,44 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
-from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsOpacityEffect,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
-from app.theme import qcolor_from_token, theme_manager
+from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
 from app.widgets.celebration_overlay import CelebrationOverlay
 from app.widgets.clickable_label import ClickableLabel
+from app.widgets.icon_tile import IconTile
 from app.widgets.liquid_button import LiquidButton
 from app.widgets.themed_line_edit import ThemedLineEdit
 
-# Feature list: show this many up front, the rest behind a "show all" toggle.
-_FEATURES_VISIBLE = 4
-_FEATURES_COLLAPSED_H = 556
-_FEATURES_EXPANDED_H = 648
+# Panel heights: value-first (all benefits shown) collapses to the buy CTA; the
+# key field is revealed on request, growing the panel.
+_FREE_COLLAPSED_H = 520
+_FREE_EXPANDED_H = 588
+
+# The six headline Pro benefits, in display order. Icon + tint live in code (a
+# visual concern); the name/description come from i18n via these label keys, so
+# a missing key just hides that tile instead of crashing (minimal-labels tests).
+# Kept in step with feature_gate.PRO_FEATURES — note scenes are Free, so they are
+# deliberately absent here.
+_PRO_FEATURES = (
+    ("audio-lines", "#ff8fb0", "feat_music", "feat_music_desc"),
+    ("monitor", "#78a7ff", "feat_screen", "feat_screen_desc"),
+    ("effects", "#b58fff", "feat_diy", "feat_diy_desc"),
+    ("calendar", "#ffb066", "feat_schedule", "feat_schedule_desc"),
+    ("layers-3", "#72c7b7", "feat_effects", "feat_effects_desc"),
+    ("configs", "#8fd3ff", "feat_profiles", "feat_profiles_desc"),
+)
+
+# Animated "checking…" suffix cycled in the activate button while a key is verified.
+_SPINNER_FRAMES = ("", ".", "..", "...")
 
 
 class _ActivateWorker(QThread):
@@ -66,12 +92,9 @@ class _LicensePanel(QFrame):
         path.addRoundedRect(rect, self.RADIUS, self.RADIUS)
 
         fill = QLinearGradient(rect.topLeft(), rect.bottomRight())
-        if theme_manager.is_dark:
-            fill.setColorAt(0.0, QColor(34, 38, 50, 250))
-            fill.setColorAt(1.0, QColor(18, 20, 28, 252))
-        else:
-            fill.setColorAt(0.0, QColor(250, 252, 255, 252))
-            fill.setColorAt(1.0, QColor(222, 235, 255, 252))
+        panel_top, panel_bottom = overlay_panel_colors()
+        fill.setColorAt(0.0, panel_top)
+        fill.setColorAt(1.0, panel_bottom)
         painter.fillPath(path, fill)
 
         shine = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
@@ -243,23 +266,41 @@ class LicenseOverlay(QWidget):
         self._opacity_effect.setOpacity(0.0)
         self.setGraphicsEffect(self._opacity_effect)
 
+        active = self._is_active_mode()
+        self._key_revealed = False
+        self._spinner_frame = 0
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.setInterval(280)
+        self._spinner_timer.timeout.connect(self._tick_spinner)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addStretch(1)
         self._panel = _LicensePanel(self)
-        if self._is_active_mode():
-            self._panel.setFixedSize(560, 460)
-        else:
-            # Free mode also lists what Pro unlocks (4 up front, rest on expand).
-            self._panel.setFixedSize(560, _FEATURES_COLLAPSED_H)
+        self._panel.setFixedSize(560, 460 if active else _FREE_COLLAPSED_H)
         layout.addWidget(self._panel, 0, Qt.AlignCenter)
         layout.addStretch(1)
 
         panel_layout = QVBoxLayout(self._panel)
-        panel_layout.setContentsMargins(30, 22, 30, 24)
-        panel_layout.setSpacing(12)
+        panel_layout.setContentsMargins(30, 16, 30, 22)
+        panel_layout.setSpacing(10)
 
-        active = self._is_active_mode()
+        # Close affordance, top-right: a real 32x32 hit area with a tooltip and
+        # accessible name (Esc also closes via keyPressEvent).
+        close_row = QHBoxLayout()
+        close_row.setContentsMargins(0, 0, 0, 0)
+        close_row.addStretch(1)
+        self._close_button = ClickableLabel("✕", self._panel)
+        self._close_button.setObjectName("licenseClose")
+        self._close_button.setFixedSize(32, 32)
+        self._close_button.setAlignment(Qt.AlignCenter)
+        self._close_button.setCursor(Qt.PointingHandCursor)
+        self._close_button.setToolTip(labels.get("close", ""))
+        self._close_button.setAccessibleName(labels.get("close", "Close"))
+        self._close_button.clicked.connect(self.close_overlay)
+        close_row.addWidget(self._close_button, 0, Qt.AlignTop | Qt.AlignRight)
+        panel_layout.addLayout(close_row)
+
         badge = _ProStatusBadge(self._panel) if active else _ProEmblem(self._panel)
         panel_layout.addWidget(badge, 0, Qt.AlignHCenter)
 
@@ -289,16 +330,21 @@ class LicenseOverlay(QWidget):
             panel_layout.addWidget(status_card)
         else:
             panel_layout.addWidget(subtitle)
-            features_card = self._build_features_card()
-            if features_card is not None:
-                panel_layout.addWidget(features_card)
+            panel_layout.addSpacing(4)
+            features_grid = self._build_features_grid()
+            if features_grid is not None:
+                panel_layout.addWidget(features_grid)
 
+        panel_layout.addStretch(1)
+
+        # The key field: always built, but hidden until the user asks for it in
+        # free mode (and always hidden in the active/licensed state).
         field_box = QFrame(self._panel)
         self._field_box = field_box
         field_box.setObjectName("licenseFieldBox")
         field_layout = QVBoxLayout(field_box)
-        field_layout.setContentsMargins(18, 12, 18, 12)
-        field_layout.setSpacing(8)
+        field_layout.setContentsMargins(18, 10, 18, 10)
+        field_layout.setSpacing(6)
         field_label = QLabel(labels["key_label"], field_box)
         field_label.setObjectName("licenseFieldLabel")
         self.key_input = ThemedLineEdit(field_box)
@@ -309,39 +355,71 @@ class LicenseOverlay(QWidget):
         field_layout.addWidget(field_label)
         field_layout.addWidget(self.key_input)
         panel_layout.addWidget(field_box)
-        field_box.setVisible(not self._is_active_mode())
+        field_box.setVisible(False)
 
         self.message_label = QLabel("", self._panel)
         self.message_label.setObjectName("licenseMessage")
         self.message_label.setWordWrap(True)
-        self.message_label.setMinimumHeight(30)
+        self.message_label.setMinimumHeight(24)
         panel_layout.addWidget(self.message_label)
-        panel_layout.addStretch(1)
 
-        buttons = QHBoxLayout()
-        buttons.setSpacing(12)
-        buttons.setContentsMargins(0, 0, 0, 0)
-        self.buy_button = LiquidButton(labels["buy"], "accent_soft", self._panel)
-        self.buy_button.setMinimumSize(142, 40)
+        # Buttons. Active: a single OK. Free default: one primary "Buy Pro" plus a
+        # quiet "I already have a key" link. Revealing the key swaps in Back +
+        # Activate. buy_button/_activate_button/_cancel_button stay as attributes
+        # the activation flow and tests reach for.
+        self.buy_button = LiquidButton(labels.get("buy", ""), "accent", self._panel)
         self.buy_button.clicked.connect(self._show_buy_message)
-        cancel_button = LiquidButton(labels["cancel"] if not active else labels["ok"], "ghost", self._panel)
-        self._cancel_button = cancel_button
-        cancel_button.setMinimumSize(122, 40)
-        cancel_button.clicked.connect(self.close_overlay)
-        activate_button = LiquidButton(labels["activate"], "accent_soft", self._panel)
-        self._activate_button = activate_button
-        activate_button.setMinimumSize(150, 40)
-        activate_button.clicked.connect(self._activate)
-        self.buy_button.setVisible(not active)
-        activate_button.setVisible(not active)
-        buttons.addStretch(1)
-        if not active:
-            buttons.addWidget(self.buy_button)
-        buttons.addWidget(cancel_button)
-        if not active:
-            buttons.addWidget(activate_button)
-        buttons.addStretch(1)
-        panel_layout.addLayout(buttons)
+        self._activate_button = LiquidButton(labels.get("activate", ""), "accent", self._panel)
+        self._activate_button.clicked.connect(self._activate)
+
+        if active:
+            ok_button = LiquidButton(labels.get("ok", ""), "ghost", self._panel)
+            self._cancel_button = ok_button
+            ok_button.setMinimumSize(140, 40)
+            ok_button.clicked.connect(self.close_overlay)
+            self.buy_button.setVisible(False)
+            self._activate_button.setVisible(False)
+            ok_row = QHBoxLayout()
+            ok_row.addStretch(1)
+            ok_row.addWidget(ok_button)
+            ok_row.addStretch(1)
+            panel_layout.addLayout(ok_row)
+        else:
+            # Default: buy hero + quiet "have key" link.
+            self._buy_row = QWidget(self._panel)
+            buy_layout = QVBoxLayout(self._buy_row)
+            buy_layout.setContentsMargins(0, 0, 0, 0)
+            buy_layout.setSpacing(8)
+            self.buy_button.setMinimumSize(300, 46)
+            buy_inner = QHBoxLayout()
+            buy_inner.addStretch(1)
+            buy_inner.addWidget(self.buy_button)
+            buy_inner.addStretch(1)
+            buy_layout.addLayout(buy_inner)
+            self._have_key_link = ClickableLabel(labels.get("have_key", ""), self._buy_row)
+            self._have_key_link.setObjectName("licenseHaveKey")
+            self._have_key_link.setAlignment(Qt.AlignHCenter)
+            self._have_key_link.setCursor(Qt.PointingHandCursor)
+            self._have_key_link.clicked.connect(self._reveal_key)
+            buy_layout.addWidget(self._have_key_link, 0, Qt.AlignHCenter)
+            panel_layout.addWidget(self._buy_row)
+
+            # Revealed: Back + Activate.
+            self._reveal_row = QWidget(self._panel)
+            reveal_layout = QHBoxLayout(self._reveal_row)
+            reveal_layout.setContentsMargins(0, 0, 0, 0)
+            reveal_layout.setSpacing(10)
+            self._back_button = LiquidButton(labels.get("back", ""), "ghost", self._panel)
+            self._cancel_button = self._back_button
+            self._back_button.setMinimumSize(120, 40)
+            self._back_button.clicked.connect(self._hide_key)
+            self._activate_button.setMinimumSize(160, 40)
+            reveal_layout.addStretch(1)
+            reveal_layout.addWidget(self._back_button)
+            reveal_layout.addWidget(self._activate_button)
+            reveal_layout.addStretch(1)
+            self._reveal_row.setVisible(False)
+            panel_layout.addWidget(self._reveal_row)
 
         # Deactivation is a rare, destructive action: keep it as a quiet link
         # under the primary button and require a second click to confirm.
@@ -367,11 +445,9 @@ class LicenseOverlay(QWidget):
         self._prepare_open_animation()
         self.show()
         self.raise_()
+        # Free mode opens on the value screen with the key hidden, so focus the
+        # overlay itself (Esc/close work); the key field grabs focus on reveal.
         self.setFocus(Qt.PopupFocusReason)
-        if self._is_active_mode():
-            self.setFocus(Qt.PopupFocusReason)
-        else:
-            self.key_input.setFocus(Qt.PopupFocusReason)
         QTimer.singleShot(0, self._start_open_animation)
 
     def _is_active_mode(self) -> bool:
@@ -387,83 +463,84 @@ class LicenseOverlay(QWidget):
             return ""
         return f"{key[:4]} ···· {key[-4:]}"
 
-    def _build_features_card(self) -> QFrame | None:
-        """A short 'what Pro unlocks' list so the value is clear before buying."""
-        text = str(self._labels.get("features", "")).strip()
-        if not text:
+    def _build_features_grid(self) -> QWidget | None:
+        """The six headline Pro benefits as a 2x3 icon-tile grid — value shown
+        up front, all at once. Returns None if no feature strings were supplied
+        (minimal-labels tests), so the panel simply omits the block."""
+        tiles = [
+            (icon, tint, str(self._labels.get(name_key, "")).strip(), str(self._labels.get(desc_key, "")).strip())
+            for icon, tint, name_key, desc_key in _PRO_FEATURES
+        ]
+        tiles = [t for t in tiles if t[2]]
+        if not tiles:
             return None
-        lines = [line.strip() for line in text.split("\n") if line.strip()]
-        if not lines:
-            return None
-        accent = theme_manager.palette["accent_start"]
 
-        def render(items: list[str]) -> str:
-            rows = "<br>".join(
-                f"<span style='color:{accent};'>✓</span>&nbsp;&nbsp;{line}" for line in items
-            )
-            return f"<div style='line-height: 172%;'>{rows}</div>"
+        container = QWidget(self._panel)
+        grid = QGridLayout(container)
+        grid.setContentsMargins(4, 0, 4, 0)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(13)
+        for index, (icon, tint, name, desc) in enumerate(tiles):
+            grid.addWidget(self._feature_tile(icon, tint, name, desc), index // 2, index % 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        return container
 
-        # One label whose text swaps between the short and full list — a single
-        # line-height keeps the spacing between every row uniform.
-        self._features_html_short = render(lines[:_FEATURES_VISIBLE])
-        self._features_html_full = render(lines)
-        self._features_extra_count = max(0, len(lines) - _FEATURES_VISIBLE)
-        self._features_expanded = False
+    def _feature_tile(self, icon: str, tint: str, name: str, desc: str) -> QWidget:
+        cell = QWidget(self._panel)
+        row = QHBoxLayout(cell)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        row.addWidget(IconTile(icon, tint), 0, Qt.AlignTop)
+        text = QVBoxLayout()
+        text.setContentsMargins(0, 1, 0, 0)
+        text.setSpacing(1)
+        name_label = QLabel(name, cell)
+        name_label.setObjectName("licenseFeatureName")
+        text.addWidget(name_label)
+        if desc:
+            desc_label = QLabel(desc, cell)
+            desc_label.setObjectName("licenseFeatureDesc")
+            # Two lines max, never elided: a purchase screen must not truncate
+            # the meaning it is selling.
+            desc_label.setWordWrap(True)
+            text.addWidget(desc_label)
+        row.addLayout(text, 1)
+        return cell
 
-        card = QFrame(self._panel)
-        card.setObjectName("licenseFeatures")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 14, 18, 14)
-        layout.setSpacing(8)
-
-        self._features_label = QLabel(card)
-        self._features_label.setObjectName("licenseFeatureList")
-        self._features_label.setTextFormat(Qt.RichText)
-        self._features_label.setText(self._features_html_short)
-        layout.addWidget(self._features_label)
-
-        self._features_toggle = None
-        if self._features_extra_count:
-            self._features_toggle = ClickableLabel(self._show_all_text(), card)
-            self._features_toggle.setObjectName("licenseFeatureToggle")
-            self._features_toggle.setCursor(Qt.PointingHandCursor)
-            self._features_toggle.setStyleSheet(
-                f"QLabel#licenseFeatureToggle {{ color: {accent}; font-size: 12px; font-weight: 700; }}"
-            )
-            self._features_toggle.clicked.connect(self._toggle_features)
-            layout.addWidget(self._features_toggle, 0, Qt.AlignLeft)
-        return card
-
-    def _show_all_text(self) -> str:
-        return f"{self._labels.get('show_all', '')}  (+{self._features_extra_count})"
-
-    def _toggle_features(self) -> None:
-        if self._features_toggle is None:
+    def _reveal_key(self) -> None:
+        """Swap the buy CTA for the key field on request (progressive disclosure)."""
+        if self._key_revealed:
             return
-        self._features_expanded = not self._features_expanded
-        start = self._panel.height()
-        end = _FEATURES_EXPANDED_H if self._features_expanded else _FEATURES_COLLAPSED_H
-        if self._features_expanded:
-            self._features_label.setText(self._features_html_full)  # revealed as the panel grows
-            self._features_toggle.setText(str(self._labels.get("show_less", "")))
-        else:
-            self._features_toggle.setText(self._show_all_text())
+        self._key_revealed = True
+        self._buy_row.setVisible(False)
+        self._field_box.setVisible(True)
+        self._reveal_row.setVisible(True)
+        self.message_label.setText("")
+        self._animate_panel_height(_FREE_EXPANDED_H)
+        self.key_input.setFocus(Qt.OtherFocusReason)
 
-        # Animate min+max height together so the fixed-size panel grows/shrinks smoothly.
-        self._feature_anims = []
+    def _hide_key(self) -> None:
+        """Back out of the key field to the buy CTA."""
+        if not self._key_revealed:
+            return
+        self._key_revealed = False
+        self._field_box.setVisible(False)
+        self._reveal_row.setVisible(False)
+        self._buy_row.setVisible(True)
+        self.message_label.setText("")
+        self._animate_panel_height(_FREE_COLLAPSED_H)
+
+    def _animate_panel_height(self, end: int) -> None:
+        start = self._panel.height()
+        self._height_anims = []
         for prop in (b"minimumHeight", b"maximumHeight"):
             anim = QPropertyAnimation(self._panel, prop, self)
-            anim.setDuration(240)
+            anim.setDuration(220)
             anim.setEasingCurve(QEasingCurve.OutCubic)
             anim.setStartValue(start)
             anim.setEndValue(end)
-            self._feature_anims.append(anim)
-        if not self._features_expanded:
-            # Trim back to the short list once the panel has finished shrinking.
-            self._feature_anims[0].finished.connect(
-                lambda: self._features_label.setText(self._features_html_short)
-            )
-        for anim in self._feature_anims:
+            self._height_anims.append(anim)
             anim.start()
 
     def _activate(self) -> None:
@@ -474,19 +551,43 @@ class LicenseOverlay(QWidget):
         worker = _ActivateWorker(self._activate_callback, self.key_input.text(), self)
         self._activate_worker = worker
         worker.done.connect(self._on_activate_done)
+        # Clear the reference on the thread's real ``finished`` (after run() has
+        # returned and the OS thread has stopped), not on ``done`` — ``done`` is
+        # emitted from inside run() while the thread is still technically
+        # running, which would let close_overlay's guard race a live thread.
+        worker.finished.connect(self._on_worker_finished)
         worker.start()
+
+    def _on_worker_finished(self) -> None:
+        self._activate_worker = None
 
     def _set_activating(self, busy: bool) -> None:
         self.key_input.setEnabled(not busy)
         self._activate_button.setEnabled(not busy)
         self._cancel_button.setEnabled(not busy)
         self.buy_button.setEnabled(not busy)
-        self._activate_button.setText(
-            self._labels.get("activating", "…") if busy else self._labels["activate"]
-        )
+        # Dim the close affordance while checking — close is refused anyway
+        # (close_overlay guards on the running worker), but the dim signals it.
+        self._close_button.setEnabled(not busy)
+        if busy:
+            self._spinner_frame = 0
+            self._spinner_timer.start()
+            self._activate_button.setText(self._labels.get("activating", "…"))
+        else:
+            self._spinner_timer.stop()
+            self._activate_button.setText(self._labels.get("activate", ""))
+
+    def _tick_spinner(self) -> None:
+        """Animate a trailing '…' in the activate button while a key is checked —
+        an in-button progress indicator so the wait never looks frozen."""
+        self._spinner_frame = (self._spinner_frame + 1) % len(_SPINNER_FRAMES)
+        base = self._labels.get("activating", "…")
+        self._activate_button.setText(f"{base}{_SPINNER_FRAMES[self._spinner_frame]}")
 
     def _on_activate_done(self, ok: bool, message: str) -> None:
-        self._activate_worker = None
+        # Note: the worker reference is cleared by _on_worker_finished (the
+        # thread's ``finished`` signal), not here — ``done`` runs before the
+        # thread has actually stopped.
         self._set_activating(False)
         self.message_label.setText("" if ok else message)
         self.message_label.setProperty("state", "success" if ok else "error")
@@ -590,6 +691,14 @@ class LicenseOverlay(QWidget):
         self._panel_anim.start()
 
     def close_overlay(self) -> None:
+        # Never tear the overlay down while a key check is in flight: the
+        # activation worker is a child QThread, so deleteLater() here would
+        # destroy a still-running thread ("QThread: Destroyed while thread is
+        # still running", up to a crash). Both the × button and Esc route
+        # through here, so this one guard covers both. Check the real thread
+        # state, not just the reference: ``done`` fires before the thread stops.
+        if self._activate_worker is not None and self._activate_worker.isRunning():
+            return
         parent = self.parentWidget()
         if parent is not None:
             parent.removeEventFilter(self)
@@ -640,15 +749,34 @@ class LicenseOverlay(QWidget):
                 border: 1px solid {palette["field_border"]};
                 border-radius: 18px;
             }}
-            #licenseFeatures {{
-                background: {palette["field"]};
-                border: 1px solid {palette["field_border"]};
-                border-radius: 16px;
+            #licenseFeatureName {{
+                color: {palette["text"]};
+                font-size: 13px;
+                font-weight: 700;
             }}
-            #licenseFeatureList {{
+            #licenseFeatureDesc {{
+                color: {palette["muted"]};
+                font-size: 11.5px;
+                font-weight: 500;
+            }}
+            #licenseHaveKey {{
                 color: {palette["text_soft"]};
-                font-size: 12.5px;
-                font-weight: 600;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 4px 8px;
+            }}
+            #licenseHaveKey:hover {{
+                color: {palette["text"]};
+            }}
+            #licenseClose {{
+                color: {palette["muted"]};
+                font-size: 15px;
+                font-weight: 700;
+                border-radius: 10px;
+            }}
+            #licenseClose:hover {{
+                color: {palette["text"]};
+                background: {palette["field"]};
             }}
             #licenseKeyChip {{
                 color: {palette["text"]};

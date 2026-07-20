@@ -6,6 +6,7 @@ from .device_panel import build_device_section
 from .diagnostics_panel import build_diagnostics_section
 from .diy_panel import build_diy_section
 from .effects_panel import build_effects_section
+from .groups_panel import build_groups_section
 from .hotkeys_panel import build_hotkeys_section
 from .local_api_panel import build_local_api_section
 from .music_panel import build_music_section
@@ -23,6 +24,7 @@ __all__ = [
     "build_diagnostics_section",
     "build_diy_section",
     "build_effects_section",
+    "build_groups_section",
     "build_hotkeys_section",
     "build_local_api_section",
     "build_music_section",

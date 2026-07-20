@@ -455,6 +455,166 @@ def test_license_overlay_buy_button_uses_checkout_callback() -> None:
         app.processEvents()
 
 
+def _free_labels() -> dict:
+    return {
+        "title": "LumaBLE Pro",
+        "subtitle": "Value first",
+        "have_key": "I already have a key",
+        "key_label": "License key",
+        "placeholder": "Paste key",
+        "activate": "Activate",
+        "activating": "Checking",
+        "buy": "Buy LumaBLE Pro",
+        "back": "Back",
+        "close": "Close",
+        "cancel": "Cancel",
+        "ok": "OK",
+        "invalid": "Invalid",
+        "activated": "Activated",
+        "buy_unavailable": "No purchase page",
+        "feat_music": "Music & mic",
+        "feat_music_desc": "React to audio",
+        "feat_screen": "Screen sync",
+        "feat_screen_desc": "Mirror the screen",
+    }
+
+
+def test_license_overlay_hides_key_until_requested() -> None:
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from app.widgets.license_overlay import LicenseOverlay
+
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    overlay = LicenseOverlay(_free_labels(), lambda _key: (False, "Invalid"), parent, buy_callback=lambda: False)
+    try:
+        # isHidden() reflects the explicit setVisible state without needing the
+        # top-level shown (isVisible() is always False on an unshown tree).
+        # Default free view: value + buy hero, key field hidden.
+        assert overlay._field_box.isHidden() is True
+        assert overlay._buy_row.isHidden() is False
+
+        overlay._reveal_key()
+        assert overlay._key_revealed is True
+        assert overlay._field_box.isHidden() is False
+        assert overlay._reveal_row.isHidden() is False
+        assert overlay._buy_row.isHidden() is True
+
+        overlay._hide_key()
+        assert overlay._key_revealed is False
+        assert overlay._field_box.isHidden() is True
+        assert overlay._buy_row.isHidden() is False
+    finally:
+        overlay.close_overlay()
+        parent.deleteLater()
+        app.processEvents()
+
+
+def test_license_overlay_features_grid_reflects_supplied_labels() -> None:
+    from PySide6.QtWidgets import QApplication, QLabel, QWidget
+
+    from app.widgets.license_overlay import LicenseOverlay
+
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    overlay = LicenseOverlay(_free_labels(), lambda _key: (False, "Invalid"), parent)
+    try:
+        names = {
+            w.text()
+            for w in overlay._panel.findChildren(QLabel)
+            if w.objectName() == "licenseFeatureName"
+        }
+        # Only the two feature keys supplied render; scenes never appear.
+        assert "Music & mic" in names
+        assert "Screen sync" in names
+        assert all("сцен" not in n.lower() and "scene" not in n.lower() for n in names)
+    finally:
+        overlay.close_overlay()
+        parent.deleteLater()
+        app.processEvents()
+
+
+def test_license_overlay_activate_button_runs_a_checking_indicator() -> None:
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from app.widgets.license_overlay import LicenseOverlay
+
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    overlay = LicenseOverlay(_free_labels(), lambda _key: (False, "Invalid"), parent)
+    try:
+        assert overlay._spinner_timer.isActive() is False
+        overlay._set_activating(True)
+        assert overlay._spinner_timer.isActive() is True
+        assert overlay._activate_button.text().startswith("Checking")
+        overlay._tick_spinner()
+        assert overlay._activate_button.text().startswith("Checking")
+        overlay._set_activating(False)
+        assert overlay._spinner_timer.isActive() is False
+        assert overlay._activate_button.text() == "Activate"
+    finally:
+        overlay.close_overlay()
+        parent.deleteLater()
+        app.processEvents()
+
+
+def test_license_overlay_refuses_to_close_while_activating() -> None:
+    """Closing mid-activation would destroy the running worker QThread. The ×
+    button and Esc both route through close_overlay, which must refuse until the
+    key check finishes."""
+    import threading
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from app.widgets.license_overlay import LicenseOverlay
+
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    release = threading.Event()
+
+    def blocking_activate(_key: str) -> tuple[bool, str]:
+        release.wait(timeout=5)
+        return False, "Invalid"
+
+    overlay = LicenseOverlay(_free_labels(), blocking_activate, parent)
+    closed: list[int] = []
+    overlay.closed.connect(lambda: closed.append(1))
+    try:
+        overlay._reveal_key()
+        overlay.key_input.setText("KEY-123")
+        overlay._activate()
+        worker = overlay._activate_worker
+        assert worker is not None
+        assert worker.isRunning() is True
+
+        # Both close paths must be refused while the worker runs.
+        overlay.close_overlay()
+        overlay.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+        assert closed == []
+        assert overlay.isHidden() is False
+
+        # Let the worker finish; closing is allowed only once the OS thread has
+        # actually stopped (finished), not merely once `done` was handled.
+        release.set()
+        for _ in range(250):
+            if overlay._activate_worker is None:
+                break
+            QTest.qWait(20)
+        assert overlay._activate_worker is None
+        assert worker.isFinished() is True
+
+        overlay.close_overlay()
+        assert closed == [1]
+    finally:
+        release.set()
+        overlay.close_overlay()
+        parent.deleteLater()
+        app.processEvents()
+
+
 def test_license_overlay_buy_button_falls_back_without_checkout_url() -> None:
     from PySide6.QtWidgets import QApplication, QWidget
 

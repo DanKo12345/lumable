@@ -42,12 +42,36 @@ class FakeButton:
         self.role = role
 
 
+class FakeStyle:
+    """Qt repolishes a widget after a dynamic property changes; record it."""
+
+    def __init__(self) -> None:
+        self.repolished = 0
+
+    def unpolish(self, _widget: object) -> None:
+        self.repolished += 1
+
+    def polish(self, _widget: object) -> None:
+        pass
+
+
 class FakeLabel:
     def __init__(self) -> None:
         self.text = ""
+        self._props: dict[str, object] = {}
+        self._style = FakeStyle()
 
     def setText(self, text: str) -> None:
         self.text = text
+
+    def setProperty(self, name: str, value: object) -> None:
+        self._props[name] = value
+
+    def property(self, name: str) -> object:
+        return self._props.get(name)
+
+    def style(self) -> FakeStyle:
+        return self._style
 
 
 class FakeSlider:
@@ -115,6 +139,8 @@ class FakeHost(QObject):
         self.timer_sunrise_status = FakeLabel()
         self.timer_sunrise_time = FakeTimeEdit(QTime(7, 0))
         self.timer_sunrise_swatch = FakeSwatch(QColor(255, 180, 120))
+        self.timer_sleep_row = FakeLabel()
+        self.timer_sunrise_row = FakeLabel()
         self.logs: list[str] = []
         self.errors: list[str] = []
         self.power_toggled = 0
@@ -307,3 +333,29 @@ def test_stop_if_running_is_noop_when_idle() -> None:
     assert ctrl._sleep_active is False
     assert ctrl._sunrise_active is False
     assert host._ble.calls == []
+
+
+def test_running_timers_mark_their_row_active() -> None:
+    host = FakeHost()
+    controller = TimerController(host)
+    controller._refresh_labels()
+
+    # Idle: neither row is highlighted.
+    assert host.timer_sleep_row.property("active") is False
+    assert host.timer_sunrise_row.property("active") is False
+
+    host.timer_sleep_button.setChecked(True)
+    controller._toggle_sleep()
+    assert host.timer_sleep_row.property("active") is True
+    assert host.timer_sleep_status.property("active") is True
+    # Arming one timer must not light up the other.
+    assert host.timer_sunrise_row.property("active") is False
+
+    host.timer_sleep_button.setChecked(False)
+    controller._toggle_sleep()
+    assert host.timer_sleep_row.property("active") is False
+
+    host.timer_sunrise_button.setChecked(True)
+    controller._toggle_sunrise()
+    assert host.timer_sunrise_row.property("active") is True
+    assert host.timer_sunrise_status.property("active") is True

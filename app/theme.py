@@ -30,30 +30,30 @@ DARK = {
 }
 
 LIGHT = {
-    "window_start": "#dce6f7",
-    "window_end": "#cfd9f0",
-    "surface": "rgba(255, 255, 255, 0.72)",
-    "surface_soft": "rgba(240, 245, 255, 0.82)",
-    "surface_strong": "rgba(255, 255, 255, 0.92)",
-    "surface_border": "rgba(80, 110, 190, 0.42)",
-    "surface_line": "rgba(100, 130, 200, 0.20)",
-    "text": "#0f1a3a",
-    "text_soft": "rgba(15, 30, 70, 0.86)",
-    "muted": "rgba(15, 30, 70, 0.64)",
-    "field": "rgba(220, 232, 255, 0.55)",
-    "field_alt": "rgba(230, 240, 255, 0.70)",
-    "field_border": "rgba(100, 130, 200, 0.30)",
-    "accent_start": "#6fa4ff",
-    "accent_end": "#4d82f5",
+    "window_start": "#f2f3f5",
+    "window_end": "#e7e9ed",
+    "surface": "rgba(255, 255, 255, 0.84)",
+    "surface_soft": "rgba(249, 250, 252, 0.92)",
+    "surface_strong": "rgba(255, 255, 255, 0.96)",
+    "surface_border": "rgba(34, 38, 46, 0.20)",
+    "surface_line": "rgba(34, 38, 46, 0.13)",
+    "text": "#17181b",
+    "text_soft": "rgba(28, 30, 35, 0.82)",
+    "muted": "rgba(38, 41, 48, 0.60)",
+    "field": "rgba(22, 25, 31, 0.045)",
+    "field_alt": "rgba(22, 25, 31, 0.075)",
+    "field_border": "rgba(34, 38, 46, 0.16)",
+    "accent_start": "#5f8ee6",
+    "accent_end": "#3f70cf",
     "danger_start": "#ff7a85",
     "danger_end": "#c94d5f",
     "success_start": "#5ed4b8",
     "success_end": "#3aab8f",
-    "chip": "rgba(180, 205, 255, 0.38)",
-    "chip_border": "rgba(100, 140, 220, 0.32)",
-    "list_sel": "rgba(72, 132, 255, 0.28)",
-    "list_hover": "rgba(72, 132, 255, 0.08)",
-    "scroll": "rgba(80, 120, 200, 0.35)",
+    "chip": "rgba(22, 25, 31, 0.06)",
+    "chip_border": "rgba(34, 38, 46, 0.14)",
+    "list_sel": "rgba(63, 112, 207, 0.17)",
+    "list_hover": "rgba(22, 25, 31, 0.045)",
+    "scroll": "rgba(34, 38, 46, 0.24)",
 }
 
 
@@ -139,3 +139,15 @@ class ThemeManager:
 
 
 theme_manager = ThemeManager()
+
+
+def overlay_panel_colors() -> tuple[QColor, QColor]:
+    """Top and bottom stops of the floating panel gradient (dialogs, popovers).
+
+    One source of truth on purpose: the same pair used to be copy-pasted into
+    nine overlays, so the dark panels drifted blue while the app's cards stayed
+    graphite — and fixing one window left the other eight wrong.
+    """
+    if theme_manager.is_dark:
+        return QColor(36, 37, 41, 250), QColor(20, 21, 24, 252)
+    return QColor(250, 252, 255, 252), QColor(234, 241, 251, 252)

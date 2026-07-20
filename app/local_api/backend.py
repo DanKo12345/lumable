@@ -17,6 +17,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal
 from app import scene_store
 from app.app_info import APP_VERSION
 from app.device_names import device_display_name
+from app.driver_capabilities import capabilities_for
 from app.quick_modes import QUICK_MODE_MAP
 from app.scene_apply import SceneApplyService, scene_from_status
 from app.storage import save_settings
@@ -78,16 +79,16 @@ class QtApiBackend:
 
     # ── commands ──────────────────────────────────────────────────────
     def set_power(self, on: bool, device_id: str | None) -> None:
-        self._invoker.call(lambda: self._apply_power(on))
+        self._invoker.call(lambda: self._apply_power(on, device_id))
 
     def set_color(self, red: int, green: int, blue: int, device_id: str | None) -> None:
-        self._invoker.call(lambda: self._apply_color(red, green, blue))
+        self._invoker.call(lambda: self._apply_color(red, green, blue, device_id))
 
     def set_brightness(self, value: int, device_id: str | None) -> None:
-        self._invoker.call(lambda: self._apply_brightness(value))
+        self._invoker.call(lambda: self._apply_brightness(value, device_id))
 
     def set_effect(self, code: int, speed: int | None, device_id: str | None) -> None:
-        self._invoker.call(lambda: self._apply_effect(code, speed))
+        self._invoker.call(lambda: self._apply_effect(code, speed, device_id))
 
     def apply_quick_mode(self, key: str) -> bool:
         return self._invoker.call(lambda: self._apply_quick_mode(key))
@@ -222,26 +223,74 @@ class QtApiBackend:
             )
         return devices
 
-    def _apply_power(self, on: bool) -> None:
+    # ── addressed vs whole-set commands ───────────────────────────────
+    # No device_id -> the familiar whole-set path through the host (sliders move,
+    # every strip follows, /status updates). A device_id -> an addressed BLE write
+    # that touches only that strip; the desktop UI is synced (without re-sending)
+    # only when the address is the primary, so a mirror-only write never drags the
+    # global sliders around.
+    def _primary_address(self) -> str:
+        settings = self._settings()
+        return str(settings.get("last_device_address", "")).strip()
+
+    def _is_primary(self, device_id: str | None) -> bool:
+        address = str(device_id or "").strip()
+        return bool(address) and address == self._primary_address()
+
+    def _apply_power(self, on: bool, device_id: str | None = None) -> None:
         host = self._host
+        if device_id:
+            host._ble.set_power_for_addresses(bool(on), [str(device_id).strip()])
+            if self._is_primary(device_id):
+                host.power_button.setChecked(bool(on))  # reflect, don't re-send
+            return
         host.power_button.setChecked(bool(on))
         host._toggle_power()
 
-    def _apply_color(self, red: int, green: int, blue: int) -> None:
+    def _apply_color(self, red: int, green: int, blue: int, device_id: str | None = None) -> None:
+        host = self._host
+        if device_id:
+            host._ble.set_color_for_addresses(int(red), int(green), int(blue), [str(device_id).strip()])
+            if self._is_primary(device_id):
+                self._sync_primary_color(int(red), int(green), int(blue))
+            return
+        self._sync_primary_color(int(red), int(green), int(blue))
+        host._apply_current_color()
+
+    def _sync_primary_color(self, red: int, green: int, blue: int) -> None:
         host = self._host
         with host._suppress_signals():
-            host.red_slider.setValue(int(red))
-            host.green_slider.setValue(int(green))
-            host.blue_slider.setValue(int(blue))
+            host.red_slider.setValue(red)
+            host.green_slider.setValue(green)
+            host.blue_slider.setValue(blue)
+
+    def _apply_brightness(self, value: int, device_id: str | None = None) -> None:
+        host = self._host
+        value = max(0, min(100, int(value)))
+        if device_id:
+            host._ble.set_brightness_for_addresses(value, [str(device_id).strip()])
+            if self._is_primary(device_id):
+                with host._suppress_signals():
+                    host.brightness_slider.setValue(value)
+            return
+        host.brightness_slider.setValue(value)
         host._apply_current_color()
 
-    def _apply_brightness(self, value: int) -> None:
+    def _apply_effect(self, code: int, speed: int | None, device_id: str | None = None) -> None:
         host = self._host
-        host.brightness_slider.setValue(max(0, min(100, int(value))))
-        host._apply_current_color()
-
-    def _apply_effect(self, code: int, speed: int | None) -> None:
-        host = self._host
+        if device_id:
+            host._ble.set_effect_for_addresses(int(code), speed, [str(device_id).strip()])
+            if self._is_primary(device_id):
+                # Reflect both the effect *and* its speed, or /status and the next
+                # scene snapshot would keep reporting the old speed.
+                index = host.effect_combo.findData(int(code))
+                slider = getattr(host, "speed_slider", None)
+                with host._suppress_signals():
+                    if index >= 0:
+                        host.effect_combo.setCurrentIndex(index)
+                    if speed is not None and slider is not None:
+                        slider.setValue(int(speed))
+            return
         index = host.effect_combo.findData(int(code))
         if index >= 0:
             host.effect_combo.setCurrentIndex(index)
@@ -283,13 +332,85 @@ class QtApiBackend:
         scene = scene_store.get_scene(self._settings(), str(scene_id or ""))
         if scene is None:
             return None
-        # HONEST LIMITATION (0.3.2): the BLE layer has no per-strip addressing yet,
-        # so every command mirrors to all connected strips regardless of device_id.
-        # We therefore apply to the whole set (device_ids=None) rather than pretend
-        # a scene's target is honoured. The scene model already carries a target and
-        # SceneApplyService can route per-device; wiring the BLE addressed path and
-        # exposing target/group in the UI lands in 0.3.3.
-        return SceneApplyService(self).apply(scene)
+        device_ids = self._resolve_scene_targets(scene.get("target"))
+        report = SceneApplyService(self).apply(
+            scene,
+            capabilities=self._strip_capabilities(),
+            device_ids=device_ids,
+            capabilities_for=self._capabilities_for,
+        )
+        # Which strips this actually reached, named, so the UI can say so.
+        report["targets"] = self._target_names(device_ids)
+        return report
+
+    def _resolve_scene_targets(self, target: Any) -> list[str] | None:
+        """``None`` for a whole-set scene — the familiar path that also moves the
+        desktop sliders. An explicit address list when the scene targets the
+        primary strip or a group, which routes as addressed BLE writes."""
+        target = target if isinstance(target, dict) else {}
+        if target.get("kind", "all") == "all":
+            return None
+        primary = self._primary_address() or None
+        try:
+            mirror = list(self._host._ble.mirror_addresses())
+        except Exception:
+            mirror = []
+        all_addresses = ([primary] if primary else []) + [str(m).strip() for m in mirror if str(m).strip()]
+        resolved = scene_store.resolve_target(
+            self._settings(), target, primary=primary, all_addresses=all_addresses
+        )
+        # Keep only strips that are connected right now. A saved group can still
+        # name a strip that is offline or has been removed; sending to it would be
+        # dropped silently by the BLE layer while the report claimed the scene
+        # reached it.
+        connected = set(all_addresses)
+        return [address for address in resolved if address in connected]
+
+    def _target_names(self, device_ids: list[str] | None) -> list[str]:
+        settings = self._settings()
+        names = self._device_names()
+        primary = self._primary_address()
+        if device_ids is None:
+            addresses = [device["address"] for device in self._build_devices()]
+        else:
+            addresses = [str(address).strip() for address in device_ids if str(address).strip()]
+        labels = []
+        for address in addresses:
+            fallback = str(settings.get("last_device_name", "")) if address == primary else ""
+            labels.append(device_display_name(address, fallback, names))
+        return labels
+
+    def _capabilities_for(self, device_id: str | None) -> dict[str, Any]:
+        """Capabilities of one specific strip. A group can mix controllers, so an
+        effect supported on the primary may be missing on a mirror — resolving per
+        target keeps the apply report honest."""
+        if not device_id:
+            return self._strip_capabilities()
+        ble = self._host._ble
+        try:
+            caps = capabilities_for(ble.driver_id_for_address(device_id))
+        except Exception:
+            caps = capabilities_for("")
+        try:
+            caps["effect_speed"] = bool(ble.supports_effect_speed_for_address(device_id))
+        except Exception:
+            pass
+        return caps
+
+    def _strip_capabilities(self) -> dict[str, Any]:
+        """Real capabilities of the connected controller so a scene skips fields
+        the hardware can't do (e.g. CCT) instead of assuming defaults."""
+        driver_id = ""
+        try:
+            driver_id = self._host._ble.active_driver_id()
+        except Exception:
+            driver_id = ""
+        caps = capabilities_for(driver_id)
+        try:
+            caps["effect_speed"] = bool(self._host._ble.supports_effect_speed())
+        except Exception:
+            pass
+        return caps
 
     def _delete_scene(self, scene_id: str) -> bool:
         removed = scene_store.delete_scene(self._settings(), str(scene_id or ""))

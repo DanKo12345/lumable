@@ -158,6 +158,16 @@ class ScheduleController:
         self.save_settings()
         host._log(host._tr("schedule.startup_enabled_log") if requested else host._tr("schedule.startup_disabled_log"))
 
+    @staticmethod
+    def _set_active(widget: object, active: bool) -> None:
+        """Flip the QSS `active` state on a row and repaint it."""
+        if widget is None or widget.property("active") == active:
+            return
+        widget.setProperty("active", active)
+        style = widget.style()
+        style.unpolish(widget)
+        style.polish(widget)
+
     def sync_controls(self) -> None:
         host = self._host
         lock_label = getattr(host, "schedule_lock_label", None)
@@ -167,6 +177,13 @@ class ScheduleController:
         startup_enabled = host.schedule_startup_button.isChecked() and enabled
         host.schedule_toggle_button.setText(host._tr("schedule.toggle_on") if enabled else host._tr("schedule.toggle_off"))
         host.schedule_toggle_button.set_role("accent_soft" if enabled else "ghost")
+        # The master row says out loud what state the whole card is in, and
+        # highlights itself while the schedule is live.
+        status = getattr(host, "schedule_master_status", None)
+        if status is not None:
+            status.setText(host._tr("schedule.enabled" if enabled else "schedule.disabled"))
+        self._set_active(getattr(host, "schedule_row", None), enabled)
+        self._set_active(status, enabled)
         host.schedule_startup_button.setText(
             host._tr("schedule.startup_on") if startup_enabled else host._tr("schedule.startup_off")
         )

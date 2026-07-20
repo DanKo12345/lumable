@@ -14,9 +14,13 @@ fake backend. It follows the agreed rules:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from app.scenes import make_scene, plan_apply
+
+# Which report field an action maps to when it can't run at all.
+_FIELD_BY_OP = {"power": "power", "color": "color", "brightness": "brightness", "effect": "effect", "cct": "cct"}
 
 
 class _Backend(Protocol):
@@ -32,7 +36,12 @@ class SceneApplyService:
         self._backend = backend
 
     def apply(
-        self, scene: dict[str, Any], *, capabilities: dict[str, Any] | None = None, device_ids: list[str] | None = None
+        self,
+        scene: dict[str, Any],
+        *,
+        capabilities: dict[str, Any] | None = None,
+        device_ids: list[str] | None = None,
+        capabilities_for: Callable[[str | None], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Apply a scene, returning ``{"applied": [...], "skipped": [...]}``.
 
@@ -42,53 +51,86 @@ class SceneApplyService:
         are reported as ``no_target`` rather than leaking onto every strip.
         """
         state = scene.get("state", {}) if isinstance(scene, dict) else {}
-        plan = plan_apply(state, capabilities)
-        applied: list[str] = []
-        skipped: list[dict[str, str]] = list(plan["skipped"])
         targets: list[str | None] = list(device_ids) if device_ids is not None else [None]
+        applied: list[str] = []
+        skipped: list[dict[str, str]] = []
+
+        def remember(field: str) -> None:
+            if field not in applied:
+                applied.append(field)
+
+        def note(field: str, reason: str, device_id: str | None = None) -> None:
+            entry: dict[str, str] = {"field": field, "reason": reason}
+            if device_id:
+                entry["target"] = device_id  # which strip couldn't take it
+            skipped.append(entry)
+
+        def caps_for(device_id: str | None) -> dict[str, Any] | None:
+            return capabilities_for(device_id) if capabilities_for is not None else capabilities
+
+        # The target resolved to no strips at all (a deleted group, or one whose
+        # strips are offline). Report and get out *before* touching anything
+        # global: stopping the running screen/music/DIY stream for a scene that
+        # cannot apply would be worse than doing nothing.
+        if not targets:
+            plan = plan_apply(state, capabilities)
+            skipped.extend(plan["skipped"])
+            for action in plan["actions"]:
+                note(_FIELD_BY_OP.get(action["op"], action["op"]), "no_target")
+            return {"applied": applied, "skipped": skipped}
 
         # Hand the strip back from any live stream before painting the base look.
         self._backend.set_pc_mode("off")
 
-        def per_device(field: str, call) -> None:
-            if not targets:  # target resolved to no strips
-                skipped.append({"field": field, "reason": "no_target"})
-                return
-            for device_id in targets:
-                call(device_id)
-            applied.append(field)
+        pc_mode_handled = False
+        for device_id in targets:
+            # Capabilities are resolved per target: a group can mix controllers,
+            # so an effect may be fine on one strip and unsupported on another.
+            plan = plan_apply(state, caps_for(device_id))
+            for entry in plan["skipped"]:
+                note(str(entry.get("field", "")), str(entry.get("reason", "")), device_id)
 
-        for action in plan["actions"]:
-            op = action["op"]
-            if op == "power":
-                per_device("power", lambda d, on=action["on"]: self._backend.set_power(bool(on), d))
-            elif op == "color":
-                red, green, blue = action["rgb"]
-                per_device(
-                    "color", lambda d, r=red, g=green, b=blue: self._backend.set_color(int(r), int(g), int(b), d)
-                )
-            elif op == "brightness":
-                per_device("brightness", lambda d, v=action["value"]: self._backend.set_brightness(int(v), d))
-            elif op == "cct":
-                # A real white channel arrives with the driver capability matrix
-                # (0.3.3); until then we don't emulate it on RGB-only strips.
-                skipped.append({"field": "cct", "reason": "not_wired"})
-            elif op == "effect":
-                effect = action["effect"]
-                if effect.get("kind") == "firmware":
-                    per_device("effect", lambda d, e=effect: self._backend.set_effect(int(e["ref"]), e.get("speed"), d))
+            for action in plan["actions"]:
+                if action["op"] == "pc_mode":
+                    if pc_mode_handled:  # PC modes are global, not per-strip
+                        continue
+                    pc_mode_handled = True
+                    self._start_pc_mode(action["mode"], remember, note)
                 else:
-                    # Selecting a specific software/DIY effect from a scene lands
-                    # with the phone effect picker (0.3.3); report, don't fail.
-                    skipped.append({"field": "effect", "reason": "pc_effect_pending"})
-            elif op == "pc_mode":
-                # PC modes are global to the machine, not per-strip.
-                if self._backend.set_pc_mode(str(action["mode"])):
-                    applied.append("pc_mode")
-                else:
-                    skipped.append({"field": "pc_mode", "reason": "refused"})
+                    self._run_device_action(action, device_id, remember, note)
 
         return {"applied": applied, "skipped": skipped}
+
+    def _start_pc_mode(self, mode: Any, remember, note) -> None:
+        if self._backend.set_pc_mode(str(mode)):
+            remember("pc_mode")
+        else:
+            note("pc_mode", "refused")
+
+    def _run_device_action(self, action: dict[str, Any], device_id: str | None, remember, note) -> None:
+        op = action["op"]
+        if op == "power":
+            self._backend.set_power(bool(action["on"]), device_id)
+            remember("power")
+        elif op == "color":
+            red, green, blue = action["rgb"]
+            self._backend.set_color(int(red), int(green), int(blue), device_id)
+            remember("color")
+        elif op == "brightness":
+            self._backend.set_brightness(int(action["value"]), device_id)
+            remember("brightness")
+        elif op == "cct":
+            # A real white channel needs hardware support; we never fake it.
+            note("cct", "not_wired", device_id)
+        elif op == "effect":
+            effect = action["effect"]
+            if effect.get("kind") == "firmware":
+                self._backend.set_effect(int(effect["ref"]), effect.get("speed"), device_id)
+                remember("effect")
+            else:
+                # Selecting a specific software/DIY effect from a scene lands with
+                # the phone effect picker; report, don't fail.
+                note("effect", "pc_effect_pending", device_id)
 
 
 def scene_from_status(

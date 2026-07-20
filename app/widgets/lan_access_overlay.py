@@ -4,7 +4,7 @@ from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRe
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from app.theme import qcolor_from_token, theme_manager
+from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
 from app.widgets.liquid_button import LiquidButton
 
 
@@ -24,12 +24,9 @@ class _Panel(QFrame):
         path = QPainterPath()
         path.addRoundedRect(rect, self.RADIUS, self.RADIUS)
         fill = QLinearGradient(rect.topLeft(), rect.bottomRight())
-        if theme_manager.is_dark:
-            fill.setColorAt(0.0, QColor(37, 40, 50, 251))
-            fill.setColorAt(1.0, QColor(20, 22, 29, 253))
-        else:
-            fill.setColorAt(0.0, QColor(250, 252, 255, 253))
-            fill.setColorAt(1.0, QColor(224, 235, 250, 253))
+        panel_top, panel_bottom = overlay_panel_colors()
+        fill.setColorAt(0.0, panel_top)
+        fill.setColorAt(1.0, panel_bottom)
         painter.fillPath(path, fill)
         border = qcolor_from_token(theme_manager.palette["surface_border"])
         border.setAlpha(98 if theme_manager.is_dark else 110)
@@ -118,7 +115,7 @@ class LanAccessOverlay(QWidget):
         cancel = LiquidButton(labels["cancel"], "ghost", self._panel)
         cancel.setFixedSize(170, 40)
         cancel.clicked.connect(self.close_overlay)
-        allow = LiquidButton(labels["allow"], "accent_soft", self._panel)
+        allow = LiquidButton(labels["allow"], "accent", self._panel)
         allow.setFixedSize(170, 40)
         allow.clicked.connect(self._accept)
         buttons.addWidget(cancel)

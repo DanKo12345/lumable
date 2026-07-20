@@ -33,6 +33,23 @@ class FakeCombo:
                 return index
         return -1
 
+    def count(self) -> int:
+        return len(self.items)
+
+    def itemData(self, index: int) -> Any:
+        if 0 <= index < len(self.items):
+            return self.items[index][1]
+        return None
+
+    def itemText(self, index: int) -> str:
+        if 0 <= index < len(self.items):
+            return self.items[index][0]
+        return ""
+
+    def setItemText(self, index: int, text: str) -> None:
+        if 0 <= index < len(self.items):
+            self.items[index] = (text, self.items[index][1])
+
 
 class FakeLabel:
     def __init__(self) -> None:
@@ -453,3 +470,132 @@ def test_device_label_skips_duplicate_address_and_empty_rssi() -> None:
         handler._device_label({"name": "Desk strip", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-42"})
         == "Desk strip  |  AA:BB:CC:DD:EE:FF  |  RSSI -42"
     )
+
+
+class FakeSignalSink:
+    def __init__(self) -> None:
+        self._slots: list[Any] = []
+
+    def connect(self, slot: Any) -> None:
+        self._slots.append(slot)
+
+    def fire(self, *args: Any) -> None:
+        for slot in list(self._slots):
+            slot(*args)
+
+
+class PromoteBle(FakeBle):
+    def __init__(self, mirrors: list[str] | None = None) -> None:
+        super().__init__()
+        self.mirrors = list(mirrors or [])
+        self.promoted: list[str] = []
+
+    def mirror_addresses(self) -> list[str]:
+        return list(self.mirrors)
+
+    def promote_mirror_to_primary(self, address: str) -> None:
+        self.promoted.append(address)
+
+
+class FakeSceneUi:
+    def __init__(self) -> None:
+        self.refreshed = 0
+
+    def refresh(self) -> None:
+        self.refreshed += 1
+
+
+def test_primary_changed_saves_the_new_main_strip(monkeypatch) -> None:
+    saved: list[dict[str, Any]] = []
+    monkeypatch.setattr(ble_event_handler, "save_settings", lambda settings: saved.append(dict(settings)))
+    host = FakeHost(
+        _ble=PromoteBle(["AA:BB:CC:DD:EE:FF"]),
+        _settings={"last_device_address": "AA:BB:CC:DD:EE:FF", "last_device_name": "Desk"},
+    )
+    host._scene_ui = FakeSceneUi()
+    handler = BleEventHandler(host)
+
+    handler.on_primary_changed("11:22:33:44:55:66", "TV")
+
+    assert host._settings["last_device_address"] == "11:22:33:44:55:66"
+    assert host._settings["last_device_name"] == "TV"
+    assert saved and saved[-1]["last_device_address"] == "11:22:33:44:55:66"
+    assert host.last_device_label.text == "device.last:name=TV,address=11:22:33:44:55:66"
+    # Scene targets ("primary", groups) follow the new main strip.
+    assert host._scene_ui.refreshed == 1
+
+
+def test_primary_changed_prefers_the_saved_custom_name(monkeypatch) -> None:
+    monkeypatch.setattr(ble_event_handler, "save_settings", lambda settings: None)
+    host = FakeHost(
+        _ble=PromoteBle([]),
+        _settings={"device_names": {"11:22:33:44:55:66": "Bedroom"}},
+    )
+    handler = BleEventHandler(host)
+
+    handler.on_primary_changed("11:22:33:44:55:66", "ELK-BLEDOM")
+
+    assert host._settings["last_device_name"] == "Bedroom"
+
+
+def test_primary_changed_ignores_an_empty_address(monkeypatch) -> None:
+    saved: list[dict[str, Any]] = []
+    monkeypatch.setattr(ble_event_handler, "save_settings", lambda settings: saved.append(dict(settings)))
+    host = FakeHost(_ble=PromoteBle([]), _settings={"last_device_address": "AA:BB:CC:DD:EE:FF"})
+    handler = BleEventHandler(host)
+
+    handler.on_primary_changed("", "")
+
+    assert host._settings["last_device_address"] == "AA:BB:CC:DD:EE:FF"
+    assert saved == []
+
+
+def test_primary_change_survives_a_restart(monkeypatch) -> None:
+    """After a swap the app must autoconnect to the new main strip."""
+    stored: dict[str, Any] = {}
+    monkeypatch.setattr(ble_event_handler, "save_settings", lambda settings: stored.update(settings))
+    host = FakeHost(
+        _ble=PromoteBle(["AA:BB:CC:DD:EE:FF"]),
+        _settings={"last_device_address": "AA:BB:CC:DD:EE:FF", "last_device_name": "Desk"},
+    )
+    BleEventHandler(host).on_primary_changed("11:22:33:44:55:66", "TV")
+
+    # Fresh launch reading the persisted settings.
+    restarted = FakeHost(_ble=PromoteBle([]), _settings=dict(stored))
+    restarted_handler = BleEventHandler(restarted)
+    restarted_handler._sync_last_device_hint()
+
+    assert restarted._settings["last_device_address"] == "11:22:33:44:55:66"
+    assert restarted.last_device_label.text == "device.last:name=TV,address=11:22:33:44:55:66"
+
+
+def test_promote_device_asks_before_swapping_roles() -> None:
+    host = FakeHost(_ble=PromoteBle(["11:22:33:44:55:66"]))
+    handler = BleEventHandler(host)
+    opened: list[Any] = []
+
+    class FakeConfirmOverlay:
+        def __init__(self, labels: dict[str, str], parent: Any) -> None:
+            self.labels = labels
+            self.confirmed = FakeSignalSink()
+            self.closed = FakeSignalSink()
+            opened.append(self)
+
+        def open(self) -> None:
+            self.is_open = True
+
+    original = ble_event_handler.ProfileConfirmOverlay
+    ble_event_handler.ProfileConfirmOverlay = FakeConfirmOverlay
+    try:
+        handler.promote_device("11:22:33:44:55:66", "TV")
+        assert len(opened) == 1
+        assert opened[0].labels["message"] == "device.make_primary_confirm:name=TV"
+        # Nothing happens until the user confirms.
+        assert host._ble.promoted == []
+        opened[0].confirmed.fire()
+        assert host._ble.promoted == ["11:22:33:44:55:66"]
+        # A second click while the overlay is up must not stack overlays.
+        handler.promote_device("11:22:33:44:55:66", "TV")
+        assert len(opened) == 1
+    finally:
+        ble_event_handler.ProfileConfirmOverlay = original

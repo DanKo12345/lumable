@@ -317,6 +317,23 @@ class TimerController:
     def _minutes_label(self, minutes: int) -> str:
         return f"{minutes} {self._host._tr('timers.minutes_short')}"
 
+    @staticmethod
+    def _set_active(widget: object, active: bool) -> None:
+        """Flip the QSS `active` state on a row and repaint it."""
+        if widget is None or widget.property("active") == active:
+            return
+        widget.setProperty("active", active)
+        style = widget.style()
+        style.unpolish(widget)
+        style.polish(widget)
+
+    def _refresh_row_states(self, *, sleep_active: bool, sunrise_armed: bool) -> None:
+        host = self._host
+        self._set_active(getattr(host, "timer_sleep_row", None), sleep_active)
+        self._set_active(getattr(host, "timer_sleep_status", None), sleep_active)
+        self._set_active(getattr(host, "timer_sunrise_row", None), sunrise_armed)
+        self._set_active(getattr(host, "timer_sunrise_status", None), sunrise_armed)
+
     def _refresh_labels(self) -> None:
         host = self._host
         host.timer_sleep_pill.setText(self._minutes_label(self._sleep_minutes))
@@ -334,6 +351,7 @@ class TimerController:
             )
         else:
             host.timer_sunrise_status.setText(host._tr("timers.sunrise_idle"))
+        self._refresh_row_states(sleep_active=self._sleep_active, sunrise_armed=armed)
 
     def relocalize(self) -> None:
         self._refresh_labels()

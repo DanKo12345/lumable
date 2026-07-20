@@ -16,7 +16,7 @@ class LiquidSlider(QSlider):
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self._scale = 1.0
-        self.setMinimumHeight(68)
+        self.setMinimumHeight(56)
         self.accent = accent
         self._track_gradient: list[tuple[float, QColor]] | None = None
         self._hover = 0.0
@@ -79,7 +79,7 @@ class LiquidSlider(QSlider):
         """Scale the slider's height and internal geometry (handle, glow, groove)
         together so it stays proportional and the glow never clips when compact."""
         self._scale = max(0.6, min(1.6, float(scale)))
-        self.setMinimumHeight(max(40, round(68 * self._scale)))
+        self.setMinimumHeight(max(40, round(56 * self._scale)))
         self.update()
 
     def jump_to(self, value: int) -> None:

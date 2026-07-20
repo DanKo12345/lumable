@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import platform
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from app.app_info import APP_AUTHOR, APP_NAME, APP_VERSION
+from app.constants import CRASH_LOG_MAX_AGE_DAYS
 from app.crash_logging import CRASH_LOG_DIR
 from app.localization import localization_manager
 
@@ -79,11 +80,30 @@ def _format_history_item(item: dict[str, Any]) -> str:
 
 
 def _read_recent_crash_logs(limit: int = 3, max_chars: int = 800) -> list[str]:
+    """Excerpts of genuinely recent crash logs.
+
+    Empty files and logs older than the crash-log retention window are skipped.
+    Without the age gate the report showed whatever files existed — including a
+    ``fatal-crashes.log`` whose single persistent name carried dumps from long
+    ago (startup rotation now splits it into dated per-session files).
+    """
     if not CRASH_LOG_DIR.exists():
         return []
-    logs = sorted(CRASH_LOG_DIR.glob("*.log"), key=lambda item: item.stat().st_mtime, reverse=True)[:limit]
+    cutoff = datetime.now() - timedelta(days=CRASH_LOG_MAX_AGE_DAYS)
+    candidates: list[tuple[float, Path]] = []
+    for path in CRASH_LOG_DIR.glob("*.log"):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if stat.st_size == 0:
+            continue
+        if datetime.fromtimestamp(stat.st_mtime) < cutoff:
+            continue
+        candidates.append((stat.st_mtime, path))
+    candidates.sort(key=lambda item: item[0], reverse=True)
     excerpts: list[str] = []
-    for path in logs:
+    for _mtime, path in candidates[:limit]:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -134,6 +154,32 @@ def _nearby_unknown_section(snapshot: dict[str, Any]) -> list[str]:
         services = sanitize_report_text(str(item.get("services", "")).strip()) or "-"
         rssi = str(item.get("rssi", "")).strip() or "-"
         lines.append(f"- {name} ({address}) | {_t('services')} {services} | RSSI {rssi}")
+    return lines
+
+
+def _ble_summary_section(history: dict[str, Any], last_command: dict[str, Any]) -> list[str]:
+    last_error = sanitize_report_text(localization_manager.normalize_error_message(str(history.get("last_error", ""))))
+    disconnect_reason = str(history.get("last_disconnect_reason", "") or "")
+    session_seconds = history.get("last_session_seconds")
+    if not (last_command or last_error.strip() or disconnect_reason):
+        return []
+
+    lines = ["", _t("ble_summary_section")]
+    if last_command:
+        lines.append(_line_key("last_command", _history_status_value(last_command, "description")))
+        if _has_value(last_command.get("payload")):
+            lines.append(_line_key("last_payload", _history_value(last_command, "payload")))
+        if _has_value(last_command.get("targets")):
+            lines.append(_line_key("last_targets", _history_value(last_command, "targets")))
+    if last_error.strip():
+        lines.append(_line_key("last_error", last_error))
+    if disconnect_reason:
+        # Why the last link ended, plus how long it had lasted — the pair is what
+        # distinguishes "out of range" from "flapping every few seconds".
+        reason_text = localization_manager.t(f"ble.reason_{disconnect_reason}")
+        if isinstance(session_seconds, (int, float)) and session_seconds >= 0:
+            reason_text = f"{reason_text} ({int(session_seconds)}s)"
+        lines.append(_line_key("last_disconnect", reason_text))
     return lines
 
 
@@ -213,18 +259,7 @@ def build_diagnostics_report(
     if command_lines:
         sections.extend(["", _t("supported_commands_section"), *command_lines])
 
-    last_error = sanitize_report_text(localization_manager.normalize_error_message(str(history.get("last_error", ""))))
-    has_ble_summary = bool(last_command) or bool(last_error.strip())
-    if has_ble_summary:
-        sections.extend(["", _t("ble_summary_section")])
-        if last_command:
-            sections.append(_line_key("last_command", _history_status_value(last_command, "description")))
-            if _has_value(last_command.get("payload")):
-                sections.append(_line_key("last_payload", _history_value(last_command, "payload")))
-            if _has_value(last_command.get("targets")):
-                sections.append(_line_key("last_targets", _history_value(last_command, "targets")))
-        if last_error.strip():
-            sections.append(_line_key("last_error", last_error))
+    sections.extend(_ble_summary_section(history, last_command))
 
     if history_lines:
         sections.extend(["", _t("recent_ble_history_section"), *history_lines])

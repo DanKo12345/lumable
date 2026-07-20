@@ -22,7 +22,6 @@ PRO_FEATURES = frozenset(
         "profile_import",
         "profile_export",
         "schedule",
-        "scenes_full",
         "tray_quick_controls",
         "unlimited_profiles",
         "diy_effects",

@@ -47,9 +47,14 @@ def test_effect_is_a_tagged_union() -> None:
 def test_group_target_needs_a_stable_id() -> None:
     grouped = make_scene("g", {}, target={"kind": "group", "group_id": "grp-1"})
     assert grouped["target"] == {"kind": "group", "group_id": "grp-1"}
-    # A group target with no id falls back to primary (never a broken pointer).
+    # A group target with no id falls back to "all" (never a broken pointer).
     fallback = make_scene("g", {}, target={"kind": "group", "group_id": ""})
-    assert fallback["target"]["kind"] == "primary"
+    assert fallback["target"]["kind"] == "all"
+
+
+def test_new_scenes_target_all_by_default() -> None:
+    # Saving without picking a target keeps the familiar "drive every strip".
+    assert make_scene("Movie", {"brightness": 40})["target"] == {"kind": "all", "group_id": None}
 
 
 def test_pc_mode_is_validated() -> None:
@@ -82,6 +87,50 @@ def test_unwrap_rejects_wrong_type_version_and_corruption() -> None:
     assert unwrap_scene({"type": "scene", "version": SCENE_VERSION, "payload": envelope["payload"]}) is None
 
 
+def _v1_envelope(payload: dict) -> dict:
+    from app.scenes import _checksum
+
+    return {"type": "scene", "version": 1, "payload": payload, "checksum": _checksum(payload)}
+
+
+def test_legacy_v1_targets_migrate_to_all() -> None:
+    # In v1 the target existed but was never honoured (every scene drove all
+    # strips), so upgrading must not silently narrow a saved scene to one strip.
+    for legacy_kind, group_id in (("primary", None), ("group", "grp-1"), ("all", None)):
+        payload = normalize_scene({"scene_id": "abc", "name": "Old", "state": {"brightness": 50}})
+        payload["target"] = {"kind": legacy_kind, "group_id": group_id}
+        migrated = unwrap_scene(_v1_envelope(payload))
+        assert migrated is not None
+        assert migrated["target"] == {"kind": "all", "group_id": None}
+        assert migrated["state"]["brightness"] == 50  # the rest survives untouched
+
+
+def test_new_format_keeps_an_explicit_target() -> None:
+    # Only scenes saved with the (future) selector carry a real choice.
+    scene = make_scene("Desk", {"brightness": 10}, target={"kind": "primary"})
+    restored = unwrap_scene(wrap_scene(scene))
+    assert restored["target"]["kind"] == "primary"
+
+    grouped = make_scene("Shelf", {}, target={"kind": "group", "group_id": "grp-9"})
+    assert unwrap_scene(wrap_scene(grouped))["target"] == {"kind": "group", "group_id": "grp-9"}
+
+
+def test_legacy_share_codes_also_migrate() -> None:
+    import base64
+    import json
+
+    from app.scenes import SHARE_PREFIX
+
+    payload = normalize_scene({"scene_id": "xyz", "name": "Shared", "state": {"brightness": 30}})
+    payload["target"] = {"kind": "primary", "group_id": None}
+    body = json.dumps({"t": "scene", "v": 1, "scene": payload}, separators=(",", ":")).encode()
+    code = SHARE_PREFIX + base64.urlsafe_b64encode(body).decode("ascii")
+
+    decoded = decode_scene(code)
+    assert decoded is not None
+    assert decoded["target"]["kind"] == "all"
+
+
 def test_share_code_round_trip_and_rejects_junk() -> None:
     scene = make_scene("Chill", {"rgb": [0, 150, 255], "effect": {"kind": "software", "ref": "ocean"}})
     code = encode_scene(scene)
@@ -112,6 +161,23 @@ def test_plan_apply_skips_unsupported_fields_with_a_reason() -> None:
     assert plan["actions"] == []
     reasons = {s["field"]: s["reason"] for s in plan["skipped"]}
     assert reasons == {"rgb": "unsupported", "cct": "unsupported"}
+
+
+def test_plan_apply_drops_effect_speed_when_unsupported() -> None:
+    state = make_scene("FX", {"effect": {"kind": "firmware", "ref": 12, "speed": 70}})["state"]
+    plan = plan_apply(state, {"firmware_effects": True, "effect_speed": False})
+    effect_actions = [a for a in plan["actions"] if a["op"] == "effect"]
+    assert len(effect_actions) == 1
+    assert effect_actions[0]["effect"]["speed"] is None  # effect runs, speed dropped
+    assert {"field": "effect_speed", "reason": "unsupported"} in plan["skipped"]
+
+
+def test_plan_apply_keeps_effect_speed_when_supported() -> None:
+    state = make_scene("FX", {"effect": {"kind": "firmware", "ref": 12, "speed": 70}})["state"]
+    plan = plan_apply(state, {"firmware_effects": True, "effect_speed": True})
+    effect = next(a["effect"] for a in plan["actions"] if a["op"] == "effect")
+    assert effect["speed"] == 70
+    assert not any(s["field"] == "effect_speed" for s in plan["skipped"])
 
 
 def test_plan_apply_allows_cct_when_supported() -> None:

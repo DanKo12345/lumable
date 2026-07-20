@@ -124,6 +124,29 @@ def _cleanup_old_version_logs() -> None:
                 continue
 
 
+def _rotate_fatal_log() -> None:
+    """Move a non-empty fatal log into a dated exception-style file.
+
+    faulthandler output carries no timestamps of its own, so once the process
+    has died hard the only honest date for the dump is "the next launch".
+    Rotating it into a ``<timestamp>-fatal.log`` gives the dump a dated file
+    that ages out through the normal cleanup, and keeps ``fatal-crashes.log``
+    empty unless the *current* session wrote a dump — so diagnostics never
+    presents an ancient fatal dump as a recent crash.
+    """
+    _ensure_crash_log_dir()
+    try:
+        if not FATAL_LOG_PATH.exists() or FATAL_LOG_PATH.stat().st_size == 0:
+            return
+    except OSError:
+        return
+    target = CRASH_LOG_DIR / f"{_timestamp()}-fatal.log"
+    try:
+        FATAL_LOG_PATH.replace(target)
+    except OSError:
+        return
+
+
 def _trim_fatal_log() -> None:
     _ensure_crash_log_dir()
     if not FATAL_LOG_PATH.exists():
@@ -255,6 +278,7 @@ def install_crash_logging() -> None:
         return
 
     _ensure_crash_log_dir()
+    _rotate_fatal_log()
     _cleanup_old_version_logs()
     _cleanup_exception_logs()
     _trim_fatal_log()
