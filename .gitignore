@@ -14,8 +14,6 @@ data/crash_logs/
 *.log
 
 # Local/editor noise
-.claude/
-CLAUDE.md
 .idea/
 .vscode/
 *.swp

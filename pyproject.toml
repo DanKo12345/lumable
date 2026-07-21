@@ -8,9 +8,6 @@ testpaths = ["tests"]
 pythonpath = ["."]
 filterwarnings = ["error::RuntimeWarning"]
 
-[tool.codex]
-file_encoding = "utf-8"
-
 [tool.ruff]
 target-version = "py311"
 line-length = 120
