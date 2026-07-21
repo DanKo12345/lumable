@@ -1,6 +1,6 @@
-# LumaBLE 0.3.4 (beta) — Smart Atmosphere
+# LumaBLE 0.3.4 (beta)
 
-Screen sync that looks for the colours that matter instead of averaging the whole screen into a muddy tone — with three response styles, a live preview, a flash guard, and extra strips that now survive a restart.
+Smart Atmosphere: Screen Sync now looks for the colours that matter instead of averaging the whole screen into a muddy tone, with three response styles, a live preview and a flash guard. Extra strips now survive a restart, too.
 
 ## Added
 - **Smarter screen sync.** LumaBLE now weights the edges of the display (where the light around a monitor actually comes from) and keeps strong accent colours instead of blending everything into grey.
