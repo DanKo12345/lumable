@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from app.scenes import (
+    SCENE_TYPE,
     SCENE_VERSION,
+    _checksum,
     decode_scene,
     encode_scene,
     make_scene,
@@ -58,8 +60,51 @@ def test_new_scenes_target_all_by_default() -> None:
 
 
 def test_pc_mode_is_validated() -> None:
-    assert make_scene("m", {"pc_mode": "music"})["state"]["pc_mode"] == "music"
+    # Legacy bare string upgrades to the canonical {kind, preset} form.
+    assert make_scene("m", {"pc_mode": "music"})["state"]["pc_mode"] == {"kind": "music", "preset": None}
     assert make_scene("m", {"pc_mode": "teleport"})["state"]["pc_mode"] is None
+    # Dict form carries the preset (e.g. a screen-sync profile).
+    assert make_scene("s", {"pc_mode": {"kind": "screen", "preset": "movie"}})["state"]["pc_mode"] == {
+        "kind": "screen",
+        "preset": "movie",
+    }
+    # An unknown kind, or a target, is dropped.
+    assert make_scene("s", {"pc_mode": {"kind": "nope", "preset": "x"}})["state"]["pc_mode"] is None
+
+
+def test_pc_mode_preset_is_validated() -> None:
+    # An unknown screen preset degrades to None (use current profile), never a
+    # value that would silently resolve to Desktop on apply.
+    assert make_scene("s", {"pc_mode": {"kind": "screen", "preset": "banana"}})["state"]["pc_mode"] == {
+        "kind": "screen",
+        "preset": None,
+    }
+    # Non-screen modes carry no preset yet.
+    assert make_scene("s", {"pc_mode": {"kind": "music", "preset": "movie"}})["state"]["pc_mode"] == {
+        "kind": "music",
+        "preset": None,
+    }
+
+
+def test_new_envelope_is_v3() -> None:
+    assert SCENE_VERSION == 3
+    assert wrap_scene(make_scene("s", {"pc_mode": {"kind": "screen", "preset": "game"}}))["version"] == 3
+
+
+def test_legacy_v2_envelope_with_string_pc_mode_migrates() -> None:
+    # A real checksummed v2 envelope as 0.3.3 would have written it: pc_mode is a
+    # bare string. Loading it under v3 must migrate, not choke.
+    payload = normalize_scene(make_scene("Old", {"rgb": [1, 2, 3]}))
+    payload = {**payload, "state": {**payload["state"], "pc_mode": "screen"}}  # legacy string
+    envelope = {
+        "type": SCENE_TYPE,
+        "version": 2,
+        "payload": payload,
+        "checksum": _checksum(payload),
+    }
+    loaded = unwrap_scene(envelope)
+    assert loaded is not None
+    assert loaded["state"]["pc_mode"] == {"kind": "screen", "preset": None}
 
 
 def test_normalize_rejects_non_dict() -> None:

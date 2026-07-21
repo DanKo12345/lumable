@@ -228,8 +228,15 @@ class UiLocalizationController:
         host.ambient_card.title_label.setText(host._tr("ambient.title"))
         if host.ambient_card.subtitle_label is not None:
             host.ambient_card.subtitle_label.setText(host._tr("ambient.subtitle"))
-        host._set_slider_label_text("ambient.saturation", host._tr("ambient.saturation"))
-        host._set_slider_label_text("ambient.smoothing", host._tr("ambient.smoothing"))
+        host._set_slider_label_text("ambient.intensity", host._tr("ambient.intensity"))
+        host._set_slider_label_text("ambient.smoothness", host._tr("ambient.smoothness"))
+        if getattr(host, "ambient_preview_label", None) is not None:
+            host.ambient_preview_label.setText(host._tr("ambient.preview_hint"))
+        if getattr(host, "ambient_profile_segment", None) is not None:
+            host.ambient_profile_segment.set_labels(
+                {pid: host._tr(f"ambient.profile.{pid}") for pid in ("desktop", "game", "movie")}
+            )
+        host._ambient_ui.refresh_texts()
         running = host._ambient_ui.is_running()
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_on" if running else "ambient.toggle_off"))
         if getattr(host, "ambient_lock_label", None) is not None:

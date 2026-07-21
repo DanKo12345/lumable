@@ -21,8 +21,8 @@ class FakeBackend:
     def set_effect(self, code, speed, device_id):
         self.calls.append(("effect", code, speed, device_id))
 
-    def set_pc_mode(self, mode):
-        self.calls.append(("pc_mode", mode))
+    def set_pc_mode(self, mode, preset=None):
+        self.calls.append(("pc_mode", mode, preset))
         return mode == "off" or self.pc_mode_starts
 
 
@@ -32,7 +32,7 @@ def test_apply_stops_streams_first_then_sets_light() -> None:
     report = SceneApplyService(backend).apply(scene)
 
     # First call must be the stream-stop, so nothing fights over the strip.
-    assert backend.calls[0] == ("pc_mode", "off")
+    assert backend.calls[0] == ("pc_mode", "off", None)
     assert ("power", True, None) in backend.calls
     assert ("color", 10, 20, 30, None) in backend.calls
     assert ("brightness", 40, None) in backend.calls
@@ -46,7 +46,7 @@ def test_apply_starts_pc_mode_last() -> None:
     SceneApplyService(backend).apply(scene)
     ops = [c[0] for c in backend.calls]
     assert ops[0] == "pc_mode" and backend.calls[0][1] == "off"   # stop first
-    assert backend.calls[-1] == ("pc_mode", "screen")             # start last
+    assert backend.calls[-1] == ("pc_mode", "screen", None)       # start last
 
 
 def test_apply_reports_refused_pc_mode() -> None:
@@ -112,6 +112,7 @@ def test_empty_target_never_stops_a_running_stream() -> None:
     assert ("color", "no_target") in reasons
     assert ("brightness", "no_target") in reasons
     assert ("pc_mode", "no_target") in reasons  # the mode isn't started either
+    assert not any(call[0] == "pc_mode" for call in backend.calls)  # set_pc_mode never called
 
 
 def test_mixed_driver_group_reports_per_strip_skips() -> None:
@@ -160,7 +161,7 @@ def test_snapshot_captures_light_and_active_mode() -> None:
     assert scene["state"]["power"] is True
     assert scene["state"]["rgb"] == [5, 6, 7]
     assert scene["state"]["brightness"] == 55
-    assert scene["state"]["pc_mode"] == "music"
+    assert scene["state"]["pc_mode"] == {"kind": "music", "preset": None}
 
 
 def test_snapshot_captures_firmware_effect() -> None:

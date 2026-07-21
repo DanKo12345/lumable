@@ -10,6 +10,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from app.app_info import APP_VERSION
+from app.device_names import device_display_name, validate_extra_addresses
 from app.diagnostics import build_diagnostics_report
 from app.support import build_unsupported_report_url
 
@@ -27,11 +28,42 @@ class DiagnosticsController:
     def text(self, *, include_crashes: bool = False) -> str:
         host = self._host
         return build_diagnostics_report(
-            host._ble.diagnostics_snapshot(),
+            self._snapshot_with_saved_strips(),
             host._ui_feedback.raw_log_messages(),
             include_crashes=include_crashes,
             ambient=host._ambient_ui.stats(),
         )
+
+    def _snapshot_with_saved_strips(self) -> dict[str, Any]:
+        """The BLE snapshot plus the strips that are remembered but offline.
+
+        The BLE layer only knows live connections; the remembered set lives in
+        settings. Merging here keeps that layering intact while making a report
+        that shows "saved, unavailable" — which is exactly the state a user
+        would be writing to support about.
+        """
+        host = self._host
+        snapshot = host._ble.diagnostics_snapshot()
+        settings = host._settings if isinstance(host._settings, dict) else {}
+        saved = validate_extra_addresses(settings.get("extra_device_addresses", []))
+        if not saved:
+            return snapshot
+        strips = list(snapshot.get("strips") or [])
+        known = {str(item.get("address", "")).strip().upper() for item in strips}
+        names = settings.get("device_names") if isinstance(settings.get("device_names"), dict) else {}
+        for address in saved:
+            if address in known:
+                continue
+            strips.append(
+                {
+                    "role": "extra",
+                    "name": device_display_name(address, "", names),
+                    "address": address,
+                    "connected": False,
+                }
+            )
+        snapshot["strips"] = strips
+        return snapshot
 
     def refresh_view(self) -> None:
         host = self._host

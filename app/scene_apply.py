@@ -28,7 +28,7 @@ class _Backend(Protocol):
     def set_color(self, red: int, green: int, blue: int, device_id: str | None) -> None: ...
     def set_brightness(self, value: int, device_id: str | None) -> None: ...
     def set_effect(self, code: int, speed: int | None, device_id: str | None) -> None: ...
-    def set_pc_mode(self, mode: str) -> bool: ...
+    def set_pc_mode(self, mode: str, preset: str | None = None) -> bool: ...
 
 
 class SceneApplyService:
@@ -95,14 +95,15 @@ class SceneApplyService:
                     if pc_mode_handled:  # PC modes are global, not per-strip
                         continue
                     pc_mode_handled = True
-                    self._start_pc_mode(action["mode"], remember, note)
+                    self._start_pc_mode(action["mode"], action.get("preset"), remember, note)
                 else:
                     self._run_device_action(action, device_id, remember, note)
 
         return {"applied": applied, "skipped": skipped}
 
-    def _start_pc_mode(self, mode: Any, remember, note) -> None:
-        if self._backend.set_pc_mode(str(mode)):
+    def _start_pc_mode(self, mode: Any, preset: Any, remember, note) -> None:
+        preset = str(preset).strip() if isinstance(preset, str) and preset.strip() else None
+        if self._backend.set_pc_mode(str(mode), preset):
             remember("pc_mode")
         else:
             note("pc_mode", "refused")
@@ -153,11 +154,18 @@ def scene_from_status(
         color = "#{:02X}{:02X}{:02X}".format(*(max(0, min(255, int(c))) for c in rgb))
     power = status.get("power")
     effect = status.get("effect")
+    pc_mode_kind = status.get("pc_mode")
+    # Carry the active mode's preset (e.g. the screen-sync profile) so the scene
+    # restores the exact look, not just "screen sync on". normalize_scene coerces
+    # this to the canonical {kind, preset} form (and legacy strings on read).
+    pc_mode = (
+        {"kind": pc_mode_kind, "preset": status.get("pc_mode_preset")} if pc_mode_kind else None
+    )
     state = {
         "power": power if isinstance(power, bool) else None,
         "rgb": rgb,
         "brightness": status.get("brightness"),
         "effect": effect if isinstance(effect, dict) else None,
-        "pc_mode": status.get("pc_mode"),
+        "pc_mode": pc_mode,
     }
     return make_scene(name, state, target=target, icon=icon, color=color)

@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
@@ -31,12 +32,24 @@ def test_window_icon_asset_exists() -> None:
     assert icon_path.stat().st_size > 0
 
 
+def test_release_version_is_consistent_across_build_metadata() -> None:
+    root = Path(__file__).resolve().parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    installer = (root / "installer" / "LumaBLE.iss").read_text(encoding="utf-8")
+    version_info = (root / "build" / "version_info.txt").read_text(encoding="utf-8")
+
+    assert project["project"]["version"] == APP_VERSION
+    assert f'#define MyAppVersion "{APP_VERSION}"' in installer
+    assert f"StringStruct('FileVersion', '{APP_VERSION}')" in version_info
+    assert f"StringStruct('ProductVersion', '{APP_VERSION}')" in version_info
+
+
 def test_author_signature_mark_uses_shared_signature() -> None:
     app = QApplication.instance() or QApplication([])
     mark = AuthorSignatureMark(lambda: {"muted": "rgba(255,255,255,0.5)", "text": "#ffffff"})
 
     assert APP_AUTHOR_SIGNATURE == "by dollza"
-    assert APP_VERSION == "0.3.3"
+    assert APP_VERSION == "0.3.4"
     mark.set_edition("Free", "Current app edition")
     assert mark.edition_label.text() == "Free"
     assert not hasattr(mark, "version_label")
@@ -65,4 +78,3 @@ def test_crash_report_paths_are_home_relative(monkeypatch) -> None:
     monkeypatch.setattr("app.crash_logging.Path", FakeHomePath)
 
     assert _display_path("C:\\Users\\ExampleUser\\Documents\\New project") == "~\\Documents\\New project"
-

@@ -289,13 +289,29 @@ class BleController(QObject):
         """Connect an extra controller driven in mirror with the primary."""
         self._submit(self._add_mirror(address))
 
+    def restore_mirror_device(self, address: str) -> None:
+        """Reconnect a remembered extra strip after the primary came up.
+
+        Unlike ``add_mirror_device`` a failure here is quiet: a strip that is
+        simply switched off must not raise an error dialog on every launch or
+        every reconnect — it just stays listed as unavailable.
+        """
+        self._submit(self._restore_mirror(address))
+
     def remove_mirror_device(self, address: str) -> None:
         self._submit(self._remove_mirror(address))
 
-    def promote_mirror_to_primary(self, address: str) -> None:
-        """Make an extra strip the main one. Both links stay up — only their
-        roles swap, so nothing has to reconnect."""
-        self._submit(self._promote_mirror(address))
+    def promote_mirror_to_primary(self, address: str, *, keep_old_as_extra: bool = True) -> None:
+        """Make an extra strip the main one.
+
+        ``keep_old_as_extra`` (the default) swaps roles: both links stay up and
+        the previous main strip keeps following the light as an extra. When it
+        is False the previous main strip is disconnected instead, so only the
+        new one remains. Either way this is a single queued operation — never a
+        swap followed by a separate removal, which would leave a window where a
+        light command could reach a strip the user just dropped.
+        """
+        self._submit(self._promote_mirror(address, keep_old_as_extra=keep_old_as_extra))
 
     def mirror_addresses(self) -> list[str]:
         return [conn.address for conn in self._mirror_connections]
@@ -514,6 +530,27 @@ class BleController(QObject):
                 ],
             },
             "commands": self._driver_command_support(),
+            # Every strip the app drives, not just the main one: a report that
+            # showed only the primary made multi-strip issues invisible.
+            "strips": [
+                {
+                    "role": "primary",
+                    "name": (device.name or "").strip() if device is not None else "",
+                    "address": device.address if device is not None else "",
+                    "connected": bool(self._client is not None and self._client.is_connected),
+                }
+            ]
+            + [
+                {
+                    "role": "extra",
+                    "name": (conn.device.name or "").strip() if conn.device is not None else "",
+                    "address": conn.address,
+                    "connected": bool(conn.client is not None and conn.client.is_connected),
+                }
+                # getattr: the snapshot is also built from partially
+                # constructed controllers (diagnostics on a failed connect).
+                for conn in (getattr(self, "_mirror_connections", None) or [])
+            ],
             "history": {
                 "last_error": getattr(self, "_last_ble_error", ""),
                 "last_disconnect_reason": getattr(self, "_last_disconnect_reason", ""),
@@ -937,15 +974,40 @@ class BleController(QObject):
         )
 
     # --- Mirror (multi-device) -------------------------------------------
-    async def _add_mirror(self, address: str) -> None:
+    async def _restore_mirror(self, address: str) -> None:
+        try:
+            await self._add_mirror(address, quiet=True)
+        except Exception:
+            # Best effort by design — see restore_mirror_device().
+            self.status_changed.emit(
+                localization_manager.status_ble_event("mirror_unavailable", address=address)
+            )
+            # Nothing joined the set, but the UI still has to re-render so the
+            # strip shows up as saved-but-unavailable.
+            self.mirrors_changed.emit(self.mirror_addresses())
+
+    async def _add_mirror(self, address: str, *, quiet: bool = False) -> None:
         if self._client is None:
-            self.error_occurred.emit(localization_manager.t("error.mirror_no_primary"))
+            # A restore that lost its primary while queued must stay silent:
+            # error_occurred puts a modal dialog on screen.
+            if not quiet:
+                self.error_occurred.emit(localization_manager.t("error.mirror_no_primary"))
             return
         primary_address = self._device.address if self._device is not None else ""
         if address == primary_address or any(conn.address == address for conn in self._mirror_connections):
             return
         hint = self._scan_driver_hints.get(address)
         conn = await self._establish_connection(address, hint)
+        # The primary can drop (or be swapped) while this await was pending.
+        # Attaching an extra to a setup that no longer exists would leave a
+        # stray live link nothing drives, so hand it back instead.
+        current_primary = self._device.address if self._device is not None else ""
+        if self._client is None or current_primary != primary_address:
+            try:
+                await conn.client.disconnect()
+            except Exception:
+                pass
+            return
         self._mirror_connections.append(conn)
         self.status_changed.emit(
             localization_manager.status_ble_event(
@@ -969,7 +1031,7 @@ class BleController(QObject):
         self.status_changed.emit(localization_manager.status_ble_event("mirror_removed", address=address))
         self.mirrors_changed.emit(self.mirror_addresses())
 
-    async def _promote_mirror(self, address: str) -> None:
+    async def _promote_mirror(self, address: str, *, keep_old_as_extra: bool = True) -> None:
         if self._client is None or self._device is None or self._driver is None:
             return
         # Park the live primary as a connection object so the swap is a plain
@@ -989,6 +1051,13 @@ class BleController(QObject):
             return
         promoted, mirrors = swapped
 
+        # "Switch" rather than "swap": drop the old primary from the mirror set
+        # in the same operation, before any further light command can fan out.
+        dropped = None
+        if not keep_old_as_extra:
+            mirrors = [conn for conn in mirrors if conn is not current]
+            dropped = current
+
         self._mirror_connections = list(mirrors)
         self._client = promoted.client
         self._device = promoted.device
@@ -1000,11 +1069,28 @@ class BleController(QObject):
         # Reconnect must now chase the new main strip, not the old one.
         self._reconnect_address = promoted.address
 
+        # Tear the dropped link down only after the roles are already in place,
+        # so nothing can be written to it in between.
+        if dropped is not None:
+            try:
+                await dropped.client.disconnect()
+            except Exception:
+                pass
+
         name = (promoted.device.name or "").strip() if promoted.device is not None else ""
         self.mirrors_changed.emit(self.mirror_addresses())
         self.primary_changed.emit(promoted.address, name)
+        # Spell out what happened to the strip that used to be the main one —
+        # "X is now primary" alone left users wondering why the other one still
+        # lit up (it keeps mirroring) or went dark (it was dropped).
+        old_name = (current.device.name or "").strip() if current.device is not None else ""
         self.status_changed.emit(
-            localization_manager.status_ble_event("primary_changed", name=name or promoted.address, address=promoted.address)
+            localization_manager.status_ble_event(
+                "primary_changed_kept" if keep_old_as_extra else "primary_changed_dropped",
+                name=name or promoted.address,
+                address=promoted.address,
+                old_name=old_name or current.address,
+            )
         )
 
     async def _disconnect_all_mirrors(self) -> None:

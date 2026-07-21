@@ -2,6 +2,37 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.3.4] - 2026-07-21
+
+Smart Atmosphere: screen sync that looks for the colours that matter instead of averaging the whole screen, with Work / Game / Movie response styles, a live source → strip preview, a flash guard, and extra strips that survive a restart.
+
+### Added
+- Smarter screen sync: edge-weighted sampling matches the light around the monitor, and dominant-colour detection keeps strong accents instead of blending to grey.
+- Work, Game and Movie **response** profiles — how the strip reacts, for any content on the display, not application triggers. Work is smooth and neutral, Game reacts faster with richer colour, Movie softens transitions and ignores black bars.
+- Screen → Strip dual preview: the colour detected on screen next to the final colour sent to the strip.
+- Flash protection: sudden bright frames ramp into the output instead of strobing, consistently across capture frame rates and after a pause.
+- Scenes remember their Screen Sync profile and restore it when applied.
+- Additional strips survive a restart and reconnect in the background after the main strip comes online. Unavailable strips remain visible as saved instead of disappearing from groups and scene targets.
+
+### Changed
+- Screen Sync card rebuilt as a grouped list: capture status, response-profile selector with a live description, dual preview, and two adjustments — Intensity and Smoothness.
+- Letterbox/pillarbox bars are excluded from colour analysis while genuinely dark scenes stay dark.
+- Spatial sampling and black-bar detection optimised so dark Full-HD frames no longer cause needless UI load.
+- Wording clarifies that Work / Game / Movie are response styles, not application triggers.
+- The **Make main** flow now asks whether the previous main strip should stay connected as an extra or disconnect, and reports the result explicitly.
+- Diagnostic reports list the main and extra strips with their current connection state.
+
+### Fixed
+- Screen Sync no longer flashes black when starting.
+- Near-grey screen noise no longer turns into unstable saturated colour.
+- Smoothing no longer stalls just before reaching the target colour.
+- A large gap between frames no longer causes a sudden colour jump.
+- Existing scenes keep loading after the Screen Sync profile format upgrade.
+
+### API and storage
+- `GET /status` keeps `pc_mode` and adds `pc_mode_preset` for the active Screen Sync profile.
+- Scene storage moves to schema v3, with migration of scenes saved by earlier versions.
+
 ## [0.3.3] - 2026-07-20
 
 Two strips, told apart: scenes and groups now target the strips you choose, the connection holds steadier, and the interface got a contrast and hierarchy pass.

@@ -34,11 +34,16 @@ import json
 import uuid
 from typing import Any
 
+from app.screen_profiles import PROFILE_IDS
+
 SCENE_TYPE = "scene"
 # v2: scenes default to targeting *all* connected strips. In v1 the target field
 # existed but was never honoured (every scene applied to everything), so a stored
 # v1 target was not a real user choice — see _migrate.
-SCENE_VERSION = 2
+# v3: pc_mode serialises as an object {kind, preset} instead of a bare string.
+# The bump matters for forward-compat: an older build that only knows up to v2
+# must *reject* a v3 envelope, not accept it and choke on the dict pc_mode.
+SCENE_VERSION = 3
 SHARE_PREFIX = "LUMASCENE1-"
 
 EFFECT_KINDS = frozenset({"firmware", "software", "diy"})
@@ -127,15 +132,43 @@ def _norm_state(raw: Any) -> dict[str, Any]:
     power = raw.get("power")
     cct = _clamp(raw["cct"], _CCT_MIN, _CCT_MAX, _CCT_MIN) if raw.get("cct") is not None else None
     brightness = _clamp(raw["brightness"], 0, 100, 100) if raw.get("brightness") is not None else None
-    pc_mode = raw.get("pc_mode")
     return {
         "power": bool(power) if isinstance(power, bool) else None,
         "rgb": _norm_rgb(raw["rgb"]) if raw.get("rgb") is not None else None,
         "cct": cct,
         "brightness": brightness,
         "effect": _norm_effect(raw["effect"]) if raw.get("effect") is not None else None,
-        "pc_mode": pc_mode if pc_mode in PC_MODES else None,
+        "pc_mode": _norm_pc_mode(raw.get("pc_mode")),
     }
+
+
+def _norm_pc_mode(raw: Any) -> dict[str, Any] | None:
+    """Canonical PC-mode: ``None`` or ``{"kind": <mode>, "preset": <id|None>}``.
+
+    Accepts the legacy bare-string form (``"screen"``) from scenes saved before
+    0.3.4 — it becomes ``{"kind": "screen", "preset": None}``. ``preset`` is a
+    stable id (e.g. a screen-sync profile) so a saved scene restores not just the
+    mode but the exact look. ``target`` is deliberately dropped: the streaming
+    backend is global, so a per-strip target would be a lie.
+    """
+    if isinstance(raw, str):
+        raw = {"kind": raw}
+    if not isinstance(raw, dict):
+        return None
+    kind = str(raw.get("kind") or "").strip().lower()
+    if kind not in PC_MODES:
+        return None
+    preset = raw.get("preset")
+    preset = str(preset).strip() if isinstance(preset, str) and preset.strip() else None
+    # Only screen sync has presets today, and only the known profiles are valid.
+    # An unknown preset degrades to None (use the current profile) rather than
+    # silently resolving to Desktop later — honest degradation, not a lie.
+    if kind == "screen":
+        if preset not in PROFILE_IDS:
+            preset = None
+    else:
+        preset = None
+    return {"kind": kind, "preset": preset}
 
 
 def normalize_scene(raw: Any) -> dict[str, Any] | None:
@@ -192,9 +225,25 @@ def _migrate(payload: Any, version: int) -> Any:
     legacy target to ``all`` so updating LumaBLE doesn't silently narrow existing
     scenes to one strip. Only scenes saved after the target selector exists carry
     a real ``primary``/``group`` choice.
+
+    v2 -> v3: ``pc_mode`` changed from a bare string to a ``{kind, preset}``
+    object so a screen-sync scene can restore its exact profile.
     """
-    if isinstance(payload, dict) and version < 2:
-        return {**payload, "target": {"kind": "all", "group_id": None}}
+    if not isinstance(payload, dict):
+        return payload
+    if version < 2:
+        payload = {**payload, "target": {"kind": "all", "group_id": None}}
+    if version < 3:
+        # pc_mode was a bare string; carry it into the {kind, preset} object.
+        # (normalize_scene also accepts the string, but migrating explicitly
+        # keeps the stored shape honest.)
+        state = payload.get("state")
+        if isinstance(state, dict) and isinstance(state.get("pc_mode"), str):
+            kind = state["pc_mode"].strip().lower()
+            payload = {
+                **payload,
+                "state": {**state, "pc_mode": ({"kind": kind, "preset": None} if kind else None)},
+            }
     return payload
 
 
@@ -310,7 +359,9 @@ def plan_apply(state: dict[str, Any], capabilities: dict[str, Any] | None = None
             actions.append({"op": "effect", "effect": effect})
 
     pc_mode = state.get("pc_mode")
-    if pc_mode is not None:
-        actions.append({"op": "pc_mode", "mode": pc_mode})
+    if isinstance(pc_mode, dict) and pc_mode.get("kind"):
+        actions.append({"op": "pc_mode", "mode": pc_mode["kind"], "preset": pc_mode.get("preset")})
+    elif isinstance(pc_mode, str) and pc_mode:  # tolerate a raw plan input
+        actions.append({"op": "pc_mode", "mode": pc_mode, "preset": None})
 
     return {"actions": actions, "skipped": skipped}

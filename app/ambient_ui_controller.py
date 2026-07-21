@@ -5,9 +5,10 @@ from typing import Any
 
 from app.ambient_controller import AmbientController
 from app.feature_gate import can_use
+from app.screen_profiles import normalize_profile_id
 from app.storage import save_settings
 
-_DEFAULTS = {"region": "full", "saturation": 55, "smoothing": 65, "monitor": 0}
+_DEFAULTS = {"region": "full", "saturation": 55, "smoothing": 65, "monitor": 0, "profile": "desktop"}
 
 
 class AmbientUiController:
@@ -25,12 +26,15 @@ class AmbientUiController:
     def wire(self) -> None:
         host = self._host
         host.ambient_toggle_button.clicked.connect(self._toggle)
+        host.ambient_profile_segment.selected.connect(lambda _key: self._on_options_changed())
         host.ambient_region_combo.currentIndexChanged.connect(self._on_options_changed)
         host.ambient_saturation_slider.valueChanged.connect(self._on_options_changed)
         host.ambient_smoothing_slider.valueChanged.connect(self._on_options_changed)
         if host.ambient_monitor_combo is not None:
             host.ambient_monitor_combo.currentIndexChanged.connect(self._on_options_changed)
-        self._ambient.color_sampled.connect(self._update_preview)
+        # The preview shows raw → final; only the final colour drives BLE (wired
+        # to the engine inside the controller).
+        self._ambient.preview_sampled.connect(self._update_preview)
         self._ambient.failed.connect(self._on_failed)
         self.sync_controls()
         self.refresh_lock()
@@ -46,6 +50,7 @@ class AmbientUiController:
         if lock_label is not None:
             lock_label.setVisible(not unlocked)
         for widget in (
+            host.ambient_profile_segment,
             host.ambient_region_combo,
             host.ambient_saturation_slider,
             host.ambient_smoothing_slider,
@@ -61,9 +66,11 @@ class AmbientUiController:
         region = str(saved.get("region", _DEFAULTS["region"]))
         saturation = int(saved.get("saturation", _DEFAULTS["saturation"]))
         smoothing = int(saved.get("smoothing", _DEFAULTS["smoothing"]))
+        profile = normalize_profile_id(saved.get("profile", _DEFAULTS["profile"]))
 
         host.ambient_saturation_slider.jump_to(saturation)
         host.ambient_smoothing_slider.jump_to(smoothing)
+        host.ambient_profile_segment.set_current(profile, animate=False)
 
         index = host.ambient_region_combo.findData(region)
         host.ambient_region_combo.blockSignals(True)
@@ -77,6 +84,7 @@ class AmbientUiController:
             host.ambient_monitor_combo.setCurrentIndex(monitor_index if monitor_index >= 0 else 0)
             host.ambient_monitor_combo.blockSignals(False)
         self._refresh_value_labels()
+        self._refresh_profile_description()
 
     def is_running(self) -> bool:
         return self._ambient.is_running()
@@ -92,11 +100,28 @@ class AmbientUiController:
         if self._ambient.is_running():
             self._stop()
 
-    def activate(self) -> bool:
+    def activate(self, profile_id: str | None = None) -> bool:
         """Start screen sync as if the card's toggle was pressed (keeps the
-        licence/connection gates and stops any other active stream). Returns
-        whether it actually started — a gate may have silently blocked it."""
-        self._host.ambient_toggle_button.setChecked(True)
+        licence/connection gates and stops any other active stream). A scene can
+        pin ``profile_id`` (desktop/game/movie) — it is selected first, so
+        applying the scene restores the exact look, and it applies live if screen
+        sync is already running. Returns whether it is running — a gate may have
+        silently blocked it."""
+        host = self._host
+        # Gate before touching the saved profile: if a Free licence or a missing
+        # connection will refuse the start, the user's profile must not be
+        # silently changed as a side effect. When already running, the gates
+        # already passed, so switching the profile live is fine.
+        if not self.is_running() and (not can_use("ambient_sync") or not host._is_connected):
+            host.ambient_toggle_button.setChecked(True)
+            self._toggle()  # surfaces the upsell / not-connected error
+            return self.is_running()
+        if profile_id:
+            host.ambient_profile_segment.set_current(normalize_profile_id(profile_id), animate=False)
+            self._on_options_changed()  # persist + reconfigure the live capture
+        if self.is_running():
+            return True
+        host.ambient_toggle_button.setChecked(True)
         self._toggle()
         return self.is_running()
 
@@ -135,7 +160,11 @@ class AmbientUiController:
             # while a BLE write is in flight, and stays out of the session log.
             host._ble.set_color_stream(red, green, blue)
 
-        self._ambient.start(sink)
+        # Seed from the strip's current colour so nothing flashes black before
+        # the first captured frame (both the filter and the stream engine).
+        # _current_color() is a QColor — read the channels, don't index it.
+        seed = host._current_color()
+        self._ambient.start(sink, initial=(seed.red(), seed.green(), seed.blue()))
         self._set_manual_controls_enabled(False)
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_on"))
         self._frame_times.clear()
@@ -155,22 +184,19 @@ class AmbientUiController:
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_off"))
         status = getattr(host, "ambient_status_label", None)
         if status is not None:
-            status.setVisible(False)
+            status.setText(host._tr("ambient.status_off"))
         if was_running:
             host._log(host._tr("ambient.stopped_log"))
 
     def _apply_options(self) -> None:
         host = self._host
-        # Saturation slider is an intuitive 0..100% boost: 0 = screen colour as-is
-        # (1.0x), 100 = punchy (2.2x).
-        saturation = 1.0 + (host.ambient_saturation_slider.value() / 100.0) * 1.2
-        # "Плавность" reads naturally: 100% = very smooth (small easing step),
-        # 0% = instant. The engine wants the easing factor, so invert.
-        smoothing = max(0.05, 1.0 - host.ambient_smoothing_slider.value() / 100.0)
+        # The sliders are user nudges on top of the profile; the profile carries
+        # the actual recipe. All resolution happens on the capture thread.
         self._ambient.configure(
+            profile_id=host.ambient_profile_segment.current_key(),
+            intensity=int(host.ambient_saturation_slider.value()),
+            smoothness=int(host.ambient_smoothing_slider.value()),
             region=str(host.ambient_region_combo.currentData() or "full"),
-            saturation=saturation,
-            smoothing=smoothing,
             monitor_index=self._selected_monitor(),
         )
 
@@ -182,6 +208,7 @@ class AmbientUiController:
 
     def _on_options_changed(self) -> None:
         self._refresh_value_labels()
+        self._refresh_profile_description()
         self._persist()
         if self._ambient.is_running():
             self._apply_options()
@@ -190,6 +217,21 @@ class AmbientUiController:
         host = self._host
         host.ambient_saturation_value.setText(f"{host.ambient_saturation_slider.value()}%")
         host.ambient_smoothing_value.setText(f"{host.ambient_smoothing_slider.value()}%")
+
+    def _refresh_profile_description(self) -> None:
+        label = getattr(self._host, "ambient_profile_description", None)
+        if label is not None:
+            profile_id = self._host.ambient_profile_segment.current_key()
+            label.setText(self._host._tr(f"ambient.profile.{profile_id}_desc"))
+
+    def refresh_texts(self) -> None:
+        """Refresh dynamic copy after a language change."""
+        host = self._host
+        host.ambient_mode_title_label.setText(host._tr("ambient.mode_title"))
+        host.ambient_profile_title_label.setText(host._tr("ambient.profile_title"))
+        self._refresh_profile_description()
+        if not self.is_running():
+            host.ambient_status_label.setText(host._tr("ambient.status_off"))
 
     def _persist(self) -> None:
         host = self._host
@@ -200,12 +242,13 @@ class AmbientUiController:
             "saturation": int(host.ambient_saturation_slider.value()),
             "smoothing": int(host.ambient_smoothing_slider.value()),
             "monitor": self._selected_monitor(),
+            "profile": host.ambient_profile_segment.current_key(),
         }
         save_settings(host._settings)
 
-    def _update_preview(self, red: int, green: int, blue: int) -> None:
+    def _update_preview(self, raw_r: int, raw_g: int, raw_b: int, r: int, g: int, b: int) -> None:
         host = self._host
-        host.ambient_preview.set_color(red, green, blue)
+        host.ambient_preview.set_colors((raw_r, raw_g, raw_b), (r, g, b))
         # Live capture rate: count frames sampled in the last second.
         now = time.monotonic()
         self._frame_times.append(now)

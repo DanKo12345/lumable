@@ -83,12 +83,20 @@ class FakeBle:
     def __init__(self) -> None:
         self.scan_called = False
         self.connected_to: list[str] = []
+        self.restored: list[str] = []
 
     def scan(self) -> None:
         self.scan_called = True
 
     def connect_to_address(self, address: str) -> None:
         self.connected_to.append(address)
+
+    # Part of the real BleController surface the handler relies on.
+    def mirror_addresses(self) -> list[str]:
+        return []
+
+    def restore_mirror_device(self, address: str) -> None:
+        self.restored.append(address)
 
 
 class FakeFeedback:
@@ -493,8 +501,9 @@ class PromoteBle(FakeBle):
     def mirror_addresses(self) -> list[str]:
         return list(self.mirrors)
 
-    def promote_mirror_to_primary(self, address: str) -> None:
+    def promote_mirror_to_primary(self, address: str, *, keep_old_as_extra: bool = True) -> None:
         self.promoted.append(address)
+        self.kept_old = keep_old_as_extra
 
 
 class FakeSceneUi:
@@ -575,11 +584,24 @@ def test_promote_device_asks_before_swapping_roles() -> None:
     opened: list[Any] = []
 
     class FakeConfirmOverlay:
-        def __init__(self, labels: dict[str, str], parent: Any) -> None:
+        def __init__(
+            self,
+            labels: dict[str, str],
+            parent: Any,
+            *,
+            confirm_role: str = "accent",
+            toggle_label: str = "",
+            toggle_checked: bool = True,
+        ) -> None:
             self.labels = labels
+            self.toggle_label = toggle_label
+            self._checked = toggle_checked
             self.confirmed = FakeSignalSink()
             self.closed = FakeSignalSink()
             opened.append(self)
+
+        def toggle_checked(self) -> bool:
+            return self._checked
 
         def open(self) -> None:
             self.is_open = True
@@ -590,12 +612,44 @@ def test_promote_device_asks_before_swapping_roles() -> None:
         handler.promote_device("11:22:33:44:55:66", "TV")
         assert len(opened) == 1
         assert opened[0].labels["message"] == "device.make_primary_confirm:name=TV"
+        # The fate of the current main strip is offered as a choice, on by default.
+        assert opened[0].toggle_label.startswith("device.keep_old_primary")
         # Nothing happens until the user confirms.
         assert host._ble.promoted == []
         opened[0].confirmed.fire()
         assert host._ble.promoted == ["11:22:33:44:55:66"]
+        assert host._ble.kept_old is True
         # A second click while the overlay is up must not stack overlays.
         handler.promote_device("11:22:33:44:55:66", "TV")
         assert len(opened) == 1
+    finally:
+        ble_event_handler.ProfileConfirmOverlay = original
+
+
+def test_promote_device_can_drop_the_old_primary() -> None:
+    """Unticking the toggle means "switch over": the old main strip is dropped."""
+    host = FakeHost(_ble=PromoteBle(["11:22:33:44:55:66"]))
+    handler = BleEventHandler(host)
+    opened: list[Any] = []
+
+    class FakeConfirmOverlay:
+        def __init__(self, labels: dict[str, str], parent: Any, **kwargs: Any) -> None:
+            self.confirmed = FakeSignalSink()
+            self.closed = FakeSignalSink()
+            opened.append(self)
+
+        def toggle_checked(self) -> bool:
+            return False  # user unticked "keep the old one connected"
+
+        def open(self) -> None:
+            self.is_open = True
+
+    original = ble_event_handler.ProfileConfirmOverlay
+    ble_event_handler.ProfileConfirmOverlay = FakeConfirmOverlay
+    try:
+        handler.promote_device("11:22:33:44:55:66", "TV")
+        opened[0].confirmed.fire()
+        assert host._ble.promoted == ["11:22:33:44:55:66"]
+        assert host._ble.kept_old is False
     finally:
         ble_event_handler.ProfileConfirmOverlay = original

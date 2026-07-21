@@ -21,55 +21,100 @@ class AmbientPreview(QWidget):
         self.setMinimumHeight(46)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._color: tuple[int, int, int] | None = None
+        self._raw: tuple[int, int, int] | None = None  # dual "source → result" mode
 
     def set_color(self, red: int, green: int, blue: int) -> None:
         self._color = (int(red), int(green), int(blue))
+        self._raw = None
+        self.update()
+
+    def set_colors(self, raw: tuple[int, int, int], final: tuple[int, int, int]) -> None:
+        """Show the screen's raw colour on the left and what the strip gets on
+        the right — the shaping and smoothing made visible."""
+        self._raw = (int(raw[0]), int(raw[1]), int(raw[2]))
+        self._color = (int(final[0]), int(final[1]), int(final[2]))
         self.update()
 
     def clear(self) -> None:
         self._color = None
+        self._raw = None
         self.update()
+
+    def _fill_capsule(self, painter: QPainter, rect: QRectF, rgb: tuple[int, int, int]) -> None:
+        radius = min(16.0, rect.height() / 2.0)
+        path = QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
+        color = QColor(*rgb)
+        fill = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
+        fill.setColorAt(0.0, color.lighter(120))
+        fill.setColorAt(0.5, color)
+        fill.setColorAt(1.0, color.darker(122))
+        painter.fillPath(path, fill)
+        gloss = QLinearGradient(0, rect.top(), 0, rect.bottom())
+        gloss.setColorAt(0.0, QColor(255, 255, 255, 70))
+        gloss.setColorAt(0.4, QColor(255, 255, 255, 12))
+        gloss.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.fillPath(path, gloss)
+        border = qcolor_from_token(theme_manager.palette["surface_border"])
+        border.setAlpha(90 if theme_manager.is_dark else 110)
+        painter.setPen(QPen(border, 1.0))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(rect, radius, radius)
+
+    @staticmethod
+    def _dual_rects(rect: QRectF) -> tuple[QRectF, QRectF]:
+        gap = 26.0  # room for the arrow between the two capsules
+        half = max(8.0, (rect.width() - gap) / 2.0)
+        left = QRectF(rect.left(), rect.top(), half, rect.height())
+        right = QRectF(rect.right() - half, rect.top(), half, rect.height())
+        return left, right
+
+    @staticmethod
+    def _draw_arrow(painter: QPainter, rect: QRectF) -> None:
+        painter.setPen(QPen(qcolor_from_token(theme_manager.palette["text_soft"]), 2.0))
+        cx = int(rect.center().x())
+        cy = int(rect.center().y())
+        painter.drawLine(cx - 5, cy, cx + 4, cy)
+        painter.drawLine(cx, cy - 4, cx + 4, cy)
+        painter.drawLine(cx, cy + 4, cx + 4, cy)
+
+    def _fill_placeholder(self, painter: QPainter, rect: QRectF) -> None:
+        # A calm accent-tinted capsule for the off state, so "Screen → Strip"
+        # reads before the sync starts and the layout doesn't jump on start.
+        is_dark = theme_manager.is_dark
+        palette = theme_manager.palette
+        radius = min(16.0, rect.height() / 2.0)
+        path = QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
+        painter.fillPath(path, qcolor_from_token(palette["surface_strong" if is_dark else "surface_soft"]))
+        accent = qcolor_from_token(palette["accent_start"])
+        tint = QLinearGradient(rect.left(), 0, rect.right(), 0)
+        tint.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 26 if is_dark else 34))
+        tint.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 12 if is_dark else 18))
+        painter.fillPath(path, tint)
+        border = qcolor_from_token(palette["surface_border"])
+        border.setAlpha(80 if is_dark else 100)
+        painter.setPen(QPen(border, 1.0))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(rect, radius, radius)
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         rect = QRectF(self.rect()).adjusted(1.0, 5.0, -1.0, -5.0)
-        radius = min(16.0, rect.height() / 2.0)
-        path = QPainterPath()
-        path.addRoundedRect(rect, radius, radius)
-        is_dark = theme_manager.is_dark
-        palette = theme_manager.palette
 
-        if self._color is None:
-            # Idle: a soft accent-tinted sweep instead of a dead dark bar, hinting
-            # that this strip will glow with the screen colour once enabled.
-            accent = qcolor_from_token(palette["accent_start"])
-            base = QLinearGradient(rect.left(), 0, rect.right(), 0)
-            base.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 30 if is_dark else 40))
-            base.setColorAt(0.5, QColor(accent.red(), accent.green(), accent.blue(), 14 if is_dark else 22))
-            base.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 30 if is_dark else 40))
-            surface = qcolor_from_token(palette["surface_strong" if is_dark else "surface_soft"])
-            painter.fillPath(path, surface)
-            painter.fillPath(path, base)
-            hint = QLinearGradient(0, rect.top(), 0, rect.bottom())
-            hint.setColorAt(0.0, QColor(255, 255, 255, 26 if is_dark else 50))
-            hint.setColorAt(0.5, QColor(255, 255, 255, 0))
-            painter.fillPath(path, hint)
+        # Legacy single colour (set_color) — full-width capsule.
+        if self._color is not None and self._raw is None:
+            self._fill_capsule(painter, rect, self._color)
+            return
+
+        # Always two capsules with an arrow — running shows raw → final, idle
+        # shows two calm placeholders, so the shape is identical either way.
+        left, right = self._dual_rects(rect)
+        if self._color is not None:
+            self._fill_capsule(painter, left, self._raw)
+            self._fill_capsule(painter, right, self._color)
         else:
-            color = QColor(*self._color)
-            fill = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
-            fill.setColorAt(0.0, color.lighter(120))
-            fill.setColorAt(0.5, color)
-            fill.setColorAt(1.0, color.darker(122))
-            painter.fillPath(path, fill)
-            gloss = QLinearGradient(0, rect.top(), 0, rect.bottom())
-            gloss.setColorAt(0.0, QColor(255, 255, 255, 70))
-            gloss.setColorAt(0.4, QColor(255, 255, 255, 12))
-            gloss.setColorAt(1.0, QColor(255, 255, 255, 0))
-            painter.fillPath(path, gloss)
-
-        border = qcolor_from_token(palette["surface_border"])
-        border.setAlpha(90 if is_dark else 110)
-        painter.setPen(QPen(border, 1.0))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRoundedRect(rect, radius, radius)
+            self._fill_placeholder(painter, left)
+            self._fill_placeholder(painter, right)
+        self._draw_arrow(painter, rect)

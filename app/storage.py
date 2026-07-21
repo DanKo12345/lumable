@@ -7,13 +7,14 @@ from typing import Any
 
 from platformdirs import user_data_dir
 
-from app.device_names import validate_device_names
+from app.device_names import validate_device_names, validate_extra_addresses
 from app.hotkeys import ACTIONS as HOTKEY_ACTIONS
 from app.hotkeys import DEFAULT_HOTKEYS, parse_hotkey
 from app.license import validate_license_state
 from app.local_api.config import validate_api_settings
 from app.scene_store import normalize_group
 from app.scenes import normalize_scene, unwrap_scene, wrap_scene
+from app.screen_profiles import normalize_profile_id
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(user_data_dir("LumaBLE", False, roaming=True))
@@ -183,7 +184,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "fade": True,
     "color_temperature": 4500,
     "language": "ru",
-    "ambient": {"region": "full", "saturation": 55, "smoothing": 65, "monitor": 0},
+    "ambient": {"region": "full", "saturation": 55, "smoothing": 65, "monitor": 0, "profile": "desktop"},
     "music": {
         "saturation": 60,
         "smoothing": 50,
@@ -220,6 +221,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "onboarding_seen": False,
     "device_names": {},
+    # Extra strips the user added, so a multi-strip setup (and the groups and
+    # scenes built on it) survives a restart instead of silently shrinking.
+    "extra_device_addresses": [],
     "scenes": [],
     "device_groups": [],
     "api": {
@@ -442,6 +446,7 @@ def validate_ambient(data: Any) -> dict[str, Any]:
         "saturation": _coerce_int(data.get("saturation"), int(defaults["saturation"]), 0, 100),
         "smoothing": _coerce_int(data.get("smoothing"), int(defaults["smoothing"]), 0, 100),
         "monitor": _coerce_int(data.get("monitor"), int(defaults["monitor"]), 0, 15),
+        "profile": normalize_profile_id(data.get("profile", defaults.get("profile"))),
     }
 
 
@@ -700,6 +705,7 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "diy_saved": validate_diy_saved(data.get("diy_saved", [])),
         "timers": validate_timers(data.get("timers", DEFAULT_SETTINGS["timers"])),
         "device_names": validate_device_names(data.get("device_names", DEFAULT_SETTINGS["device_names"])),
+        "extra_device_addresses": validate_extra_addresses(data.get("extra_device_addresses", [])),
         "scenes": validate_scenes(data.get("scenes", [])),
         "device_groups": validate_device_groups(data.get("device_groups", [])),
         "api": validate_api_settings(data.get("api", DEFAULT_SETTINGS["api"])),

@@ -157,8 +157,11 @@ class _FakeMode:
     def is_running(self) -> bool:
         return self._running
 
-    def activate(self) -> bool:
+    def activate(self, profile_id=None) -> bool:
+        # Screen sync's activate takes a profile id (scenes pin a preset); the
+        # other modes ignore it.
         self.activated += 1
+        self.activated_with = profile_id
         self._running = self._starts
         return self._running
 

@@ -14,6 +14,8 @@ data/crash_logs/
 *.log
 
 # Local/editor noise
+.claude/
+CLAUDE.md
 .idea/
 .vscode/
 *.swp
@@ -25,6 +27,7 @@ design_backups/
 # Build outputs
 build/*
 !build/version_info.txt
+!build/release_notes_0.3.4.md
 dist/
 *.spec
 aoh2_launcher_build/bin/

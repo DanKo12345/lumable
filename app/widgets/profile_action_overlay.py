@@ -225,6 +225,8 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         parent: QWidget | None = None,
         *,
         confirm_role: str = "accent",
+        toggle_label: str = "",
+        toggle_checked: bool = True,
     ) -> None:
         QWidget.__init__(self, parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -276,6 +278,24 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         message.setMinimumHeight(58)
         panel_layout.addLayout(title_row)
         panel_layout.addWidget(message, 0, Qt.AlignHCenter)
+
+        # Optional choice attached to the confirmation (e.g. whether the strip
+        # being replaced stays connected). Checked by default so the existing
+        # behaviour is what happens when the user just confirms.
+        self._toggle: LiquidButton | None = None
+        if toggle_label:
+            toggle = LiquidButton(toggle_label, "accent_soft" if toggle_checked else "ghost", self._panel)
+            toggle.setCheckable(True)
+            toggle.setChecked(bool(toggle_checked))
+            toggle.setMinimumHeight(38)
+            toggle.toggled.connect(
+                lambda on, button=toggle: button.set_role("accent_soft" if on else "ghost")
+            )
+            self._toggle = toggle
+            self._panel.setMinimumHeight(self._panel.minimumHeight() + 52)
+            panel_layout.addSpacing(2)
+            panel_layout.addWidget(toggle)
+
         panel_layout.addStretch(1)
 
         buttons = QHBoxLayout()
@@ -305,7 +325,12 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         self.setFocus(Qt.PopupFocusReason)
         self._start_open_animation()
 
+    def toggle_checked(self) -> bool:
+        """State of the optional choice; True when there is no toggle."""
+        return True if self._toggle is None else bool(self._toggle.isChecked())
+
     def _accept_confirm(self) -> None:
+        # Emitted before close_overlay, so a slot can still read toggle_checked().
         self.confirmed.emit()
         self.close_overlay()
 

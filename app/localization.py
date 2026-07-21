@@ -269,8 +269,20 @@ class LocalizationManager:
             return t("status.ble.mirror_removed", address=addr()) + remainder
         if event == "mirror_lost":
             return t("status.ble.mirror_lost", address=addr()) + remainder
+        if event == "mirror_unavailable":
+            return t("status.ble.mirror_unavailable", address=addr()) + remainder
         if event == "primary_changed":
             return t("status.ble.primary_changed", name=str(payload.get("name", "")).strip(), address=addr()) + remainder
+        if event in {"primary_changed_kept", "primary_changed_dropped"}:
+            return (
+                t(
+                    f"status.ble.{event}",
+                    name=str(payload.get("name", "")).strip(),
+                    address=addr(),
+                    old_name=str(payload.get("old_name", "")).strip(),
+                )
+                + remainder
+            )
         if event == "already_connected":
             return t("status.ble.already_connected", address=addr()) + remainder
         if event == "connecting":

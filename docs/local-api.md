@@ -31,7 +31,7 @@ The API version is `1` (see `GET /health`). Breaking changes will bump it.
 |--------------------|--------------------------|--------------------------------------|
 | `GET /`            | —                        | Index: version + endpoint list (no auth) |
 | `GET /health`      | —                        | Version probe (no auth)              |
-| `GET /status`      | —                        | Current power / colour / brightness / connection, plus `name`, `effect`, `mode`, `pc_mode`, `pc_mode_detail` |
+| `GET /status`      | —                        | Current power / colour / brightness / connection, plus `name`, `effect`, `mode`, `pc_mode`, `pc_mode_preset`, `pc_mode_detail` |
 | `GET /devices`     | —                        | Connected controllers (address, name, role) |
 | `GET /events`      | —                        | Live status stream (Server-Sent Events) |
 | `POST /power`      | `{"on": true}`           | Turn the strip on/off (idempotent)   |
@@ -61,7 +61,9 @@ status (`400` bad request, `401` unauthorized, `404` not found, `409` conflict,
 `diy` (a DIY animation) — and `{"mode":"off"}` stops any of them. If the mode
 can't start (needs Pro, or no strip is connected) the call returns `409`, not a
 false success. `/status` reports the active one in `pc_mode` (with a readable
-`pc_mode_detail`, e.g. the running effect's name).
+`pc_mode_detail`, e.g. the running effect's name). For Screen Sync,
+`pc_mode_preset` contains the stable response-profile id (`desktop`, `game` or
+`movie`); it is `null` for other modes.
 
 Scenes are one saved look — power, colour, brightness, a built-in effect and an
 optional PC mode — shared by the desktop app, the phone remote and this API.

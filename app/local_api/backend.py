@@ -93,8 +93,8 @@ class QtApiBackend:
     def apply_quick_mode(self, key: str) -> bool:
         return self._invoker.call(lambda: self._apply_quick_mode(key))
 
-    def set_pc_mode(self, mode: str) -> bool:
-        return self._invoker.call(lambda: self._set_pc_mode(mode))
+    def set_pc_mode(self, mode: str, preset: str | None = None) -> bool:
+        return self._invoker.call(lambda: self._set_pc_mode(mode, preset))
 
     # ── scenes ────────────────────────────────────────────────────────
     def list_scenes(self) -> list[dict[str, Any]]:
@@ -132,6 +132,10 @@ class QtApiBackend:
             "effect": self._active_firmware_effect(),
             "pc_mode": (pc := self._active_pc_mode()),
             "pc_mode_detail": self._pc_mode_detail(pc),
+            # The stable id of the active mode's variant (currently the screen
+            # profile). The phone still reads the bare "pc_mode" string; this is
+            # extra, so scenes can restore the exact look.
+            "pc_mode_preset": self._active_pc_mode_preset(pc),
         }
 
     def _active_firmware_effect(self) -> dict[str, Any] | None:
@@ -175,7 +179,16 @@ class QtApiBackend:
                 return key
         return None
 
-    def _set_pc_mode(self, mode: str) -> bool:
+    def _active_pc_mode_preset(self, mode: str | None) -> str | None:
+        # Only screen sync has a preset today: the chosen profile.
+        if mode != "screen":
+            return None
+        segment = getattr(self._host, "ambient_profile_segment", None)
+        if segment is not None:
+            return str(segment.current_key())
+        return None
+
+    def _set_pc_mode(self, mode: str, preset: str | None = None) -> bool:
         host = self._host
         wanted = str(mode or "").strip().lower()
         if wanted in ("", "off", "none", "stop"):
@@ -187,6 +200,9 @@ class QtApiBackend:
             controller = getattr(host, attr, None)
             if controller is None:
                 return False
+            # A scene may pin the screen-sync profile; other modes ignore preset.
+            if key == "screen":
+                return bool(controller.activate(preset))
             if controller.is_running():
                 return True
             # activate() reports the real outcome — a Free licence or a missing

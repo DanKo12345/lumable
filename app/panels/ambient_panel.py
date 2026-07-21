@@ -5,11 +5,16 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QHBoxLayout, QLabel
 
 from app.panels.card_header import add_pro_badge
+from app.panels.list_rows import divider, list_container, list_row
 from app.panels.types import PanelHost
+from app.screen_profiles import PROFILE_IDS
 from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.ambient_preview import AmbientPreview
+from app.widgets.segmented_control import SegmentedControl
 
 _REGIONS = ("full", "center", "bottom", "top")
+_SYNC_TINT = "#8fbfff"
+_PROFILE_TINT = "#b6a3ff"
 
 
 def build_ambient_section(host: PanelHost) -> GlassCard:
@@ -18,21 +23,79 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
 
     # Pro badge shown when screen sync isn't unlocked (toggled by the controller).
     host.ambient_lock_label = add_pro_badge(host, host.ambient_card, "ambient.pro_locked")
-    row = QHBoxLayout()
-    row.setSpacing(10)
-    row.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-
     host.ambient_toggle_button = host._button(host._tr("ambient.toggle_off"), "ghost")
     host.ambient_toggle_button.setCheckable(True)
     host.ambient_toggle_button.setFixedSize(host._sz(104), host._sz(42))
 
+    # The one choice that matters: which profile. Everything else is a nudge.
+    host.ambient_profile_segment = SegmentedControl(
+        [(pid, host._tr(f"ambient.profile.{pid}")) for pid in PROFILE_IDS]
+    )
+
+    # Match the newer cards: one grouped row owns the mode, another explains
+    # how the selected profile changes the response. This avoids making "Game"
+    # look like an app trigger that only works while a game is open.
+    settings, settings_layout = list_container(host)
+    mode_row, mode_layout, host.ambient_mode_title_label, host.ambient_status_label, _ = list_row(
+        host, "power", _SYNC_TINT, host._tr("ambient.mode_title")
+    )
+    assert host.ambient_status_label is not None
+    host.ambient_status_label.setText(host._tr("ambient.status_off"))
+    mode_layout.addWidget(host.ambient_toggle_button, 0, Qt.AlignVCenter)
+    settings_layout.addWidget(mode_row)
+    settings_layout.addWidget(divider(host))
+
+    profile_row, profile_layout, host.ambient_profile_title_label, host.ambient_profile_description, _ = list_row(
+        host, "gauge", _PROFILE_TINT, host._tr("ambient.profile_title")
+    )
+    assert host.ambient_profile_description is not None
+    host.ambient_profile_description.setText(host._tr("ambient.profile.desktop_desc"))
+    profile_layout.addWidget(host.ambient_profile_segment, 0, Qt.AlignVCenter)
+    settings_layout.addWidget(profile_row)
+    host.ambient_card.content_layout.addWidget(settings)
+
+    host.ambient_preview_label = QLabel(host._tr("ambient.preview_hint"))
+    host.ambient_preview_label.setObjectName("sliderLabel")
+    host.ambient_card.content_layout.addWidget(host.ambient_preview_label)
+    host.ambient_preview = AmbientPreview()
+    host.ambient_card.content_layout.addWidget(host.ambient_preview)
+
+    # Two nudges on top of the profile — not a wall of filters.
+    host.ambient_saturation_slider = host._slider("purple")
+    host.ambient_saturation_slider.setRange(0, 100)
+    host.ambient_saturation_value = host._pill("55%")
+    host.ambient_card.content_layout.addLayout(
+        host._slider_row(
+            host._tr("ambient.intensity"),
+            host.ambient_saturation_slider,
+            host.ambient_saturation_value,
+            "ambient.intensity",
+        )
+    )
+
+    host.ambient_smoothing_slider = host._slider("blue")
+    host.ambient_smoothing_slider.setRange(0, 100)
+    host.ambient_smoothing_value = host._pill("65%")
+    host.ambient_card.content_layout.addLayout(
+        host._slider_row(
+            host._tr("ambient.smoothness"),
+            host.ambient_smoothing_slider,
+            host.ambient_smoothing_value,
+            "ambient.smoothness",
+        )
+    )
+
+    # Secondary capture params kept below: region and (if any) monitor.
+    extra = QHBoxLayout()
+    extra.setSpacing(10)
+    extra.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     host.ambient_region_combo = StaticPopupComboBox(lambda: host._theme_tokens, lambda: host._is_dark)
     host.ambient_region_combo.setMinimumHeight(host._control_height)
     host.ambient_region_combo.setMinimumWidth(150)
     for region in _REGIONS:
         host.ambient_region_combo.addItem(host._tr(f"ambient.region.{region}"), region)
+    extra.addWidget(host.ambient_region_combo)
 
-    # Monitor picker — only shown when there is more than one screen to choose from.
     host.ambient_monitor_combo = None
     screens = QGuiApplication.screens()
     if len(screens) > 1:
@@ -43,44 +106,7 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
             geometry = screen.geometry()
             monitor_combo.addItem(f"{host._tr('ambient.monitor')} {index + 1} ({geometry.width()}×{geometry.height()})", index)
         host.ambient_monitor_combo = monitor_combo
-
-    row.addWidget(host.ambient_toggle_button)
-    row.addWidget(host.ambient_region_combo)
-    if host.ambient_monitor_combo is not None:
-        row.addWidget(host.ambient_monitor_combo)
-    row.addStretch(1)
-    host.ambient_card.content_layout.addLayout(row)
-
-    # Live capture status ("Захват активен · N к/с"), shown only while running.
-    host.ambient_status_label = QLabel("")
-    host.ambient_status_label.setObjectName("cardSubtitle")
-    host.ambient_status_label.setVisible(False)
-    host.ambient_card.content_layout.addWidget(host.ambient_status_label)
-
-    host.ambient_preview = AmbientPreview()
-    host.ambient_card.content_layout.addWidget(host.ambient_preview)
-
-    host.ambient_saturation_slider = host._slider("purple")
-    host.ambient_saturation_slider.setRange(0, 100)
-    host.ambient_saturation_value = host._pill("55%")
-    host.ambient_card.content_layout.addLayout(
-        host._slider_row(
-            host._tr("ambient.saturation"),
-            host.ambient_saturation_slider,
-            host.ambient_saturation_value,
-            "ambient.saturation",
-        )
-    )
-
-    host.ambient_smoothing_slider = host._slider("blue")
-    host.ambient_smoothing_slider.setRange(0, 100)
-    host.ambient_smoothing_value = host._pill("65%")
-    host.ambient_card.content_layout.addLayout(
-        host._slider_row(
-            host._tr("ambient.smoothing"),
-            host.ambient_smoothing_slider,
-            host.ambient_smoothing_value,
-            "ambient.smoothing",
-        )
-    )
+        extra.addWidget(monitor_combo)
+    extra.addStretch(1)
+    host.ambient_card.content_layout.addLayout(extra)
     return host.ambient_card

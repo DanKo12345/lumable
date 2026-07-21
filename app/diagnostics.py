@@ -140,6 +140,26 @@ def _ambient_section(ambient: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def _strips_section(snapshot: dict[str, Any]) -> list[str]:
+    """Every strip the app drives, with its role and live state.
+
+    Multi-strip setups were invisible in the report before: it described only
+    the active primary, so "the other strip also lit up" or "the extra one is
+    gone" had nothing to point at.
+    """
+    raw = snapshot.get("strips")
+    items = [item for item in raw if isinstance(item, dict) and _has_value(item.get("address"))] if isinstance(raw, list) else []
+    if len(items) < 2:
+        return []  # a single strip is already covered by the device section
+    lines: list[str] = ["", _t("strips_section")]
+    for item in items:
+        role = _t("strip_primary") if item.get("role") == "primary" else _t("strip_extra")
+        state = _t("strip_connected") if item.get("connected") else _t("strip_offline")
+        name = str(item.get("name") or "").strip() or str(item.get("address"))
+        lines.append(f"- {role}: {name} ({item.get('address')}) — {state}")
+    return lines
+
+
 def _nearby_unknown_section(snapshot: dict[str, Any]) -> list[str]:
     raw = snapshot.get("nearby_unknown")
     items = raw if isinstance(raw, list) else []
@@ -264,6 +284,7 @@ def build_diagnostics_report(
     if history_lines:
         sections.extend(["", _t("recent_ble_history_section"), *history_lines])
 
+    sections.extend(_strips_section(snapshot))
     sections.extend(_ambient_section(ambient))
     sections.extend(_nearby_unknown_section(snapshot))
 

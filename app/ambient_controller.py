@@ -1,26 +1,31 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QObject, Signal
 
-from app.ambient_color import average_color, shape_color
+from app.ambient_color import shape_color
 from app.color_stream import ColorStreamEngine
+from app.screen_profiles import get_profile, resolve_configs
+from app.screen_sample import extract_color, sample_step_for
+from app.screen_temporal import TemporalFilter
 
 
 @dataclass(frozen=True)
 class AmbientOptions:
+    """Immutable capture options. The UI thread swaps a whole new instance; the
+    capture thread reads it each frame and re-resolves configs when it changes,
+    so nothing mutates shared filter state across threads."""
+
     monitor_index: int = 0
     region: str = "full"  # full | center | bottom | top
-    saturation: float = 1.45
-    gamma: float = 1.1
-    min_brightness: int = 0
-    max_brightness: int = 255
-    smoothing: float = 0.35
-    sample_step: int = 6
-    interval_s: float = 0.08  # ~12 captures/sec
+    profile_id: str = "desktop"
+    intensity: int = 55    # user boost on top of the profile (55 = neutral)
+    smoothness: int = 65   # user smoothing on top of the profile (65 = neutral)
+    interval_s: float = 0.05  # min gap between capture attempts; real dt is measured
 
 
 def _region_for(monitor: dict, region: str) -> dict:
@@ -51,7 +56,8 @@ class AmbientController(QObject):
     surface via :attr:`failed`.
     """
 
-    color_sampled = Signal(int, int, int)
+    color_sampled = Signal(int, int, int)                       # final colour → engine/BLE
+    preview_sampled = Signal(int, int, int, int, int, int)      # raw rgb, final rgb → UI preview
     failed = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -69,20 +75,28 @@ class AmbientController(QObject):
         return self._options
 
     def configure(self, **changes) -> None:
+        # Just swap the immutable options — the capture thread notices and
+        # re-resolves. The engine stays in passthrough; the TemporalFilter is the
+        # only smoother for ambient.
         self._options = replace(self._options, **changes)
-        if "smoothing" in changes:
-            self._engine.set_smoothing(self._options.smoothing)
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self, sink: Callable[[int, int, int], None]) -> None:
+    def start(self, sink: Callable[[int, int, int], None], initial: tuple[int, int, int] = (0, 0, 0)) -> None:
         if self.is_running():
             return
-        self._engine.set_smoothing(self._options.smoothing)
-        self._engine.start(sink, initial=(0, 0, 0))
+        # Passthrough: with easing off, the engine follows the target instantly
+        # and only enforces the BLE send-rate cap, so the colour is never
+        # smoothed twice (the TemporalFilter owns easing). Seed it with the
+        # strip's current colour so no black frame is sent before the first
+        # captured one.
+        self._engine.set_smoothing(1.0)
+        self._engine.start(sink, initial=initial)
         self._stop.clear()
-        thread = threading.Thread(target=self._run, name="AmbientCapture", daemon=True)
+        thread = threading.Thread(
+            target=self._run, args=(initial,), name="AmbientCapture", daemon=True
+        )
         self._thread = thread
         thread.start()
 
@@ -100,35 +114,58 @@ class AmbientController(QObject):
     def last_stream_error(self) -> str:
         return self._engine.last_error()
 
-    def _run(self) -> None:
+    def _run(self, initial: tuple[int, int, int]) -> None:
         try:
             import mss
         except Exception as exc:
             self.failed.emit(f"screen_capture_unavailable: {exc}")
             return
         try:
+            # The temporal filter lives on the capture thread and is seeded with
+            # the strip's current colour, so the very first frame is rate-limited
+            # too. Its config is updated in place (keeping .last) when the profile
+            # or a slider changes — never reset — so switching profile eases from
+            # the current colour instead of snapping to black.
+            temporal = TemporalFilter(initial=initial)
+            applied: AmbientOptions | None = None
+            resolved = None
+            prev_t = time.monotonic()
             with mss.mss() as sct:
                 monitors = sct.monitors
                 while not self._stop.is_set():
                     options = self._options
+                    if options is not applied:
+                        resolved = resolve_configs(
+                            get_profile(options.profile_id), options.intensity, options.smoothness
+                        )
+                        temporal.set_config(resolved.temporal)
+                        applied = options
+
                     index = max(0, options.monitor_index)
                     # monitors[0] is the full virtual desktop; 1.. are physical screens.
                     monitor = monitors[index + 1] if index + 1 < len(monitors) else monitors[-1]
                     shot = sct.grab(_region_for(monitor, options.region))
-                    # Sample only ~2500 pixels regardless of resolution: averaging
-                    # millions of pixels in pure Python holds the GIL and stalls
-                    # the UI thread. Pass the raw buffer (no full-size copy).
-                    pixel_count = max(1, shot.width * shot.height)
-                    step = max(options.sample_step, pixel_count // 2500)
-                    color = average_color(shot.bgra, channels=4, sample_step=step)
+
+                    now = time.monotonic()
+                    dt = now - prev_t
+                    prev_t = now
+
+                    # ~2500 samples on a 2-D grid regardless of resolution: a full
+                    # pass in pure Python holds the GIL and stalls the UI thread.
+                    sample = replace(resolved.sample, sample_step=sample_step_for(shot.width, shot.height))
+                    raw = extract_color(shot.bgra, shot.width, shot.height, sample)
                     shaped = shape_color(
-                        color,
-                        saturation=options.saturation,
-                        gamma=options.gamma,
-                        min_brightness=options.min_brightness,
-                        max_brightness=options.max_brightness,
+                        raw,
+                        saturation=resolved.shape.saturation,
+                        gamma=resolved.shape.gamma,
+                        min_brightness=resolved.shape.min_brightness,
+                        max_brightness=resolved.shape.max_brightness,
+                        min_saturation=resolved.shape.min_saturation,
                     )
-                    self.color_sampled.emit(shaped[0], shaped[1], shaped[2])
+                    final = temporal.push(shaped, dt)
+                    # Only the final colour reaches BLE; the preview shows both.
+                    self.preview_sampled.emit(raw[0], raw[1], raw[2], final[0], final[1], final[2])
+                    self.color_sampled.emit(final[0], final[1], final[2])
                     self._stop.wait(max(0.02, options.interval_s))
         except Exception as exc:  # capture/driver failure — report and stop cleanly.
             self.failed.emit(str(exc))

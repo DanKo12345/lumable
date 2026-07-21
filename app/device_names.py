@@ -19,6 +19,29 @@ def sanitize_device_name(value: Any) -> str:
     return " ".join(str(value).split())[:MAX_NAME_LEN]
 
 
+def validate_extra_addresses(data: Any) -> list[str]:
+    """Addresses of the extra strips the user added, deduplicated, order kept.
+
+    Only addresses are stored: the label comes from ``device_names`` (already
+    keyed by address) and the driver is re-detected on every connect, so a
+    controller that changed firmware is never pinned to a stale protocol.
+    """
+    if not isinstance(data, list):
+        return []
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for item in data:
+        # Strings only: str(None) would happily become the address "NONE".
+        if not isinstance(item, str):
+            continue
+        address = item.strip().upper()
+        if not address or address in seen:
+            continue
+        seen.add(address)
+        cleaned.append(address)
+    return cleaned
+
+
 def validate_device_names(data: Any) -> dict[str, str]:
     """Keep only well-formed ``address -> name`` pairs (both non-empty)."""
     if not isinstance(data, dict):
