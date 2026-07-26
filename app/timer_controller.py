@@ -61,9 +61,9 @@ class TimerController:
     def wire(self) -> None:
         host = self._host
         host.timer_sleep_button.clicked.connect(self._toggle_sleep)
-        host.timer_sleep_pill.activated.connect(lambda: self._edit_minutes(SLEEP))
+        host.timer_sleep_pill.clicked.connect(lambda: self._edit_minutes(SLEEP))
         host.timer_sunrise_button.clicked.connect(self._toggle_sunrise)
-        host.timer_sunrise_pill.activated.connect(lambda: self._edit_minutes(SUNRISE))
+        host.timer_sunrise_pill.clicked.connect(lambda: self._edit_minutes(SUNRISE))
         host.timer_sunrise_swatch.clicked.connect(self._pick_sunrise_color)
         host.timer_sunrise_time.timeChanged.connect(self._persist)
         self.load_state()

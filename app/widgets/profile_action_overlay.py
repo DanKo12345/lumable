@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
+from app.widgets.animation_helpers import play_or_complete
 from app.widgets.liquid_button import LiquidButton
 from app.widgets.themed_line_edit import ThemedLineEdit
 
@@ -151,8 +153,8 @@ class ProfileRenameOverlay(QWidget):
         self._panel_anim.setStartValue(end_pos + QPoint(0, 12))
         self._panel_anim.setEndValue(end_pos)
         self._panel_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._fade_anim.start()
-        self._panel_anim.start()
+        play_or_complete(self._fade_anim)
+        play_or_complete(self._panel_anim)
 
     def close_overlay(self) -> None:
         parent = self.parentWidget()
@@ -267,17 +269,31 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         title_row.addWidget(title, 0, Qt.AlignVCenter)
         title_row.addStretch(1)
 
-        message = QLabel(labels["message"], self._panel)
+        message = QLabel(labels["message"])
         message.setObjectName("profileActionMessage")
         message.setWordWrap(True)
-        message.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        # Fixed width keeps the wrap predictable; the height follows the text so
-        # longer translations wrap instead of being cut off.
-        message.setFixedWidth(382)
-        message.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
-        message.setMinimumHeight(58)
+        message.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        message.setFixedWidth(382)  # fixed width keeps the wrap predictable
+        self._message_label = message
+
+        # A compact scroll around the message: it sizes to the text and scrolls
+        # only when a very long profile/device name would overflow the height the
+        # window allows — so nothing is silently clipped, and no length limit has
+        # to be imposed on names across storage/API/import. Heights set in open().
+        msg_scroll = QScrollArea(self._panel)
+        self._message_scroll = msg_scroll
+        msg_scroll.setObjectName("profileMessageScroll")
+        msg_scroll.setWidgetResizable(False)
+        msg_scroll.setFrameShape(QFrame.NoFrame)
+        msg_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        msg_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        msg_scroll.setAttribute(Qt.WA_TranslucentBackground)
+        msg_scroll.viewport().setAutoFillBackground(False)
+        msg_scroll.setFixedWidth(382 + 16)  # leave room for the scrollbar
+        msg_scroll.setWidget(message)
+
         panel_layout.addLayout(title_row)
-        panel_layout.addWidget(message, 0, Qt.AlignHCenter)
+        panel_layout.addWidget(msg_scroll, 0, Qt.AlignHCenter)
 
         # Optional choice attached to the confirmation (e.g. whether the strip
         # being replaced stays connected). Checked by default so the existing
@@ -310,6 +326,7 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         confirm_button = LiquidButton(labels["confirm"], confirm_role, self._panel)
         confirm_button.setFixedSize(156, 42)
         confirm_button.clicked.connect(self._accept_confirm)
+        self._confirm_button = confirm_button
         buttons.addWidget(cancel_button)
         buttons.addWidget(confirm_button)
         buttons.addStretch(1)
@@ -320,10 +337,49 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         if parent is not None:
             self.setGeometry(parent.rect())
             parent.installEventFilter(self)
-        self.show()
+        self.show()  # after show(), the stylesheet font is applied to the label
+        self._fit_message_height()
         self.raise_()
         self.setFocus(Qt.PopupFocusReason)
         self._start_open_animation()
+
+    def _fit_message_height(self) -> None:
+        # The label always holds the full wrapped text; the scroll around it is
+        # sized to the window. When the text is taller than the window allows,
+        # the scroll shows a scrollbar instead of clipping — so even an
+        # arbitrarily long profile/device name stays fully readable.
+        if getattr(self, "_message_scroll", None) is None:
+            return  # not built yet (an early resizeEvent during construction)
+        message = self._message_label
+        # heightForWidth ignores the label's own QSS padding (8px 14px) + border,
+        # so measure the text on the real content width and add the box padding.
+        content_width = 382 - 2 * 14 - 2
+        text_height = QFontMetrics(message.font()).boundingRect(
+            0, 0, content_width, 100_000, int(Qt.TextWordWrap), message.text()
+        ).height()
+        wrapped = max(58, text_height + 2 * 8 + 2 + 6)
+        message.setFixedSize(382, wrapped)
+        visible = wrapped
+        parent = self.parentWidget()
+        if parent is not None:
+            non_message = max(0, self._panel.minimumHeight() - 58)
+            visible = max(58, min(wrapped, parent.height() - 24 - non_message))
+        self._message_scroll.setFixedHeight(visible)
+        # Cap the panel to the window so it can never overflow, regardless of when
+        # the internal layout re-computes its size hint. The scroll already keeps
+        # the message within this budget, so nothing is clipped.
+        if parent is not None:
+            self._panel.setMaximumHeight(max(self._panel.minimumHeight(), parent.height() - 24))
+        self._panel.updateGeometry()
+        self.layout().activate()
+
+    def resizeEvent(self, event) -> None:
+        # The base eventFilter resizes the overlay to the parent on every window
+        # resize; recomputing here (rather than filtering the parent event
+        # directly) reliably re-fits the message whenever the overlay's own size
+        # changes — the window may have shrunk or grown.
+        super().resizeEvent(event)
+        self._fit_message_height()
 
     def toggle_checked(self) -> bool:
         """State of the optional choice; True when there is no toggle."""
@@ -344,6 +400,10 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
                 color: #ffd66e;
                 font-size: 22px;
                 font-weight: 800;
+            }}
+            #profileMessageScroll, #profileMessageScroll > QWidget {{
+                background: transparent;
+                border: none;
             }}
             #profileActionMessage {{
                 color: {palette["text"]};

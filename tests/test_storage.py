@@ -116,7 +116,7 @@ def test_validate_settings_normalizes_broken_payload() -> None:
         "days": [0, 1, 2, 3, 4, 5, 6],
     }
     assert settings["window_width"] == 1320
-    assert settings["window_height"] == 600
+    assert settings["window_height"] == 420  # clamped up to WINDOW_MIN_HEIGHT (was 600)
     assert settings["last_state"]["power"] is False
     assert settings["last_state"]["brightness"] == 100
     assert settings["last_state"]["speed"] == 0
@@ -135,6 +135,24 @@ def test_validate_settings_migrates_legacy_dark_start_color() -> None:
     )
 
     assert settings["last_state"]["brightness"] == 100
+
+
+def test_validate_settings_defaults_motion_mode_to_system() -> None:
+    settings = storage.validate_settings({})
+
+    assert settings["motion_mode"] == "system"
+
+
+def test_validate_settings_normalizes_unknown_motion_mode() -> None:
+    settings = storage.validate_settings({"motion_mode": "banana"})
+
+    assert settings["motion_mode"] == "system"
+
+
+def test_validate_settings_keeps_known_motion_mode() -> None:
+    settings = storage.validate_settings({"motion_mode": "reduced"})
+
+    assert settings["motion_mode"] == "reduced"
 
 
 def test_validate_settings_keeps_custom_quick_modes_as_scene_payloads() -> None:

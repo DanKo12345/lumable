@@ -5,6 +5,7 @@ from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QTextEdit, QVBoxLayout, QWidget
 
 from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
+from app.widgets.animation_helpers import play_or_complete
 from app.widgets.liquid_button import LiquidButton
 
 
@@ -14,7 +15,10 @@ class _LogsPanel(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setMinimumSize(680, 480)
+        # Min height is kept low so the panel can fit a short window (860×420 at
+        # 150%); the log QTextEdit scrolls inside. The owner caps the height to
+        # the available window via _fit_to_parent().
+        self.setMinimumSize(680, 300)
         self.setMaximumSize(860, 640)
 
     def paintEvent(self, event) -> None:
@@ -102,10 +106,22 @@ class LogsOverlay(QWidget):
         if parent is not None:
             self.setGeometry(parent.rect())
             parent.installEventFilter(self)
+        self._fit_to_parent()
         self.show()
         self.raise_()
         self.setFocus(Qt.PopupFocusReason)
         self._start_open_animation()
+
+    def _fit_to_parent(self) -> None:
+        # Cap the panel to the current window so a short window can't push the
+        # close button (and the bottom of the log) off-screen. The log scrolls.
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        margin = 24
+        max_h = max(self._panel.minimumHeight(), min(640, parent.height() - margin))
+        max_w = max(self._panel.minimumWidth(), min(860, parent.width() - margin))
+        self._panel.setMaximumSize(max_w, max_h)
 
     def _start_open_animation(self) -> None:
         self.layout().activate()
@@ -125,8 +141,8 @@ class LogsOverlay(QWidget):
         self._panel_anim.setEndValue(end_pos)
         self._panel_anim.setEasingCurve(QEasingCurve.OutCubic)
 
-        self._fade_anim.start()
-        self._panel_anim.start()
+        play_or_complete(self._fade_anim)
+        play_or_complete(self._panel_anim)
 
     def close_overlay(self) -> None:
         parent = self.parentWidget()
@@ -153,6 +169,7 @@ class LogsOverlay(QWidget):
             parent = self.parentWidget()
             if parent is not None:
                 self.setGeometry(parent.rect())
+                self._fit_to_parent()
         return super().eventFilter(watched, event)
 
     def _apply_style(self) -> None:

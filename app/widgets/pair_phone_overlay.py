@@ -5,6 +5,7 @@ from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen,
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QLabel, QVBoxLayout, QWidget
 
 from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
+from app.widgets.animation_helpers import play_or_complete
 from app.widgets.liquid_button import LiquidButton
 
 
@@ -183,8 +184,8 @@ class PairPhoneOverlay(QWidget):
         self._panel_anim.setStartValue(end_pos + QPoint(0, 14))
         self._panel_anim.setEndValue(end_pos)
         self._panel_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._fade_anim.start()
-        self._panel_anim.start()
+        play_or_complete(self._fade_anim)
+        play_or_complete(self._panel_anim)
 
     def close_overlay(self) -> None:
         parent = self.parentWidget()

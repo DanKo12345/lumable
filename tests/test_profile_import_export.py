@@ -50,7 +50,7 @@ def test_profile_controller_exports_profiles_with_metadata(tmp_path) -> None:
 
     assert count == 1
     assert payload["app"] == "LumaBLE"
-    assert payload["version"] == "0.3.4"
+    assert payload["version"] == "0.3.5"
     assert payload["profiles"][0]["name"] == "Desk"
 
 
@@ -172,4 +172,3 @@ def test_profile_controller_allows_more_than_three_custom_profiles_in_pro(monkey
     )
 
     assert [profile["name"] for profile in controller.profiles] == ["One", "Two", "Three", "Four"]
-

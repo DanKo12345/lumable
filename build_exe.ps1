@@ -98,7 +98,7 @@ if ($env:LUMABLE_SKIP_SMOKE -eq "1") {
     }
 
     Write-Host "Running startup smoke test..."
-    $proc = Start-Process -FilePath $exePath -WorkingDirectory (Split-Path -Parent $exePath) -PassThru
+    $proc = Start-Process -FilePath $exePath -WorkingDirectory (Split-Path -Parent $exePath) -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 6
 
     $afterLog = $null

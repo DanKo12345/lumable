@@ -11,13 +11,14 @@ from __future__ import annotations
 import json
 import queue
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from app.local_api.mobile_page import MOBILE_PAGE
 from app.local_api.pairing import PairingAttemptLimiter
 from app.local_api.router import MAX_BODY_BYTES, ApiRouter
-from app.local_api.sse import SseBroker
+from app.local_api.sse import WAKEUP, SseBroker
 
 DEFAULT_PORT = 7345
 LOOPBACK = "127.0.0.1"
@@ -29,6 +30,45 @@ def _record_pairing_success(
 ) -> None:
     if method == "POST" and path == "/pair" and status == 200:
         limiter.record_success(client)
+
+
+class _TrackedHttpServer(ThreadingHTTPServer):
+    """A ThreadingHTTPServer that can actually join its handler threads.
+
+    Handlers run as daemon threads, and the stdlib's thread list deliberately
+    skips daemon threads, so ``server_close()`` joins nothing: a parked SSE
+    handler would outlive the server it belongs to. Tracking them here makes a
+    bounded join possible on stop.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        self._handler_threads: list[threading.Thread] = []
+        self._handler_lock = threading.Lock()
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address) -> None:
+        thread = threading.Thread(
+            target=self.process_request_thread,
+            args=(request, client_address),
+            name="lumable-api-handler",
+            daemon=True,
+        )
+        with self._handler_lock:
+            # Drop finished handlers so a long-lived server doesn't grow a list
+            # of dead threads.
+            self._handler_threads = [t for t in self._handler_threads if t.is_alive()]
+            self._handler_threads.append(thread)
+        thread.start()
+
+    def join_handlers(self, timeout: float) -> None:
+        with self._handler_lock:
+            threads = list(self._handler_threads)
+        deadline = time.monotonic() + timeout
+        for thread in threads:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(timeout=remaining)
 
 
 class ApiServer:
@@ -48,8 +88,11 @@ class ApiServer:
         self._port = int(port)
         self._mobile_page = mobile_page or MOBILE_PAGE
         self._pairing_limiter = pairing_limiter or PairingAttemptLimiter()
-        self._httpd: ThreadingHTTPServer | None = None
+        self._httpd: _TrackedHttpServer | None = None
         self._thread: threading.Thread | None = None
+        # Replaced on every start() so a restarted server never inherits a set
+        # flag from the previous run.
+        self._stop_event = threading.Event()
 
     @property
     def host(self) -> str:
@@ -65,9 +108,16 @@ class ApiServer:
     def start(self) -> None:
         if self._httpd is not None:
             return
-        self._httpd = ThreadingHTTPServer(
+        self._stop_event = threading.Event()
+        self._httpd = _TrackedHttpServer(
             (self._host, self._port),
-            _make_handler(self._router, self._broker, self._mobile_page, self._pairing_limiter),
+            _make_handler(
+                self._router,
+                self._broker,
+                self._mobile_page,
+                self._pairing_limiter,
+                self._stop_event,
+            ),
         )
         # If the caller asked for an ephemeral port (0), record the real one.
         self._port = self._httpd.server_address[1]
@@ -79,11 +129,38 @@ class ApiServer:
     def stop(self) -> None:
         httpd, self._httpd = self._httpd, None
         thread, self._thread = self._thread, None
+        # Signal first, then wake the streams: an SSE handler parked on its queue
+        # would otherwise hold its thread for a whole heartbeat after the server
+        # is gone. Waking them here does not block app shutdown — the handlers
+        # unwind on their own threads while this one closes the socket.
+        self._stop_event.set()
+        if self._broker is not None:
+            self._broker.wake_all()
         if httpd is not None:
             httpd.shutdown()
             httpd.server_close()
+            httpd.join_handlers(timeout=2.0)
         if thread is not None:
             thread.join(timeout=2.0)
+
+
+def _pump_sse_events(
+    handler: BaseHTTPRequestHandler, subscriber: queue.Queue, stop_event: threading.Event
+) -> None:
+    """Forward broker updates to one open stream until the server stops.
+
+    Lives outside the handler factory so the stream loop can be read on its own.
+    """
+    while not stop_event.is_set():
+        try:
+            state = subscriber.get(timeout=_SSE_HEARTBEAT_SECONDS)
+        except queue.Empty:
+            handler.wfile.write(b": ping\n\n")
+            handler.wfile.flush()
+            continue
+        if state is WAKEUP:
+            continue  # shutdown nudge, not a state update
+        handler._sse_frame(state)
 
 
 def _make_handler(
@@ -91,6 +168,7 @@ def _make_handler(
     broker: SseBroker | None,
     mobile_page: str,
     pairing_limiter: PairingAttemptLimiter,
+    stop_event: threading.Event,
 ) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
         # Keep the console quiet — the app has its own logging.
@@ -122,17 +200,15 @@ def _make_handler(
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
+            # The stream owns the connection until it ends; once it does there is
+            # nothing more to serve on it. Without this the handler would go back
+            # to waiting for another request on the socket and its thread would
+            # stay parked in readline() long after stop().
+            self.close_connection = True
             subscriber = broker.subscribe()
             try:
                 self._sse_frame(broker.latest())
-                while True:
-                    try:
-                        state = subscriber.get(timeout=_SSE_HEARTBEAT_SECONDS)
-                    except queue.Empty:
-                        self.wfile.write(b": ping\n\n")
-                        self.wfile.flush()
-                        continue
-                    self._sse_frame(state)
+                _pump_sse_events(self, subscriber, stop_event)
             except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
                 pass  # client went away
             finally:

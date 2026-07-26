@@ -42,11 +42,12 @@ def _build_settings_card(host):
     """App settings as one compact grouped list."""
     card = host._card(host._tr("settings.title"), host._tr("settings.subtitle"), icon="settings")
     build_chrome_controls(host)  # creates host.language_combo / performance_combo / theme_button / about_button
-    for control in (host.language_combo, host.performance_combo, host.theme_button, host.about_button):
+    for control in (host.language_combo, host.performance_combo, host.motion_combo, host.theme_button, host.about_button):
         control.setFixedWidth(host._sz(170))
     rows = (
         ("settings.language", "globe", "#78a7ff", host.language_combo),
         ("settings.fps", "diagnostics", "#72c7b7", host.performance_combo),
+        ("settings.motion", "effects", "#b58fff", host.motion_combo),
         ("settings.theme", "sun", "#ffb066", host.theme_button),
         ("settings.about", "settings", "#a9b0bd", host.about_button),
     )
@@ -60,7 +61,12 @@ def _build_settings_card(host):
             host._tr(label_key),
             with_status=False,
         )
-        host._settings_labels.append((label_key, title))
+        host._settings_labels.append((label_key, title, control))
+        # The row label is a separate QLabel, so a screen reader reaching the
+        # control alone would just hear its value ("Auto") with no idea what it
+        # sets. Buddy + accessible name carry the row's meaning onto the control.
+        title.setBuddy(control)
+        control.setAccessibleName(host._tr(label_key))
         controls.addWidget(control, 0, Qt.AlignVCenter)
         settings_layout.addWidget(row)
         if index < len(rows) - 1:
@@ -234,15 +240,38 @@ def _build_sidebar(host) -> QWidget:
 
     column.addWidget(build_brand(host))
     column.addSpacing(host._sz(14))
+
+    # The eight nav items live in their own scroll area so a short window (e.g.
+    # 1366×768 at 150%) never clips the lower items or pushes the status card off
+    # the bottom. Brand stays pinned above, status pinned below; only the nav
+    # list scrolls, and only when it doesn't fit. Nothing is ever hidden.
+    nav_container = QWidget()
+    nav_container.setObjectName("navList")
+    nav_layout = QVBoxLayout(nav_container)
+    nav_layout.setContentsMargins(0, 0, 0, 0)
+    nav_layout.setSpacing(host._sz(8))
     for button in host._nav_buttons.values():
-        column.addWidget(button)
-    column.addStretch(1)
+        nav_layout.addWidget(button)
+    nav_layout.addStretch(1)
+
+    host.nav_scroll = QScrollArea()
+    host.nav_scroll.setObjectName("navScroll")
+    host.nav_scroll.setWidgetResizable(True)
+    host.nav_scroll.setFrameShape(QFrame.NoFrame)
+    host.nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    host.nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    host.nav_scroll.setAttribute(Qt.WA_TranslucentBackground)
+    host.nav_scroll.setStyleSheet("#navScroll, #navScroll > QWidget > QWidget { background: transparent; }")
+    host.nav_scroll.setWidget(nav_container)
+    host.nav_scroll.viewport().setAutoFillBackground(False)
+    column.addWidget(host.nav_scroll, 1)
 
     # Connection state always visible at the foot of the rail — a small card
     # with a coloured dot (green = connected, dim = not) plus the status text.
     # Clickable: jumps straight to the device section so connecting never
     # requires hunting through Settings.
     status_card = QPushButton()
+    host.device_status_card = status_card
     status_card.setObjectName("statusCard")
     status_card.setCursor(Qt.PointingHandCursor)
     status_card.setFlat(True)

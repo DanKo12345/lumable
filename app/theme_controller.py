@@ -12,6 +12,7 @@ from app.storage import save_settings
 from app.styles import build_theme_stylesheet, build_tooltip_stylesheet
 from app.theme import qcolor_from_token, theme_manager
 from app.types import ThemeHost
+from app.widgets.animation_helpers import play_or_complete
 
 
 class ThemeController:
@@ -91,23 +92,34 @@ class ThemeController:
         if app:
             base_font = QFont("Segoe UI Variable Text")
             base_font.setPointSizeF(10.0 * getattr(self._host, "_ui_scale", 1.0))
-            app.setFont(base_font)
+            # setFont is application-wide: Qt re-polishes every living widget in
+            # the process. It only depends on the UI scale, so applying it when
+            # nothing changed is pure cost on every theme/accent refresh.
+            if app.font() != base_font:
+                app.setFont(base_font)
             # Tooltips are top-level popups, so their style must live on the app,
             # not the main window — otherwise they fall back to the OS default.
-            # Only re-apply when it actually changes (it depends on the theme, not
-            # the accent) to avoid a global re-polish on every quick-mode switch.
+            # Both writes below re-polish every widget in the process, so each is
+            # compared against Qt's *actual* state rather than a remembered value:
+            # a cache would drift if anything else touched the stylesheet or the
+            # palette, or if the QApplication were replaced.
             tooltip_qss = build_tooltip_stylesheet(self._host._theme_tokens)
-            if tooltip_qss != getattr(self, "_last_tooltip_qss", None):
-                self._last_tooltip_qss = tooltip_qss
+            if tooltip_qss != app.styleSheet():
                 app.setStyleSheet(tooltip_qss)
-                # Stylesheet alone doesn't always reach tooltip popups (Windows
-                # may keep the system tooltip colours), so also drive the colours
-                # through the application palette, which Qt always honours.
-                tip_bg = qcolor_from_token(self._host._theme_tokens["surface_strong"])
-                tip_bg.setAlpha(255)
-                pal = app.palette()
+            # Stylesheet alone doesn't always reach tooltip popups (Windows may
+            # keep the system tooltip colours), so also drive the colours through
+            # the application palette, which Qt always honours. Checked
+            # separately: the palette can be right while the stylesheet is not.
+            tip_bg = qcolor_from_token(self._host._theme_tokens["surface_strong"])
+            tip_bg.setAlpha(255)
+            tip_text = qcolor_from_token(self._host._theme_tokens["text"])
+            pal = app.palette()
+            if (
+                pal.color(QPalette.ColorRole.ToolTipBase) != tip_bg
+                or pal.color(QPalette.ColorRole.ToolTipText) != tip_text
+            ):
                 pal.setColor(QPalette.ColorRole.ToolTipBase, tip_bg)
-                pal.setColor(QPalette.ColorRole.ToolTipText, qcolor_from_token(self._host._theme_tokens["text"]))
+                pal.setColor(QPalette.ColorRole.ToolTipText, tip_text)
                 app.setPalette(pal)
         self._host.setStyleSheet(self.theme_stylesheet())
         self.apply_slider_theme()
@@ -177,4 +189,7 @@ class ThemeController:
         anim.finished.connect(_cleanup)
         self._host._theme_transition = anim
         self._host._theme_transition_overlay = overlay
-        anim.start()
+        # Reduced motion jumps the crossfade to its end THROUGH the engine, so
+        # finished fires and _cleanup removes the snapshot overlay + clears the
+        # host references — the transition never lingers as a frozen snapshot.
+        play_or_complete(anim)

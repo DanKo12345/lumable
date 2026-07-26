@@ -6,7 +6,9 @@ from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, Q
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen, QRadialGradient
 from PySide6.QtWidgets import QSlider
 
+from app.motion_policy import motion_policy
 from app.theme import qcolor_from_token, theme_manager
+from app.widgets.animation_helpers import play_or_complete
 
 
 class LiquidSlider(QSlider):
@@ -62,6 +64,31 @@ class LiquidSlider(QSlider):
 
         self.valueChanged.connect(self._animate_display_value)
 
+        # Connect on the slider itself so Qt drops the signal when it's destroyed.
+        motion_policy.changed.connect(self._on_motion_changed)
+        if motion_policy.reduced:
+            self._on_motion_changed(True)
+
+    def _on_motion_changed(self, reduced: bool) -> None:
+        if not reduced:
+            return
+        # Reduced motion: kill every decorative feedback and settle at neutral;
+        # the numeric readout jumps straight to the real value.
+        for anim in (
+            self._hover_anim,
+            self._press_anim,
+            self._landing_group,
+            self._wheel_group,
+            self._impact_anim,
+            self._display_anim,
+        ):
+            anim.stop()
+        self._hover = 0.0
+        self._press = 0.0
+        self._impact = 0.0
+        self._display_value = float(self.value())
+        self.update()
+
     def set_accent_color(self, accent: str):
         self.accent = accent
         self.update()
@@ -113,17 +140,22 @@ class LiquidSlider(QSlider):
         return QColor(palette.get(self.accent, palette["neutral"]))
 
     def enterEvent(self, event):
-        self._hover_anim.stop()
-        self._hover_anim.setStartValue(self._hover)
-        self._hover_anim.setEndValue(1.0)
-        self._hover_anim.start()
+        if not motion_policy.reduced:
+            self._hover_anim.stop()
+            self._hover_anim.setStartValue(self._hover)
+            self._hover_anim.setEndValue(1.0)
+            self._hover_anim.start()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._hover_anim.stop()
-        self._hover_anim.setStartValue(self._hover)
-        self._hover_anim.setEndValue(0.0)
-        self._hover_anim.start()
+        if motion_policy.reduced:
+            self._hover = 0.0
+            self.update()
+        else:
+            self._hover_anim.stop()
+            self._hover_anim.setStartValue(self._hover)
+            self._hover_anim.setEndValue(0.0)
+            self._hover_anim.start()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
@@ -156,20 +188,25 @@ class LiquidSlider(QSlider):
             event.accept()
             return
 
-        self._wheel_group.stop()
-        self._landing_group.stop()
-        self._press_anim.stop()
-        self._impact_anim.stop()
-        self._impact = 0.0
-        self._wheel_stage_1.setStartValue(self._press)
-        self._wheel_stage_1.setEndValue(0.18)
-        self._wheel_stage_2.setStartValue(0.18)
-        self._wheel_stage_2.setEndValue(0.0)
-        self._wheel_group.start()
+        # The value change always applies; only the decorative wheel pulse is
+        # gated by reduced motion.
+        if not motion_policy.reduced:
+            self._wheel_group.stop()
+            self._landing_group.stop()
+            self._press_anim.stop()
+            self._impact_anim.stop()
+            self._impact = 0.0
+            self._wheel_stage_1.setStartValue(self._press)
+            self._wheel_stage_1.setEndValue(0.18)
+            self._wheel_stage_2.setStartValue(0.18)
+            self._wheel_stage_2.setEndValue(0.0)
+            self._wheel_group.start()
         self.setValue(new_value)
         event.accept()
 
     def _press_in(self):
+        if motion_policy.reduced:
+            return  # no press glow under reduced motion
         self._wheel_group.stop()
         self._landing_group.stop()
         self._impact_anim.stop()
@@ -180,6 +217,8 @@ class LiquidSlider(QSlider):
         self._press_anim.start()
 
     def _press_out(self):
+        if motion_policy.reduced:
+            return  # no landing / impact feedback under reduced motion
         self._press_anim.stop()
         self._wheel_group.stop()
         self._landing_group.stop()
@@ -202,7 +241,7 @@ class LiquidSlider(QSlider):
         self._display_anim.stop()
         self._display_anim.setStartValue(self._display_value)
         self._display_anim.setEndValue(float(value))
-        self._display_anim.start()
+        play_or_complete(self._display_anim)  # reduced motion snaps the readout
 
     def get_hover_value(self):
         return self._hover

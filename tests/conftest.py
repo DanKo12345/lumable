@@ -8,6 +8,12 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("LUMABLE_DISABLE_SCHTASKS", "1")
+# Startup services (autoconnect, license refresh, app triggers, hotkeys, silent
+# update check, local API) are tested directly against their controllers, so a
+# widget test should not schedule them as background work.
+os.environ.setdefault("LUMABLE_NO_STARTUP_SERVICES", "1")
+
+
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +43,27 @@ def _isolate_user_data(tmp_path, monkeypatch):
     feature_gate.invalidate_pro_cache()
     yield
     feature_gate.invalidate_pro_cache()
+
+
+@pytest.fixture
+def preserve_motion_policy():
+    """Opt-in (NOT autouse): snapshot and restore the global motion_policy so a
+    step-2 integration test that flips reduced motion can't leak into others."""
+    from app.motion_policy import motion_policy
+
+    saved_mode = motion_policy._mode
+    saved_provider = motion_policy._provider
+    saved_reduced = motion_policy._reduced
+    try:
+        yield motion_policy
+    finally:
+        motion_policy._mode = saved_mode
+        motion_policy._provider = saved_provider
+        # If the resolved flag changed during the test, notify subscribers so an
+        # already-open window reverts its visual state instead of being stranded.
+        if motion_policy._reduced != saved_reduced:
+            motion_policy._reduced = saved_reduced
+            motion_policy.changed.emit(saved_reduced)
 
 
 def _qt_widgets_available() -> bool:

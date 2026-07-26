@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
 from app.widgets.color_swatch import ColorSwatch
@@ -207,7 +207,9 @@ class _ColorPickerPanel(QFrame):
 
     def __init__(self, *, has_history: bool, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedSize(PANEL_WIDTH, PANEL_HEIGHT_WITH_HISTORY if has_history else PANEL_HEIGHT_COMPACT)
+        # Fixed width; the owner drives height (min/max) so the panel fits a short
+        # window with its middle controls scrolling.
+        self.setFixedWidth(PANEL_WIDTH)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
     def paintEvent(self, event) -> None:
@@ -264,7 +266,11 @@ class ColorPickerOverlay(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addStretch(1)
 
-        panel = _ColorPickerPanel(has_history=bool(history_items), parent=self)
+        self._has_history = bool(history_items)
+        self._panel = _ColorPickerPanel(has_history=self._has_history, parent=self)
+        panel = self._panel
+        panel.setMinimumHeight(320)
+        panel.setMaximumHeight(self._preferred_height())
         layout.addWidget(panel, 0, Qt.AlignCenter)
         layout.addStretch(1)
 
@@ -272,10 +278,28 @@ class ColorPickerOverlay(QWidget):
         panel_layout.setContentsMargins(PANEL_MARGIN_X, PANEL_MARGIN_TOP, PANEL_MARGIN_X, PANEL_MARGIN_BOTTOM)
         panel_layout.setSpacing(10)
 
+        # --- Pinned title ---
         title_label = QLabel(title, panel)
         title_label.setObjectName("colorPickerTitle")
         title_label.setAlignment(Qt.AlignCenter)
         panel_layout.addWidget(title_label)
+
+        # --- Scrollable centre: plane + hue, HEX, RGB sliders, history. On a
+        # short window this yields height while the title and actions stay put.
+        # The colour plane keeps its full 145px — shrinking it would hurt precise
+        # picking without removing the need to scroll anyway.
+        self._scroll = QScrollArea(panel)
+        self._scroll.setObjectName("colorPickerScroll")
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setAttribute(Qt.WA_TranslucentBackground)
+        self._scroll.viewport().setAutoFillBackground(False)
+        centre = QWidget()
+        centre.setObjectName("colorPickerScrollContent")
+        centre_layout = QVBoxLayout(centre)
+        centre_layout.setContentsMargins(0, 0, 0, 0)
+        centre_layout.setSpacing(10)
 
         picker_row = QHBoxLayout()
         picker_row.setContentsMargins(ROW_SIDE_MARGIN, 0, ROW_SIDE_MARGIN, 0)
@@ -287,7 +311,7 @@ class ColorPickerOverlay(QWidget):
         self.hue_bar.hueChanged.connect(self._set_hue_from_picker)
         picker_row.addWidget(self.color_plane, 1)
         picker_row.addWidget(self.hue_bar)
-        panel_layout.addLayout(picker_row)
+        centre_layout.addLayout(picker_row)
 
         hex_row = self._control_row(labels["hex"])
         self.hex_input = ThemedLineEdit(panel)
@@ -295,14 +319,15 @@ class ColorPickerOverlay(QWidget):
         self.hex_input.setMaxLength(7)
         self.hex_input.setText(self._hex_text(self._color))
         self.hex_input.editingFinished.connect(self._apply_hex_input)
+        self.hex_input.installEventFilter(self)  # focus → scroll it into view
         hex_row.addWidget(self.hex_input, 1)
         self.hex_swatch = _ColorPreview(self._color, panel)
         hex_row.addWidget(self.hex_swatch)
-        panel_layout.addLayout(hex_row)
+        centre_layout.addLayout(hex_row)
 
-        self.red_slider, self.red_value = self._add_slider(panel_layout, labels["red"], "red", self._color.red())
-        self.green_slider, self.green_value = self._add_slider(panel_layout, labels["green"], "green", self._color.green())
-        self.blue_slider, self.blue_value = self._add_slider(panel_layout, labels["blue"], "blue", self._color.blue())
+        self.red_slider, self.red_value = self._add_slider(centre_layout, labels["red"], "red", self._color.red())
+        self.green_slider, self.green_value = self._add_slider(centre_layout, labels["green"], "green", self._color.green())
+        self.blue_slider, self.blue_value = self._add_slider(centre_layout, labels["blue"], "blue", self._color.blue())
 
         if history_items:
             history_row = self._control_row(labels["recent"])
@@ -320,8 +345,13 @@ class ColorPickerOverlay(QWidget):
             history_spacer = QWidget(panel)
             history_spacer.setFixedSize(VALUE_WIDTH, VALUE_HEIGHT)
             history_row.addWidget(history_spacer)
-            panel_layout.addLayout(history_row)
+            centre_layout.addLayout(history_row)
 
+        centre_layout.addStretch(1)
+        self._scroll.setWidget(centre)
+        panel_layout.addWidget(self._scroll, 1)
+
+        # --- Pinned actions ---
         actions = QHBoxLayout()
         actions.setContentsMargins(ROW_SIDE_MARGIN, 2, ROW_SIDE_MARGIN, 0)
         actions.setSpacing(12)
@@ -333,6 +363,8 @@ class ColorPickerOverlay(QWidget):
         ok_button.setFixedWidth(180)
         cancel_button.clicked.connect(self.reject)
         ok_button.clicked.connect(self.accept)
+        self._cancel_button = cancel_button
+        self._ok_button = ok_button
         actions.addWidget(cancel_button)
         actions.addWidget(ok_button)
         panel_layout.addLayout(actions)
@@ -440,9 +472,23 @@ class ColorPickerOverlay(QWidget):
         if parent is not None:
             self.setGeometry(parent.rect())
             parent.installEventFilter(self)
+        self._fit_to_parent()
         self.show()
         self.raise_()
         self.setFocus(Qt.PopupFocusReason)
+
+    def _preferred_height(self) -> int:
+        return PANEL_HEIGHT_WITH_HISTORY if self._has_history else PANEL_HEIGHT_COMPACT
+
+    def _fit_to_parent(self) -> None:
+        # min(preferred, available); recomputed every time so growing the window
+        # restores the full preferred height.
+        parent = self.parentWidget()
+        height = self._preferred_height()
+        if parent is not None:
+            height = max(320, min(height, parent.height() - 24))
+        self._panel.setMinimumHeight(height)
+        self._panel.setMaximumHeight(height)
 
     def selected_color(self) -> QColor:
         return QColor(self._color)
@@ -479,6 +525,12 @@ class ColorPickerOverlay(QWidget):
             parent = self.parentWidget()
             if parent is not None:
                 self.setGeometry(parent.rect())
+                self._fit_to_parent()
+        elif watched is self.hex_input and event.type() == QEvent.Type.FocusIn:
+            # Bring the HEX field into view when it's focused (e.g. on a short
+            # window where it lives below the fold). Deferred so the scroll has
+            # settled. Dragging the plane/hue/sliders never triggers this.
+            QTimer.singleShot(0, lambda: self._scroll.ensureWidgetVisible(self.hex_input, 0, 40))
         return super().eventFilter(watched, event)
 
     def _apply_style(self) -> None:
@@ -487,6 +539,10 @@ class ColorPickerOverlay(QWidget):
             f"""
             #colorPickerOverlay {{
                 background: transparent;
+            }}
+            #colorPickerScroll, #colorPickerScroll > QWidget, #colorPickerScrollContent {{
+                background: transparent;
+                border: none;
             }}
             #colorPickerTitle {{
                 color: {palette["text"]};

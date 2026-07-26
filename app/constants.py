@@ -1,5 +1,16 @@
-WINDOW_MIN_WIDTH = 980
-WINDOW_MIN_HEIGHT = 680
+# The floor the window can shrink to. It must fit inside the work area of a
+# 1366×768 screen at 150% scale (≈911×480 logical, minus the taskbar and the
+# window frame) — otherwise the window opens larger than the screen and its
+# bottom/right (with the primary action) fall off-screen. Content taller than
+# this scrolls in the body QScrollArea; the sidebar switches to a compact mode
+# (see COMPACT_SIDEBAR_HEIGHT) so its bottom status never clips.
+WINDOW_MIN_WIDTH = 860
+WINDOW_MIN_HEIGHT = 420
+
+# Below this window height the sidebar can't show its full-height footer, so it
+# drops the secondary status hint and shrinks the status card, keeping the
+# primary connection status and all eight nav items visible.
+COMPACT_SIDEBAR_HEIGHT = 580
 
 CONTROL_HEIGHT = 44
 CHIP_HEIGHT = 36

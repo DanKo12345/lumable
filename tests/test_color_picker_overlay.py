@@ -50,7 +50,9 @@ def test_color_picker_uses_consistent_grid_with_history() -> None:
         assert {label.width() for label in labels} == {LABEL_WIDTH}
         assert {value.width() for value in values} == {VALUE_WIDTH}
         assert len(sliders) == 3
-        assert picker.layout().itemAt(1).widget().height() == PANEL_HEIGHT_WITH_HISTORY
+        # The panel's preferred (max) height is the with-history height; on a
+        # short window it can shrink below this and the centre scrolls.
+        assert picker._panel.maximumHeight() == PANEL_HEIGHT_WITH_HISTORY
         assert ROW_SIDE_MARGIN == 14
     finally:
         picker.deleteLater()
@@ -61,7 +63,7 @@ def test_color_picker_compact_height_without_history() -> None:
     app = QApplication.instance() or QApplication([])
     picker = ColorPickerOverlay(localization_manager.t("dialog.pick_color"), QColor(10, 20, 30), _labels(), [])
     try:
-        assert picker.layout().itemAt(1).widget().height() == PANEL_HEIGHT_COMPACT
+        assert picker._panel.maximumHeight() == PANEL_HEIGHT_COMPACT
     finally:
         picker.deleteLater()
         app.processEvents()

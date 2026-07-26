@@ -7,6 +7,7 @@ from PySide6.QtCore import QEasingCurve, QElapsedTimer, QPointF, QRectF, Qt, QTi
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
+from app.motion_policy import motion_policy
 from app.theme import qcolor_from_token, theme_manager
 
 _CONFETTI_COLORS = (
@@ -46,18 +47,59 @@ class CelebrationOverlay(QWidget):
         self._particles: list[dict] = []
         self._pop_ease = QEasingCurve(QEasingCurve.OutBack)
         self._draw_ease = QEasingCurve(QEasingCurve.OutCubic)
-        self._timer = QTimer(self)
-        self._timer.setTimerType(Qt.PreciseTimer)
-        self._timer.timeout.connect(self._tick)
+        self._static = False
+        # Two timers with distinct jobs: a 60fps frame timer only drives the
+        # confetti/animation, and a single-shot finish timer owns the close. Under
+        # reduced motion the frame timer never runs, but the finish timer still
+        # closes the overlay on schedule.
+        self._frame_timer = QTimer(self)
+        self._frame_timer.setTimerType(Qt.PreciseTimer)
+        self._frame_timer.timeout.connect(self._advance_frame)
+        self._finish_timer = QTimer(self)
+        self._finish_timer.setSingleShot(True)
+        self._finish_timer.timeout.connect(self._finish)
+        motion_policy.changed.connect(self._on_motion_changed)
 
     def start(self) -> None:
         if self.parentWidget() is not None:
             self.setGeometry(self.parentWidget().rect())
-        self._spawn_particles()
+        self._static = motion_policy.reduced
+        if not self._static:
+            self._spawn_particles()
         self.show()
         self.raise_()
         self._elapsed.start()
-        self._timer.start(16)
+        # The functional close is independent of motion — never stopped/restarted.
+        self._finish_timer.start(self.DURATION_MS)
+        if not self._static:
+            self._frame_timer.start(16)
+        self.update()
+
+    def _advance_frame(self) -> None:
+        for particle in self._particles:
+            particle["vy"] += 0.45
+            particle["vx"] *= 0.992
+            particle["x"] += particle["vx"]
+            particle["y"] += particle["vy"]
+            particle["ang"] += particle["spin"]
+        self.update()
+
+    def _finish(self) -> None:
+        self._frame_timer.stop()
+        self.hide()
+        self.finished.emit()
+        self.deleteLater()
+
+    def _on_motion_changed(self, reduced: bool) -> None:
+        # Freeze an in-flight celebration when motion is reduced, but never
+        # un-freeze it — resuming confetti mid-show would jump visually backwards.
+        # A one-shot celebration stays static until its close timer fires; the
+        # next launch under full motion animates fully again.
+        if reduced and not self._static:
+            self._static = True
+            self._frame_timer.stop()
+            self._particles.clear()
+            self.update()
 
     def _center(self) -> QPointF:
         return QPointF(self.width() / 2.0, self.height() / 2.0)
@@ -83,25 +125,17 @@ class CelebrationOverlay(QWidget):
                 }
             )
 
-    def _tick(self) -> None:
-        if self._elapsed.elapsed() >= self.DURATION_MS:
-            self._timer.stop()
-            self.hide()
-            self.finished.emit()
-            self.deleteLater()
-            return
-        for particle in self._particles:
-            particle["vy"] += 0.45
-            particle["vx"] *= 0.992
-            particle["x"] += particle["vx"]
-            particle["y"] += particle["vy"]
-            particle["ang"] += particle["spin"]
-        self.update()
-
     def paintEvent(self, event) -> None:
-        elapsed = float(self._elapsed.elapsed()) if self._elapsed.isValid() else 0.0
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        if self._static:
+            # Reduced motion: the final resting state up front — full badge, drawn
+            # check and message, and no confetti.
+            final = float(self.DURATION_MS)
+            self._paint_badge(painter, final)
+            self._paint_message(painter, final)
+            return
+        elapsed = float(self._elapsed.elapsed()) if self._elapsed.isValid() else 0.0
         self._paint_confetti(painter, elapsed)
         self._paint_badge(painter, elapsed)
         self._paint_message(painter, elapsed)

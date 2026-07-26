@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.theme import qcolor_from_token
+from app.widgets.animation_helpers import play_or_complete
 
 
 class StaticPopupComboBox(QComboBox):
@@ -323,8 +324,10 @@ class StaticPopupComboBox(QComboBox):
         if self._list is not None:
             self._list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._open_slide.finished.connect(self._restore_scrollbar_policy)
-        self._open_fade.start()
-        self._open_slide.start()
+        # Complete the plain fade first, and the slide last: its finished handler
+        # restores the scrollbar policy, so it must run after everything settles.
+        play_or_complete(self._open_fade)
+        play_or_complete(self._open_slide)
 
     def _restore_scrollbar_policy(self) -> None:
         if self._list is not None:

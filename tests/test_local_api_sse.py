@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import threading
 import time
 
 import pytest
@@ -100,3 +101,40 @@ def test_events_requires_token(server) -> None:
     finally:
         sock.close()
     assert "401" in chunk.splitlines()[0]
+
+
+def test_stop_ends_an_open_sse_stream_and_its_thread() -> None:
+    """A stream parked on its queue must not outlive the server.
+
+    Handlers are daemon threads, and the stdlib never joins those, so without an
+    explicit stop signal an open /events connection kept its thread alive for a
+    full heartbeat (15s) past ``stop()`` — long enough to still be running when
+    the process ends, which is where the socket-abort tracebacks came from.
+    """
+    broker = SseBroker()
+    srv = ApiServer(ApiRouter(FakeBackend(), TOKEN), host="127.0.0.1", port=0, broker=broker)
+    srv.start()
+    sock = _raw_get(srv, "/events", token=TOKEN)
+    try:
+        deadline = time.time() + 3
+        while broker.subscriber_count() == 0 and time.time() < deadline:
+            time.sleep(0.01)
+        assert broker.subscriber_count() == 1
+
+        handlers_before = _handler_threads()
+        assert handlers_before, "expected a live handler thread for the open stream"
+
+        started = time.time()
+        srv.stop()
+        elapsed = time.time() - started
+
+        # Well under the 15s heartbeat: the stream was woken, not waited out.
+        assert elapsed < 3, f"stop() took {elapsed:.1f}s — the stream was not woken"
+        assert broker.subscriber_count() == 0
+        assert not [t for t in handlers_before if t.is_alive()]
+    finally:
+        sock.close()
+
+
+def _handler_threads() -> list[threading.Thread]:
+    return [t for t in threading.enumerate() if t.name == "lumable-api-handler" and t.is_alive()]

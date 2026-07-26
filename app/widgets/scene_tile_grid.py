@@ -12,9 +12,16 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QPoint, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QRadialGradient
-from PySide6.QtWidgets import QGridLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QRadioButton, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
+
+_ARROW_DELTAS = {
+    Qt.Key_Left: (-1, 0),
+    Qt.Key_Right: (1, 0),
+    Qt.Key_Up: (0, -1),
+    Qt.Key_Down: (0, 1),
+}
 
 
 @dataclass(frozen=True)
@@ -25,8 +32,16 @@ class SceneTileData:
     target_label: str
 
 
-class SceneTile(QWidget):
-    activated = Signal()
+class SceneTile(QRadioButton):
+    """One scene in the grid; activating it applies that scene.
+
+    A QRadioButton, not a plain widget or a checkbox: exactly one scene is in
+    use at a time, so "one of a set, this is the current one" is the accurate
+    thing to report. As a plain QWidget it announced itself as a generic client
+    area, telling assistive tools neither that it could be activated nor which
+    scene was live.
+    """
+
     menu_requested = Signal(QPoint)  # global position to anchor the menu at
 
     _FALLBACK_COLOR = "#8fbfff"
@@ -39,13 +54,25 @@ class SceneTile(QWidget):
         if not self._color.isValid():
             self._color = QColor(self._FALLBACK_COLOR)
         self._s = max(0.6, float(ui_scale))
-        self._active = False
         self._hover = False
+        self._menu_press = False
         self.setMinimumHeight(round(56 * self._s))
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_Hover, True)
         self.setFocusPolicy(Qt.StrongFocus)
+        # Auto-exclusive is what makes Qt report the accurate RadioButton role
+        # ("one of a set"). Its two side effects are handled below: clicking
+        # cannot mark the tile (nextCheckState) and arrow keys only move focus
+        # (keyPressEvent) instead of applying the scene they land on.
+        self.setAutoExclusive(True)
         self.setAccessibleName(f"{data.name} — {data.target_label}")
+
+    def nextCheckState(self) -> None:
+        """Activating must not mark the tile as current on its own.
+
+        Applying a scene can fail or be superseded, so only the controller marks
+        the winner — via set_active() once the scene is actually in use.
+        """
 
     @property
     def scene_id(self) -> str:
@@ -53,31 +80,77 @@ class SceneTile(QWidget):
 
     def set_active(self, active: bool) -> None:
         active = bool(active)
-        if active != self._active:
-            self._active = active
-            self.update()
+        if active == self.isChecked():
+            return
+        if active:
+            self.setChecked(True)
+        else:
+            # Qt keeps one button of an auto-exclusive group checked, so a plain
+            # setChecked(False) is ignored. "No scene in use" is a real state
+            # here (power toggled by hand, scene deleted), so lift exclusivity
+            # for the moment it takes to clear the mark.
+            self.setAutoExclusive(False)
+            self.setChecked(False)
+            self.setAutoExclusive(True)
+        self.update()
 
     def is_active(self) -> bool:
-        return self._active
+        return self.isChecked()
 
     # ── input ─────────────────────────────────────────────────────────
     def _menu_zone(self) -> QRectF:
         width = self._MENU_W * self._s
         return QRectF(self.width() - width, 0.0, width, float(self.height()))
 
+    def mousePressEvent(self, event) -> None:
+        # Remember whether the gesture started on the "…" zone so the release
+        # can open the menu instead of letting the button emit clicked.
+        self._menu_press = event.button() == Qt.LeftButton and self._menu_zone().contains(event.position())
+        super().mousePressEvent(event)
+
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
-            if self._menu_zone().contains(event.position()):
+        if self._menu_press and event.button() == Qt.LeftButton:
+            self._menu_press = False
+            self.setDown(False)
+            if self.rect().contains(event.position().toPoint()):
                 self.menu_requested.emit(event.globalPosition().toPoint())
-            else:
-                self.activated.emit()
             event.accept()
             return
         super().mouseReleaseEvent(event)
 
+    def _menu_anchor(self) -> QPoint:
+        """Where a keyboard-opened menu should appear: under the "…" zone."""
+        return self.mapToGlobal(self._menu_zone().center().toPoint())
+
     def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
-            self.activated.emit()
+        # Space is QAbstractButton's own. Enter is added to match the rest of
+        # the app, and auto-repeat is ignored so holding a key applies the scene
+        # once instead of re-applying it many times per second.
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter) and not event.isAutoRepeat():
+            self.click()
+            event.accept()
+            return
+        # The menu key and Shift+F10 are handled here rather than left to
+        # contextMenuEvent: that event is synthesised by the window system, so
+        # relying on it alone leaves the menu unreachable wherever the platform
+        # does not produce it. The "…" zone is otherwise mouse-only.
+        menu_key = event.key() == Qt.Key_Menu
+        shift_f10 = event.key() == Qt.Key_F10 and event.modifiers() & Qt.ShiftModifier
+        if (menu_key or shift_f10) and not event.isAutoRepeat():
+            self.menu_requested.emit(self._menu_anchor())
+            event.accept()
+            return
+        delta = _ARROW_DELTAS.get(event.key())
+        if delta is not None:
+            # Two things have to be taken over here. An auto-exclusive button
+            # answers arrows by *clicking* its neighbour, which would apply every
+            # scene arrowed across; and focusNextPrevChild() walks the tab chain,
+            # where a radio group counts as a single stop — so it leaves the grid
+            # entirely instead of reaching the next tile. The grid knows its own
+            # row/column layout, so it performs the move.
+            grid = self.parentWidget()
+            if grid is not None and hasattr(grid, "focus_neighbour"):
+                grid.focus_neighbour(self, *delta)
             event.accept()
             return
         super().keyPressEvent(event)
@@ -105,19 +178,19 @@ class SceneTile(QWidget):
         path.addRoundedRect(rect, radius, radius)
 
         # Backing: neutral chip; the active tile takes a wash of its own colour.
-        if self._active:
+        if self.isChecked():
             wash = QColor(self._color)
             wash.setAlpha(52 if dark else 64)
             painter.fillPath(path, wash)
         else:
             painter.fillPath(path, qcolor_from_token(tokens["chip"]))
-        if self._hover and not self._active:
+        if self._hover and not self.isChecked():
             painter.fillPath(path, QColor(255, 255, 255, 14) if dark else QColor(22, 25, 31, 10))
 
-        border = QColor(self._color) if self._active else qcolor_from_token(tokens["chip_border"])
-        if self._active:
+        border = QColor(self._color) if self.isChecked() else qcolor_from_token(tokens["chip_border"])
+        if self.isChecked():
             border.setAlpha(170 if dark else 190)
-        painter.setPen(QPen(border, 1.2 if self._active else 1.0))
+        painter.setPen(QPen(border, 1.2 if self.isChecked() else 1.0))
         painter.drawRoundedRect(rect, radius, radius)
 
         if self.hasFocus():
@@ -208,7 +281,7 @@ class SceneTileGrid(QWidget):
         for entry in entries:
             tile = SceneTile(entry, self._s, self)
             tile.set_active(entry.scene_id == active_id)
-            tile.activated.connect(lambda scene_id=entry.scene_id: self.scene_activated.emit(scene_id))
+            tile.clicked.connect(lambda _checked=False, scene_id=entry.scene_id: self.scene_activated.emit(scene_id))
             tile.menu_requested.connect(
                 lambda pos, scene_id=entry.scene_id: self.scene_menu_requested.emit(scene_id, pos)
             )
@@ -222,6 +295,26 @@ class SceneTileGrid(QWidget):
 
     def tiles(self) -> list[SceneTile]:
         return list(self._tiles)
+
+    def focus_neighbour(self, tile: SceneTile, dx: int, dy: int) -> None:
+        """Move keyboard focus one tile across (dx) or one row up/down (dy).
+
+        Wraps at the edges so arrowing never dead-ends or escapes the grid, and
+        only moves focus — the scene in use changes on Enter/Space alone.
+        """
+        if len(self._tiles) < 2 or tile not in self._tiles:
+            return
+        columns = max(1, self._columns)
+        index = self._tiles.index(tile)
+        if dy:
+            # Walk the tiles of this column only. A flat ±columns step would
+            # change column whenever the last row is short: with 5 tiles in 2
+            # columns, Up from tile 0 would land on tile 3.
+            column = list(range(index % columns, len(self._tiles), columns))
+            target = column[(column.index(index) + dy) % len(column)]
+        else:
+            target = (index + dx) % len(self._tiles)
+        self._tiles[target].setFocus(Qt.OtherFocusReason)
 
     def _column_count(self, width: int) -> int:
         tile_min = self.TILE_MIN * self._s

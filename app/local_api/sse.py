@@ -14,6 +14,10 @@ from typing import Any
 
 _QUEUE_MAX = 32
 
+# Pushed into every subscriber queue to unblock a parked ``get()``. It is not a
+# state update, so a stream must skip it rather than send it as a frame.
+WAKEUP = object()
+
 
 class SseBroker:
     def __init__(self) -> None:
@@ -38,6 +42,22 @@ class SseBroker:
     def subscriber_count(self) -> int:
         with self._lock:
             return len(self._subscribers)
+
+    def wake_all(self) -> None:
+        """Unblock every parked subscriber.
+
+        A stream sits in ``get(timeout=heartbeat)`` for up to the full heartbeat,
+        so on shutdown it would keep its thread alive that long. Pushing a wakeup
+        token lets each stream notice the stop immediately. A full queue already
+        has something to return, so it needs no token.
+        """
+        with self._lock:
+            subscribers = list(self._subscribers)
+        for subscriber in subscribers:
+            try:
+                subscriber.put_nowait(WAKEUP)
+            except queue.Full:
+                pass
 
     def publish(self, state: dict[str, Any]) -> bool:
         """Store and broadcast the state. Returns False (and does nothing) when

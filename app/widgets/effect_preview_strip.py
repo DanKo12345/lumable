@@ -6,6 +6,7 @@ from PySide6.QtCore import Property, QEasingCurve, QElapsedTimer, QPropertyAnima
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from app.motion_policy import motion_policy
 from app.theme import qcolor_from_token, theme_manager
 
 
@@ -92,7 +93,6 @@ class EffectPreviewStrip(QWidget):
         self._pulse_anim.setEndValue(1.0)
         self._pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
         self._pulse_anim.setLoopCount(-1)
-        self._pulse_anim.start()
 
         self._active_pulse_anim = QPropertyAnimation(self, b"activePulse", self)
         self._active_pulse_anim.setDuration(2400)
@@ -100,7 +100,6 @@ class EffectPreviewStrip(QWidget):
         self._active_pulse_anim.setEndValue(1.0)
         self._active_pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
         self._active_pulse_anim.setLoopCount(-1)
-        self._active_pulse_anim.start()
 
         self._switch_anim = QPropertyAnimation(self, b"switchValue", self)
         self._switch_anim.setDuration(300)
@@ -109,7 +108,51 @@ class EffectPreviewStrip(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._tick)
-        self._timer.start()
+        # Connect on self so Qt drops the signal on destruction. Reduced motion
+        # freezes the preview on a clear "active" frame; the BLE strip effect is
+        # unaffected — this widget only visualises it.
+        motion_policy.changed.connect(self._on_motion_changed)
+        self._apply_motion_state()
+
+    def _apply_motion_state(self) -> None:
+        # One rule for show/hide and policy flips: the preview animates only while
+        # on-screen AND motion is not reduced. Reduced settles a clear static frame.
+        if self.isVisible() and not motion_policy.reduced:
+            if not self._timer.isActive():
+                self._timer.start()
+            if self._pulse_anim.state() != QPropertyAnimation.State.Running:
+                self._pulse_anim.start()
+            if self._active_pulse_anim.state() != QPropertyAnimation.State.Running:
+                self._active_pulse_anim.start()
+        else:
+            self._timer.stop()
+            self._pulse_anim.stop()
+            self._active_pulse_anim.stop()
+            self._switch_anim.stop()
+            if motion_policy.reduced:
+                self._intensity = 1.0
+                self._active_pulse = 1.0
+                self._switch_value = 0.0
+                self._prev_pixmap = None
+                self.update()
+
+    def _on_motion_changed(self, reduced: bool) -> None:
+        self._apply_motion_state()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_motion_state()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._timer.stop()
+        self._pulse_anim.stop()
+        self._active_pulse_anim.stop()
+        # Also clear any in-flight cross-dissolve so a hidden preview never keeps
+        # transitioning.
+        self._switch_anim.stop()
+        self._switch_value = 0.0
+        self._prev_pixmap = None
 
     @staticmethod
     def _phase_from_elapsed(elapsed_ms: int, cycle_ms: float) -> float:
@@ -197,7 +240,7 @@ class EffectPreviewStrip(QWidget):
         new_key = effect_key or "static_color"
         new_code = int(effect_code)
         changed = new_key != self._effect_key or new_code != self._effect_code
-        if changed and self.isVisible() and self.width() > 4 and self.height() > 4:
+        if changed and not motion_policy.reduced and self.isVisible() and self.width() > 4 and self.height() > 4:
             # Cross-dissolve from the previous look to the new one.
             self._prev_pixmap = self.grab()
             self._switch_anim.stop()
@@ -205,11 +248,21 @@ class EffectPreviewStrip(QWidget):
             self._switch_anim.setStartValue(1.0)
             self._switch_anim.setEndValue(0.0)
             self._switch_anim.start()
+        elif changed:
+            # No dissolve (reduced motion, or hidden/too small): snap to the new
+            # effect with no transition state left behind.
+            self._switch_anim.stop()
+            self._switch_value = 0.0
+            self._prev_pixmap = None
         self._effect_key = new_key
         self._effect_code = new_code
         if reset_phase:
             self.restart()
             self._active_pulse_anim.setCurrentTime(0)
+            # Reset explicitly too: setCurrentTime only drives the property while
+            # the animation is running, and reduced motion / a hidden preview keep
+            # it stopped.
+            self._active_pulse = 0.0
         self.update()
 
     def restart(self) -> None:

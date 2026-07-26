@@ -2,37 +2,42 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QEasingCurve, QRectF, Qt, QVariantAnimation, Signal
+from PySide6.QtCore import QEasingCurve, QRectF, Qt, QVariantAnimation
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QAbstractButton, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
+from app.widgets.animation_helpers import play_or_complete
 
 
 def _lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
 
-class DayToggle(QWidget):
+class DayToggle(QAbstractButton):
     """A weekday selector chip that matches the app's glassy, animated buttons.
 
     Selected = a light, glossy "lit" pill; unselected = a faint outlined pill.
     The selection cross-fades smoothly and the chip brightens on hover, like the
-    LiquidButtons elsewhere. Dims when disabled. Exposes the minimal API the
-    schedule controller expects (isChecked / setChecked / clicked / setText).
-    """
+    LiquidButtons elsewhere. Dims when disabled.
 
-    clicked = Signal()
+    Only the painting is custom. Deriving from QAbstractButton (rather than a
+    bare QWidget with hand-rolled click handling) is what makes the chip a real
+    control: keyboard activation, click semantics and — the part a custom widget
+    cannot fake — the accessible role and checkable/checked state that screen
+    readers read out. It also means Space does not re-toggle on auto-repeat.
+    """
 
     def __init__(self, text: str, theme_provider: Callable[[], dict[str, str]], parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._text = str(text)
+        self.setText(str(text))
+        self.setCheckable(True)
         self._theme_provider = theme_provider
-        self._checked = False
         self._progress = 0.0  # 0 = unselected look, 1 = selected look
         self._hover = 0.0
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_Hover, True)
+        self.setFocusPolicy(Qt.StrongFocus)
 
         self._select_anim = QVariantAnimation(self)
         self._select_anim.setDuration(190)
@@ -44,19 +49,12 @@ class DayToggle(QWidget):
         self._hover_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._hover_anim.valueChanged.connect(self._on_hover_value)
 
-    def isChecked(self) -> bool:
-        return self._checked
+        # Drives the cross-fade from the real checked state, so the look follows
+        # whether it was changed by mouse, keyboard or setChecked().
+        self.toggled.connect(self._on_toggled)
 
-    def setChecked(self, value: bool) -> None:
-        value = bool(value)
-        if value == self._checked:
-            return
-        self._checked = value
-        self._animate(self._select_anim, self._progress, 1.0 if value else 0.0)
-
-    def setText(self, text: str) -> None:
-        self._text = str(text)
-        self.update()
+    def _on_toggled(self, checked: bool) -> None:
+        self._animate(self._select_anim, self._progress, 1.0 if checked else 0.0)
 
     def setEnabled(self, enabled: bool) -> None:
         super().setEnabled(enabled)
@@ -66,7 +64,7 @@ class DayToggle(QWidget):
         anim.stop()
         anim.setStartValue(float(start))
         anim.setEndValue(float(end))
-        anim.start()
+        play_or_complete(anim)
 
     def _on_select_value(self, value: float) -> None:
         self._progress = float(value)
@@ -85,11 +83,27 @@ class DayToggle(QWidget):
         self._animate(self._hover_anim, self._hover, 0.0)
         super().leaveEvent(event)
 
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self.isEnabled() and self.rect().contains(event.position().toPoint()):
-            self.setChecked(not self._checked)
-            self.clicked.emit()
-        super().mouseReleaseEvent(event)
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()  # the ring is painted by paintEvent, so ask for a repaint
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
+
+    def keyPressEvent(self, event) -> None:
+        # QAbstractButton already handles Space; Enter is added so the chip
+        # matches the push buttons around it. Auto-repeat is ignored: holding
+        # the key down would otherwise flip the day on and off continuously.
+        if (
+            event.key() in (Qt.Key_Return, Qt.Key_Enter)
+            and not event.isAutoRepeat()
+            and self.isEnabled()
+        ):
+            self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -152,4 +166,17 @@ class DayToggle(QWidget):
         font.setBold(progress > 0.5)
         painter.setFont(font)
         painter.setPen(text_color)
-        painter.drawText(rect, Qt.AlignCenter, self._text)
+        painter.drawText(rect, Qt.AlignCenter, self.text())
+
+        # ── keyboard focus ring ──
+        # Drawn outside the pill and only for keyboard focus: a ring that also
+        # appeared on click would read as a stuck selection.
+        if self.hasFocus() and self.isEnabled():
+            # Kept inside the pill so a 2px pen is never clipped by the layout.
+            focus_rect = rect.adjusted(0.5, 0.5, -0.5, -0.5)
+            focus_radius = focus_rect.height() / 2.0
+            ring = qcolor_from_token(tokens.get("accent_end", "#7fb7ff"))
+            ring.setAlpha(210)
+            painter.setPen(QPen(ring, 2.0))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(focus_rect, focus_radius, focus_radius)

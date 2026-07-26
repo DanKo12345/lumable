@@ -7,11 +7,13 @@ from typing import Any
 
 from platformdirs import user_data_dir
 
+from app.constants import WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH
 from app.device_names import validate_device_names, validate_extra_addresses
 from app.hotkeys import ACTIONS as HOTKEY_ACTIONS
 from app.hotkeys import DEFAULT_HOTKEYS, parse_hotkey
 from app.license import validate_license_state
 from app.local_api.config import validate_api_settings
+from app.motion_policy import DEFAULT_MOTION_MODE, normalize_motion_mode
 from app.scene_store import normalize_group
 from app.scenes import normalize_scene, unwrap_scene, wrap_scene
 from app.screen_profiles import normalize_profile_id
@@ -241,6 +243,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "updates_last_auto_check_version": "",
     "updates_notified_version": "",
     "updates_notified_at": 0,
+    "updates_skipped_version": "",
     "license": {
         "activated": False,
         "edition": "free",
@@ -254,6 +257,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "window_width": 1320,
     "window_height": 860,
+    "motion_mode": DEFAULT_MOTION_MODE,
     "last_state": {
         "power": True,
         "brightness": 100,
@@ -731,9 +735,17 @@ def validate_settings(data: Any) -> dict[str, Any]:
             0,
             4_102_444_800,
         ),
+        "updates_skipped_version": _coerce_str(
+            data.get("updates_skipped_version"),
+            DEFAULT_SETTINGS["updates_skipped_version"],
+        ),
         "license": validate_license_state(data.get("license", DEFAULT_SETTINGS["license"])),
-        "window_width": _coerce_int(data.get("window_width"), DEFAULT_SETTINGS["window_width"], 800, 7680),
-        "window_height": _coerce_int(data.get("window_height"), DEFAULT_SETTINGS["window_height"], 600, 4320),
+        # Lower bounds track the window minimum, so a small window a user chose
+        # on a 1366×768@150% screen survives a restart instead of snapping back
+        # up to 800×600 (which would reopen larger than that screen).
+        "window_width": _coerce_int(data.get("window_width"), DEFAULT_SETTINGS["window_width"], WINDOW_MIN_WIDTH, 7680),
+        "window_height": _coerce_int(data.get("window_height"), DEFAULT_SETTINGS["window_height"], WINDOW_MIN_HEIGHT, 4320),
+        "motion_mode": normalize_motion_mode(data.get("motion_mode", DEFAULT_MOTION_MODE)),
         "last_state": {
             "power": _coerce_bool(last_state.get("power", True)),
             "brightness": parsed_last_brightness,

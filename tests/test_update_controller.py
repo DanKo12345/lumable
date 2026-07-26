@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.update_checker import UpdateResult
+from app.update_checker import UpdateInfo, UpdateResult
 from app.update_controller import UpdateController
 
 
@@ -203,3 +203,61 @@ def test_update_reminder_reappears_after_a_day(monkeypatch) -> None:
 
     assert len(host.update_overlays) == 2
     assert len(saved_settings) == 2
+
+
+def test_skip_version_records_canonical_id(monkeypatch) -> None:
+    saved: list[dict[str, object]] = []
+    monkeypatch.setattr("app.update_controller.save_settings", lambda s: saved.append(dict(s)))
+    host = FakeHost()
+    controller = UpdateController(host, "0.3.4", "", "")
+
+    controller.skip_version("v0.3.5-beta")
+
+    # Stage + number are preserved so a later beta or the final release differ.
+    assert host._settings["updates_skipped_version"] == "0.3.5-beta0"
+    assert saved and saved[-1]["updates_skipped_version"] == "0.3.5-beta0"
+
+
+def test_skipped_version_is_not_reannounced_in_background(monkeypatch) -> None:
+    monkeypatch.setattr("app.update_controller.save_settings", lambda s: None)
+    monkeypatch.setattr("app.update_controller.time", lambda: 100_000.0)
+    host = FakeHost()
+    controller = UpdateController(host, "0.3.4", "", "")
+    controller.skip_version("0.3.5-beta")
+
+    controller._notify_update(type("Info", (), {"latest_version": "0.3.5-beta"})(), was_silent=True)
+
+    assert host.update_overlays == []
+
+
+def test_newer_build_after_skip_still_notifies(monkeypatch) -> None:
+    monkeypatch.setattr("app.update_controller.save_settings", lambda s: None)
+    monkeypatch.setattr("app.update_controller.time", lambda: 100_000.0)
+    host = FakeHost()
+    controller = UpdateController(host, "0.3.4", "", "")
+    controller.skip_version("0.3.5-beta")
+
+    controller._notify_update(type("Info", (), {"latest_version": "0.3.5-beta2"})(), was_silent=True)
+    controller._notify_update(type("Info", (), {"latest_version": "0.3.5"})(), was_silent=True)
+
+    assert len(host.update_overlays) == 2
+
+
+def test_manual_check_still_reports_a_skipped_version() -> None:
+    host = FakeHost()
+    host._settings["updates_skipped_version"] = "0.3.5-beta0"
+    controller = UpdateController(host, "0.3.4", "", "")
+    controller._silent_check = False  # a manual "Check for updates" click
+
+    controller.handle_result(
+        UpdateResult(
+            "available",
+            info=UpdateInfo(current_version="0.3.4", latest_version="0.3.5-beta", title="", url="https://x"),
+        )
+    )
+
+    # The manual result is always surfaced: button points to the download and
+    # availability is logged. Only the background overlay is suppressed.
+    assert host.check_update_button.text == "updates.open"
+    assert any("updates.available" in log for log in host.logs)
+    assert host.update_overlays == []

@@ -19,7 +19,12 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QPushButton, QSizePolicy
 
 from app.theme import qcolor_from_token, theme_manager
-from app.widgets.animation_helpers import ButtonAnimationMixin, make_property_animation, restart_animation
+from app.widgets.animation_helpers import (
+    ButtonAnimationMixin,
+    make_property_animation,
+    play_or_complete,
+    restart_animation,
+)
 
 LUCIDE_ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons" / "lucide"
 
@@ -66,7 +71,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._led_anim.stop()
         self._led_anim.setStartValue(start)
         self._led_anim.setEndValue(target)
-        self._led_anim.start()
+        play_or_complete(self._led_anim)  # button colour snaps; the strip is untouched
 
     def _on_led_value(self, value) -> None:
         self._led_color = QColor(value)

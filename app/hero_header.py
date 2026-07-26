@@ -118,6 +118,15 @@ def build_chrome_controls(host) -> None:
     performance_font.setWeight(QFont.Weight.DemiBold)
     host.performance_combo.setFont(performance_font)
 
+    host.motion_combo = StaticPopupComboBox(lambda: host._theme_tokens, lambda: host._is_dark)
+    host.motion_combo.setObjectName("languageCombo")
+    host.motion_combo.setFixedHeight(HERO_BUTTON_HEIGHT)
+    host.motion_combo.setFixedWidth(LANGUAGE_MIN_WIDTH)
+    motion_font = host.motion_combo.font()
+    motion_font.setPointSize(10)
+    motion_font.setWeight(QFont.Weight.DemiBold)
+    host.motion_combo.setFont(motion_font)
+
     host.about_button = host._button(host._tr("settings.about"), "ghost")
     host.about_button.setObjectName("aboutButton")
     host.about_button.setFixedHeight(HERO_BUTTON_HEIGHT)

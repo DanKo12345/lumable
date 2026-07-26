@@ -318,12 +318,16 @@ class DiyUiController:
         motion_key = _clean_motion(step.get("motion", "none"))
         motion = host._pill(host._tr(f"diy.motion_{motion_key}"))
         motion.setToolTip(host._tr("diy.motion_hint"))
-        motion.activated.connect(lambda sid=step_id: self._cycle_motion(sid))
+        # These chips sit in a bare row with no label beside them, so the
+        # purpose has to come from the tooltip's wording.
+        motion.set_purpose(host._tr("diy.motion_hint"))
+        motion.clicked.connect(lambda _checked=False, sid=step_id: self._cycle_motion(sid))
         right_layout.addWidget(motion, 0, Qt.AlignVCenter)
 
         value = host._pill(f"{step['duration_ms'] / 1000:.1f} {host._tr('diy.seconds_short')}")
         value.setToolTip(host._tr("diy.duration"))
-        value.activated.connect(lambda sid=step_id: self._edit_duration(sid))
+        value.set_purpose(host._tr("diy.duration"))
+        value.clicked.connect(lambda _checked=False, sid=step_id: self._edit_duration(sid))
         right_layout.addWidget(value, 0, Qt.AlignVCenter)
 
         remove = host._button("✕", "ghost")

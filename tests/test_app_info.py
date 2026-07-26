@@ -49,7 +49,7 @@ def test_author_signature_mark_uses_shared_signature() -> None:
     mark = AuthorSignatureMark(lambda: {"muted": "rgba(255,255,255,0.5)", "text": "#ffffff"})
 
     assert APP_AUTHOR_SIGNATURE == "by dollza"
-    assert APP_VERSION == "0.3.4"
+    assert APP_VERSION == "0.3.5"
     mark.set_edition("Free", "Current app edition")
     assert mark.edition_label.text() == "Free"
     assert not hasattr(mark, "version_label")

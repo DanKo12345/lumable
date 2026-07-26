@@ -88,6 +88,144 @@ def test_edition_badge_shows_free_and_pro(monkeypatch) -> None:
         app.processEvents()
 
 
+def test_motion_combo_applies_and_persists_the_selected_mode(monkeypatch, preserve_motion_policy) -> None:
+    from app.motion_policy import motion_policy
+
+    saved: dict = {}
+    monkeypatch.setattr("app.main_window.save_settings", lambda settings: saved.update(settings))
+    motion_policy.set_provider(None)
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        index = window.motion_combo.findData("reduced")
+        assert index >= 0
+        window.motion_combo.setCurrentIndex(index)
+
+        assert motion_policy.mode == "reduced"
+        assert motion_policy.reduced is True
+        assert window._settings["motion_mode"] == "reduced"
+        assert saved.get("motion_mode") == "reduced"
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_startup_wiring_applies_the_stored_motion_mode(monkeypatch, preserve_motion_policy) -> None:
+    from app import main_window
+    from app.motion_policy import motion_policy
+
+    monkeypatch.setattr(main_window, "load_settings", lambda: {"motion_mode": "reduced"})
+
+    app = QApplication.instance() or QApplication([])
+    main_window._wire_motion_policy(app)
+
+    assert motion_policy.mode == "reduced"
+    assert motion_policy.reduced is True
+
+
+def test_application_active_state_refreshes_the_motion_policy(monkeypatch, preserve_motion_policy) -> None:
+    from app import main_window
+    from app.motion_policy import motion_policy
+
+    monkeypatch.setattr(main_window, "load_settings", lambda: {"motion_mode": "system"})
+
+    app = QApplication.instance() or QApplication([])
+    main_window._wire_motion_policy(app)
+
+    # Startup probe says animations are on (not reduced).
+    motion_policy.set_provider(lambda: False)
+    motion_policy.refresh()
+    assert motion_policy.reduced is False
+
+    # The OS setting flips to "reduce animations" while the app is backgrounded;
+    # re-activating the window must re-read the provider via the wired signal.
+    motion_policy.set_provider(lambda: True)
+    app.applicationStateChanged.emit(Qt.ApplicationActive)
+
+    assert motion_policy.reduced is True
+
+
+def test_repeated_motion_wiring_refreshes_only_once(monkeypatch, preserve_motion_policy) -> None:
+    from app import main_window
+    from app.motion_policy import motion_policy
+
+    monkeypatch.setattr(main_window, "load_settings", lambda: {"motion_mode": "system"})
+
+    app = QApplication.instance() or QApplication([])
+    main_window._wire_motion_policy(app)
+    main_window._wire_motion_policy(app)
+
+    calls = {"n": 0}
+
+    def _counting_provider() -> bool:
+        calls["n"] += 1
+        return False
+
+    motion_policy.set_provider(_counting_provider)
+    app.applicationStateChanged.emit(Qt.ApplicationActive)
+
+    assert calls["n"] == 1
+
+
+def test_status_dot_pulse_stops_at_full_opacity_under_reduced_motion(preserve_motion_policy) -> None:
+    from PySide6.QtCore import QAbstractAnimation
+
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("full")
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window._scan_in_progress = True
+        window._update_status_dot()
+        assert window._status_pulse.state() == QAbstractAnimation.Running
+
+        policy.set_mode("reduced")
+        assert window._status_pulse.state() == QAbstractAnimation.Stopped
+        assert window._status_dot_effect.opacity() == 1.0
+
+        # Back to full while the scan is still running: the pulse resumes.
+        policy.set_mode("full")
+        assert window._status_pulse.state() == QAbstractAnimation.Running
+
+        # ...but once the scan is over it must not come back.
+        policy.set_mode("reduced")
+        window._scan_in_progress = False
+        window._update_status_dot()
+        policy.set_mode("full")
+        assert window._status_pulse.state() == QAbstractAnimation.Stopped
+        assert window._status_dot_effect.opacity() == 1.0
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_status_dot_stays_static_when_scan_starts_reduced(preserve_motion_policy) -> None:
+    from PySide6.QtCore import QAbstractAnimation
+
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("reduced")
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window._scan_in_progress = True
+        window._update_status_dot()
+
+        assert window._status_pulsing is True  # the state wants a pulse...
+        assert window._status_pulse.state() == QAbstractAnimation.Stopped  # ...motion says no
+        assert window._status_dot_effect.opacity() == 1.0
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def test_collected_scene_state_includes_schedule(monkeypatch) -> None:
     monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
     app = QApplication.instance() or QApplication([])

@@ -21,11 +21,14 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
+from app.motion_policy import motion_policy
 from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
+from app.widgets.animation_helpers import play_or_complete
 from app.widgets.celebration_overlay import CelebrationOverlay
 from app.widgets.clickable_label import ClickableLabel
 from app.widgets.icon_tile import IconTile
@@ -81,7 +84,9 @@ class _LicensePanel(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(560, 424)
+        # Fixed width; the owner controls height (min/max) so the panel can fit a
+        # short window with its centre scrolling.
+        self.setFixedWidth(560)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -269,27 +274,35 @@ class LicenseOverlay(QWidget):
         active = self._is_active_mode()
         self._key_revealed = False
         self._spinner_frame = 0
+        self._activating = False
         self._spinner_timer = QTimer(self)
         self._spinner_timer.setInterval(280)
         self._spinner_timer.timeout.connect(self._tick_spinner)
+        motion_policy.changed.connect(self._on_spinner_motion_changed)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addStretch(1)
         self._panel = _LicensePanel(self)
-        self._panel.setFixedSize(560, 460 if active else _FREE_COLLAPSED_H)
+        self._panel.setMinimumHeight(300)
+        self._panel.setMaximumHeight(self._preferred_height())
         layout.addWidget(self._panel, 0, Qt.AlignCenter)
         layout.addStretch(1)
 
         panel_layout = QVBoxLayout(self._panel)
-        panel_layout.setContentsMargins(30, 16, 30, 22)
+        panel_layout.setContentsMargins(30, 16, 30, 20)
         panel_layout.setSpacing(10)
 
-        # Close affordance, top-right: a real 32x32 hit area with a tooltip and
-        # accessible name (Esc also closes via keyPressEvent).
-        close_row = QHBoxLayout()
-        close_row.setContentsMargins(0, 0, 0, 0)
-        close_row.addStretch(1)
+        # --- Pinned header: a compact title + the × close. Nothing tall lives
+        # here, so on a short window (860×420) the title and close stay visible
+        # while the value content below scrolls. Esc also closes via keyPressEvent.
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        title = QLabel(labels["active_title"] if active else labels["title"], self._panel)
+        title.setObjectName("licenseTitle")
+        title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        header.addWidget(title, 1, Qt.AlignVCenter)
         self._close_button = ClickableLabel("✕", self._panel)
         self._close_button.setObjectName("licenseClose")
         self._close_button.setFixedSize(32, 32)
@@ -298,28 +311,38 @@ class LicenseOverlay(QWidget):
         self._close_button.setToolTip(labels.get("close", ""))
         self._close_button.setAccessibleName(labels.get("close", "Close"))
         self._close_button.clicked.connect(self.close_overlay)
-        close_row.addWidget(self._close_button, 0, Qt.AlignTop | Qt.AlignRight)
-        panel_layout.addLayout(close_row)
+        header.addWidget(self._close_button, 0, Qt.AlignTop | Qt.AlignRight)
+        panel_layout.addLayout(header)
 
-        badge = _ProStatusBadge(self._panel) if active else _ProEmblem(self._panel)
-        panel_layout.addWidget(badge, 0, Qt.AlignHCenter)
+        # --- Scrollable centre: emblem/status, benefits, key field, message.
+        # Only this area gives up height on a short window; header and footer stay.
+        self._scroll = QScrollArea(self._panel)
+        self._scroll.setObjectName("licenseScroll")
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setAttribute(Qt.WA_TranslucentBackground)
+        self._scroll.viewport().setAutoFillBackground(False)
+        centre = QWidget()
+        centre.setObjectName("licenseScrollContent")
+        centre_layout = QVBoxLayout(centre)
+        centre_layout.setContentsMargins(0, 0, 0, 0)
+        centre_layout.setSpacing(10)
 
-        title = QLabel(labels["active_title"] if active else labels["title"], self._panel)
-        title.setObjectName("licenseTitle")
-        title.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        subtitle = QLabel(self._active_message() if active else labels["subtitle"], self._panel)
+        badge = _ProStatusBadge(centre) if active else _ProEmblem(centre)
+        centre_layout.addWidget(badge, 0, Qt.AlignHCenter)
+
+        subtitle = QLabel(self._active_message() if active else labels["subtitle"], centre)
         subtitle.setObjectName("licenseSubtitle")
         subtitle.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         subtitle.setWordWrap(True)
-        panel_layout.addWidget(title)
 
         if active:
-            status_card = QFrame(self._panel)
+            status_card = QFrame(centre)
             status_card.setObjectName("licenseStatusCard")
             status_layout = QVBoxLayout(status_card)
             status_layout.setContentsMargins(18, 14, 18, 16)
             status_layout.setSpacing(12)
-            subtitle.setParent(status_card)
             status_layout.addWidget(subtitle)
             masked = self._masked_key()
             if masked:
@@ -327,19 +350,17 @@ class LicenseOverlay(QWidget):
                 key_chip.setObjectName("licenseKeyChip")
                 key_chip.setAlignment(Qt.AlignHCenter)
                 status_layout.addWidget(key_chip, 0, Qt.AlignHCenter)
-            panel_layout.addWidget(status_card)
+            centre_layout.addWidget(status_card)
         else:
-            panel_layout.addWidget(subtitle)
-            panel_layout.addSpacing(4)
+            centre_layout.addWidget(subtitle)
+            centre_layout.addSpacing(4)
             features_grid = self._build_features_grid()
             if features_grid is not None:
-                panel_layout.addWidget(features_grid)
-
-        panel_layout.addStretch(1)
+                centre_layout.addWidget(features_grid)
 
         # The key field: always built, but hidden until the user asks for it in
         # free mode (and always hidden in the active/licensed state).
-        field_box = QFrame(self._panel)
+        field_box = QFrame(centre)
         self._field_box = field_box
         field_box.setObjectName("licenseFieldBox")
         field_layout = QVBoxLayout(field_box)
@@ -354,19 +375,22 @@ class LicenseOverlay(QWidget):
         self.key_input.installEventFilter(self)
         field_layout.addWidget(field_label)
         field_layout.addWidget(self.key_input)
-        panel_layout.addWidget(field_box)
+        centre_layout.addWidget(field_box)
         field_box.setVisible(False)
 
-        self.message_label = QLabel("", self._panel)
+        self.message_label = QLabel("", centre)
         self.message_label.setObjectName("licenseMessage")
         self.message_label.setWordWrap(True)
         self.message_label.setMinimumHeight(24)
-        panel_layout.addWidget(self.message_label)
+        centre_layout.addWidget(self.message_label)
+        centre_layout.addStretch(1)
 
-        # Buttons. Active: a single OK. Free default: one primary "Buy Pro" plus a
-        # quiet "I already have a key" link. Revealing the key swaps in Back +
-        # Activate. buy_button/_activate_button/_cancel_button stay as attributes
-        # the activation flow and tests reach for.
+        self._scroll.setWidget(centre)
+        panel_layout.addWidget(self._scroll, 1)
+
+        # --- Pinned footer: the primary CTA / OK, Back, and deactivate stay put.
+        # Active: a single OK. Free default: one primary "Buy Pro" plus a quiet
+        # "I already have a key" link. Revealing the key swaps in Back + Activate.
         self.buy_button = LiquidButton(labels.get("buy", ""), "accent", self._panel)
         self.buy_button.clicked.connect(self._show_buy_message)
         self._activate_button = LiquidButton(labels.get("activate", ""), "accent", self._panel)
@@ -442,6 +466,8 @@ class LicenseOverlay(QWidget):
         if parent is not None:
             self.setGeometry(parent.rect())
             parent.installEventFilter(self)
+        # Fit the panel to the window BEFORE the animation reads its geometry.
+        self._fit_to_parent()
         self._prepare_open_animation()
         self.show()
         self.raise_()
@@ -452,6 +478,24 @@ class LicenseOverlay(QWidget):
 
     def _is_active_mode(self) -> bool:
         return self._mode in {"dev", "license"}
+
+    def _preferred_height(self) -> int:
+        if self._is_active_mode():
+            return 460
+        return _FREE_EXPANDED_H if self._key_revealed else _FREE_COLLAPSED_H
+
+    def _fitted_height(self) -> int:
+        # Explicit: min(preferred, available). Growing the window back restores
+        # the full preferred height because it is recomputed every time.
+        parent = self.parentWidget()
+        if parent is None:
+            return self._preferred_height()
+        return max(300, min(self._preferred_height(), parent.height() - 24))
+
+    def _fit_to_parent(self) -> None:
+        height = self._fitted_height()
+        self._panel.setMinimumHeight(height)
+        self._panel.setMaximumHeight(height)
 
     def _active_message(self) -> str:
         return self._labels["active_dev"] if self._mode == "dev" else self._labels["active_license"]
@@ -517,8 +561,11 @@ class LicenseOverlay(QWidget):
         self._field_box.setVisible(True)
         self._reveal_row.setVisible(True)
         self.message_label.setText("")
-        self._animate_panel_height(_FREE_EXPANDED_H)
+        self._animate_panel_height(self._fitted_height())
         self.key_input.setFocus(Qt.OtherFocusReason)
+        # Defer to the next tick so the field has its final geometry before we
+        # scroll it into view (it was just made visible / the panel resized).
+        QTimer.singleShot(0, lambda: self._scroll.ensureWidgetVisible(self.key_input, 0, 40))
 
     def _hide_key(self) -> None:
         """Back out of the key field to the buy CTA."""
@@ -529,7 +576,7 @@ class LicenseOverlay(QWidget):
         self._reveal_row.setVisible(False)
         self._buy_row.setVisible(True)
         self.message_label.setText("")
-        self._animate_panel_height(_FREE_COLLAPSED_H)
+        self._animate_panel_height(self._fitted_height())
 
     def _animate_panel_height(self, end: int) -> None:
         start = self._panel.height()
@@ -569,13 +616,32 @@ class LicenseOverlay(QWidget):
         # Dim the close affordance while checking — close is refused anyway
         # (close_overlay guards on the running worker), but the dim signals it.
         self._close_button.setEnabled(not busy)
+        self._activating = busy
         if busy:
-            self._spinner_frame = 0
-            self._spinner_timer.start()
-            self._activate_button.setText(self._labels.get("activating", "…"))
+            self._sync_spinner()
         else:
             self._spinner_timer.stop()
             self._activate_button.setText(self._labels.get("activate", ""))
+
+    def _sync_spinner(self) -> None:
+        """Under reduced motion the worker keeps checking the key — only the
+        cycling dots stop. The label itself carries no suffix ("Checking"), so a
+        single static ellipsis is appended to still read as work in progress."""
+        if not self._activating:
+            self._spinner_timer.stop()
+            return
+        base = self._labels.get("activating", "")
+        if motion_policy.reduced:
+            self._spinner_timer.stop()
+            self._activate_button.setText(f"{base.rstrip('.…')}…")
+            return
+        self._spinner_frame = 0
+        self._activate_button.setText(base or "…")
+        if not self._spinner_timer.isActive():
+            self._spinner_timer.start()
+
+    def _on_spinner_motion_changed(self, _reduced: bool) -> None:
+        self._sync_spinner()
 
     def _tick_spinner(self) -> None:
         """Animate a trailing '…' in the activate button while a key is checked —
@@ -679,7 +745,7 @@ class LicenseOverlay(QWidget):
         self._fade_anim.setStartValue(0.0)
         self._fade_anim.setEndValue(1.0)
         self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._fade_anim.start()
+        play_or_complete(self._fade_anim)
 
         # Let the panel rise into place for a softer, more polished entrance.
         target = self._panel.geometry()
@@ -688,7 +754,7 @@ class LicenseOverlay(QWidget):
         self._panel_anim.setStartValue(target.translated(0, 26))
         self._panel_anim.setEndValue(target)
         self._panel_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._panel_anim.start()
+        play_or_complete(self._panel_anim)
 
     def close_overlay(self) -> None:
         # Never tear the overlay down while a key check is in flight: the
@@ -723,6 +789,7 @@ class LicenseOverlay(QWidget):
             parent = self.parentWidget()
             if parent is not None:
                 self.setGeometry(parent.rect())
+                self._fit_to_parent()
         elif watched is self.key_input and event.type() in {QEvent.Type.FocusIn, QEvent.Type.FocusOut}:
             self._field_box.setProperty("focused", event.type() == QEvent.Type.FocusIn)
             self._field_box.style().unpolish(self._field_box)
@@ -733,6 +800,10 @@ class LicenseOverlay(QWidget):
         palette = theme_manager.palette
         self.setStyleSheet(
             f"""
+            #licenseScroll, #licenseScroll > QWidget, #licenseScrollContent {{
+                background: transparent;
+                border: none;
+            }}
             #licenseTitle {{
                 color: {palette["text"]};
                 font-size: 22px;

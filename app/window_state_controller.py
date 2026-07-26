@@ -46,11 +46,19 @@ class WindowStateController:
         requested_width = min(requested_width, STARTUP_MAX_WIDTH)
         requested_height = min(requested_height, STARTUP_MAX_HEIGHT)
         if available is None:
-            host.resize(requested_width, requested_height)
+            host.resize(max(WINDOW_MIN_WIDTH, requested_width), max(WINDOW_MIN_HEIGHT, requested_height))
             return
 
-        width = max(WINDOW_MIN_WIDTH, min(requested_width, available.width()))
-        height = max(WINDOW_MIN_HEIGHT, min(requested_height, available.height()))
+        # resize() sizes the *client* area, but the whole frameGeometry (client +
+        # title bar + borders) must fit the work area. Reserve room for the frame
+        # so the window never opens taller/wider than the screen. Below the
+        # window minimum we cannot shrink further (setMinimumSize wins), so the
+        # minimum itself is kept small enough to fit a 1366×768@150% work area.
+        frame_w, frame_h = self._frame_overhead()
+        max_width = max(WINDOW_MIN_WIDTH, available.width() - frame_w)
+        max_height = max(WINDOW_MIN_HEIGHT, available.height() - frame_h)
+        width = max(WINDOW_MIN_WIDTH, min(requested_width, max_width))
+        height = max(WINDOW_MIN_HEIGHT, min(requested_height, max_height))
         host.resize(width, height)
         frame = host.frameGeometry()
         frame.moveCenter(available.center())
@@ -63,6 +71,20 @@ class WindowStateController:
         if frame.bottom() > available.bottom():
             frame.moveBottom(available.bottom())
         host.move(frame.topLeft())
+
+    def _frame_overhead(self) -> tuple[int, int]:
+        """Best-effort size of the window decorations (title bar + borders).
+
+        At startup the window isn't decorated yet, so frameGeometry equals the
+        client geometry and the real overhead is unknown — fall back to a
+        conservative allowance so the reserved space is never too small."""
+        host = self._host
+        frame = host.frameGeometry()
+        over_w = max(0, frame.width() - host.width())
+        over_h = max(0, frame.height() - host.height())
+        # Never let a partially-known frame (e.g. 8×31 before the window is fully
+        # decorated) shrink the reserve below the safe fallback.
+        return max(over_w, 16), max(over_h, 48)
 
     def apply_windows_backdrop(self) -> None:
         # LumaBLE paints its own graphite + live-colour background through

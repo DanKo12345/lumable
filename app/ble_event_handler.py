@@ -455,10 +455,15 @@ class BleEventHandler:
             if connected:
                 name = self._device_name_for_address(address) or address or ""
                 hint.setText(name)
-                hint.setVisible(bool(name))
+                wanted = bool(name)
             else:
                 hint.setText(host._tr("device.connect_hint"))
-                hint.setVisible(True)
+                wanted = True
+            apply_hint = getattr(host, "_set_status_hint_visible", None)
+            if callable(apply_hint):
+                apply_hint(wanted)  # compact sidebar may override on a short window
+            else:
+                hint.setVisible(wanted)
         sync_power_button = getattr(host, "_sync_power_button", None)
         if callable(sync_power_button):
             sync_power_button()

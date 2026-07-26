@@ -6,6 +6,7 @@ from PySide6.QtCore import QElapsedTimer, Qt, QTimer
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
+from app.motion_policy import motion_policy
 from app.theme import qcolor_from_token, theme_manager
 
 
@@ -49,10 +50,39 @@ class AuroraBackground(QWidget):
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.PreciseTimer)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(self._frame_interval_ms)
         self._elapsed.start()
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
+        # Reduced motion freezes the phase (the breathing drift); the background
+        # still repaints on colour/theme changes (they call update() directly).
+        # Connect on self so Qt drops the signal when the widget is destroyed.
+        motion_policy.changed.connect(self._on_motion_changed)
+        self._sync_motion_timer()
+
+    def _sync_motion_timer(self) -> None:
+        # One rule for every path — show/hide and policy flips alike: the phase
+        # timer runs only while the widget is on-screen AND motion is not reduced.
+        # This closes the lifecycle gap where a hidden widget flipped back to full
+        # would otherwise stay frozen after being shown again.
+        if self.isVisible() and not motion_policy.reduced:
+            if not self._timer.isActive():
+                self._elapsed.restart()
+                self._timer.start(self._frame_interval_ms)
+        else:
+            self._timer.stop()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_motion_timer()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._timer.stop()
+
+    def _on_motion_changed(self, reduced: bool) -> None:
+        if reduced:
+            self.update()  # settle on a static frame at the current phase
+        self._sync_motion_timer()
 
     def set_dark(self, dark: bool):
         self._dark = dark

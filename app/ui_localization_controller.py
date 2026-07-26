@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.feature_gate import is_pro
 from app.localization import localization_manager
+from app.motion_policy import DEFAULT_MOTION_MODE, normalize_motion_mode
 from app.panels.diagnostics_panel import resize_diagnostics_action_buttons
 from app.storage import save_settings
 
@@ -23,10 +24,13 @@ class UiLocalizationController:
         host.about_button.setToolTip(host._tr("tray.about"))
         for nav_key, nav_button in getattr(host, "_nav_buttons", {}).items():
             nav_button.setText(host._tr(f"nav.{nav_key}"))
-        for label_key, label in getattr(host, "_settings_labels", []):
-            label.setText(host._tr(label_key))
+        for label_key, label, control in getattr(host, "_settings_labels", []):
+            text = host._tr(label_key)
+            label.setText(text)
+            control.setAccessibleName(text)  # keep assistive tools on the new language
         self.refresh_language_options()
         self._apply_performance_texts()
+        self._apply_motion_texts()
         host._refresh_quick_mode_buttons()
 
         self._apply_device_texts()
@@ -109,10 +113,15 @@ class UiLocalizationController:
             if host._is_connected:
                 name = str(host._settings.get("last_device_name") or host._settings.get("last_device_address") or "")
                 hint.setText(name)
-                hint.setVisible(bool(name))
+                wanted = bool(name)
             else:
                 hint.setText(host._tr("device.connect_hint"))
-                hint.setVisible(True)
+                wanted = True
+            apply_hint = getattr(host, "_set_status_hint_visible", None)
+            if callable(apply_hint):
+                apply_hint(wanted)  # compact sidebar may override on a short window
+            else:
+                hint.setVisible(wanted)
         host._ble_events._sync_last_device_hint(autoconnecting=host._connect_in_progress)
         host.logs_toggle_button.setText(host._tr("device.show_logs"))
         host.supported_controllers_button.setText(host._tr("device.supported"))
@@ -187,6 +196,10 @@ class UiLocalizationController:
                 host.timers_card.subtitle_label.setText(host._tr("timers.subtitle"))
             host.timer_sleep_label.setText(host._tr("timers.sleep"))
             host.timer_sleep_after.setText(host._tr("timers.sleep_after"))
+            # The pills paint only a number, so their accessible name carries the
+            # purpose — it has to follow the language like the visible labels do.
+            host.timer_sleep_pill.set_purpose(host._tr("timers.sleep_after"))
+            host.timer_sunrise_pill.set_purpose(host._tr("timers.sunrise"))
             host.timer_sunrise_label.setText(host._tr("timers.sunrise"))
             host.timer_sunrise_at.setText(host._tr("timers.sunrise_at"))
             host.timer_sunrise_time.set_picker_title(host._tr("timers.sunrise"))
@@ -222,6 +235,28 @@ class UiLocalizationController:
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)
         combo.setToolTip(host._tr("performance.tooltip"))
+
+    def _apply_motion_texts(self) -> None:
+        host = self._host
+        combo = getattr(host, "motion_combo", None)
+        if combo is None:
+            return
+        current = (
+            normalize_motion_mode(host._settings.get("motion_mode", DEFAULT_MOTION_MODE))
+            if isinstance(host._settings, dict)
+            else DEFAULT_MOTION_MODE
+        )
+        # Stable itemData (system/reduced/full) — never compared by localized text.
+        # Block signals so relabelling on a language change never re-saves the mode.
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(host._tr("motion.system"), "system")
+        combo.addItem(host._tr("motion.reduced"), "reduced")
+        combo.addItem(host._tr("motion.full"), "full")
+        index = combo.findData(current)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+        combo.setToolTip(host._tr("motion.tooltip"))
 
     def _apply_ambient_texts(self) -> None:
         host = self._host

@@ -38,13 +38,23 @@ class OverlayController:
             return
         labels = {
             "title": host._tr("updates.popup_title"),
-            "body": host._tr("updates.popup_body", current=info.current_version, latest=info.latest_version),
-            "update": host._tr("updates.popup_now"),
+            "release": str(getattr(info, "title", "") or ""),
+            "versions": host._tr("updates.popup_versions", current=info.current_version, latest=info.latest_version),
+            "installed": host._tr("updates.popup_installed"),
+            "available": host._tr("updates.popup_available"),
+            "current_version": info.current_version,
+            "latest_version": info.latest_version,
+            "whats_new": host._tr("updates.popup_whats_new"),
+            "notes": str(getattr(info, "notes", "") or ""),
+            "open": host._tr("updates.popup_open"),
             "later": host._tr("updates.popup_later"),
+            "skip": host._tr("updates.popup_skip"),
+            "close": host._tr("dialog.close"),
         }
-        overlay = UpdateOverlay(labels, host)
+        overlay = UpdateOverlay(labels, info.latest_version, host)
         self._update_overlay = overlay
         overlay.update_requested.connect(host._update_controller.open_update_page)
+        overlay.skip_requested.connect(host._update_controller.skip_version)
         overlay.closed.connect(lambda: setattr(self, "_update_overlay", None))
         overlay.open()
 

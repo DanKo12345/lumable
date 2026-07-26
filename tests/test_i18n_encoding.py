@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 I18N_DIR = Path(__file__).parent.parent / "app" / "i18n"
-LANGUAGES = ["en.json", "ru.json", "zh.json"]
+LANGUAGES = ["en.json", "ru.json", "es.json", "zh.json"]
 
 
 def _read_translations(lang: str) -> dict[str, str]:

@@ -10,6 +10,7 @@ from app.feature_gate import can_use
 from app.music_controller import MusicController, list_audio_inputs, list_audio_outputs
 from app.storage import save_settings
 from app.widgets import ColorPickerOverlay
+from app.widgets.animation_helpers import play_or_complete
 
 _DEFAULTS = {"saturation": 60, "smoothing": 50, "speed": 30, "beat": 40, "gate": 16}
 _BANDS = ("bass", "mid", "treble")
@@ -96,7 +97,7 @@ class MusicUiController:
         self._gate_min.setEndValue(target)
         self._gate_max.setStartValue(row.maximumHeight())
         self._gate_max.setEndValue(target)
-        self._gate_anim.start()
+        play_or_complete(self._gate_anim)
 
     def _on_gate_anim_finished(self) -> None:
         if not self._gate_hiding:
@@ -147,7 +148,7 @@ class MusicUiController:
         self._preview_min.setEndValue(target_h)
         self._preview_max.setStartValue(preview.maximumHeight())
         self._preview_max.setEndValue(target_h)
-        self._preview_anim.start()
+        play_or_complete(self._preview_anim)
 
     def _show_preview(self) -> None:
         preview = getattr(self._host, "music_preview", None)

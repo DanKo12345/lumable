@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation
 
+from app.widgets.animation_helpers import play_or_complete
+
 
 class SmoothScrollFilter(QObject):
     def __init__(self, target, step: int = 58, duration: int = 130):
@@ -45,6 +47,8 @@ class SmoothScrollFilter(QObject):
         self._animation.stop()
         self._animation.setStartValue(scrollbar.value())
         self._animation.setEndValue(target_value)
-        self._animation.start()
+        # Reduced motion snaps to the exact target (and finished clears the
+        # pending _target_value); otherwise it eases.
+        play_or_complete(self._animation)
         event.accept()
         return True

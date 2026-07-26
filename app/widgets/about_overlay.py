@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
+from app.widgets.animation_helpers import play_or_complete
 from app.widgets.liquid_button import LiquidButton
 
 ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "icon.ico"
@@ -18,7 +19,12 @@ class _AboutPanel(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(580, 620)
+        # Fixed width, but the height adapts down to fit a short window (860×420
+        # at 150%). The header and footer stay pinned; only the middle scroll
+        # gives up height. The owner caps the max via _fit_to_parent().
+        self.setFixedWidth(580)
+        self.setMinimumHeight(300)
+        self.setMaximumHeight(620)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -109,12 +115,14 @@ class AboutOverlay(QWidget):
         panel_layout.addLayout(header)
 
         scroll = QScrollArea(self._panel)
+        self._scroll = scroll
         scroll.setObjectName("aboutScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.viewport().setAutoFillBackground(False)
-        scroll.setMinimumHeight(360)
+        # No minimum height: on a short window it must yield space so the pinned
+        # footer buttons never get pushed off the bottom of the panel.
         content = QWidget(scroll)
         content.setObjectName("aboutScrollContent")
         content_layout = QVBoxLayout(content)
@@ -136,11 +144,13 @@ class AboutOverlay(QWidget):
         guide_button = LiquidButton(labels.get("guide", ""), "ghost", self._panel)
         guide_button.setFixedSize(184, 38)
         guide_button.clicked.connect(self._request_guide)
+        self._guide_button = guide_button
         ok_row.addWidget(guide_button, 0, Qt.AlignLeft | Qt.AlignVCenter)
         ok_row.addStretch(1)
         ok_button = LiquidButton(labels["ok"], "accent_soft", self._panel)
         ok_button.setFixedSize(100, 38)
         ok_button.clicked.connect(self.close_overlay)
+        self._ok_button = ok_button
         ok_row.addWidget(ok_button, 0, Qt.AlignRight | Qt.AlignVCenter)
         panel_layout.addLayout(ok_row)
 
@@ -176,10 +186,19 @@ class AboutOverlay(QWidget):
         if parent is not None:
             self.setGeometry(parent.rect())
             parent.installEventFilter(self)
+        self._fit_to_parent()
         self.show()
         self.raise_()
         self.setFocus(Qt.PopupFocusReason)
         self._start_open_animation()
+
+    def _fit_to_parent(self) -> None:
+        # Cap the panel to the window so the pinned footer buttons can't fall
+        # off-screen on a short window; the middle scroll absorbs the rest.
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        self._panel.setMaximumHeight(max(self._panel.minimumHeight(), min(620, parent.height() - 24)))
 
     def _start_open_animation(self) -> None:
         self.layout().activate()
@@ -199,8 +218,8 @@ class AboutOverlay(QWidget):
         self._panel_anim.setEndValue(end_pos)
         self._panel_anim.setEasingCurve(QEasingCurve.OutCubic)
 
-        self._fade_anim.start()
-        self._panel_anim.start()
+        play_or_complete(self._fade_anim)
+        play_or_complete(self._panel_anim)
 
     def close_overlay(self) -> None:
         parent = self.parentWidget()
@@ -227,6 +246,7 @@ class AboutOverlay(QWidget):
             parent = self.parentWidget()
             if parent is not None:
                 self.setGeometry(parent.rect())
+                self._fit_to_parent()
         return super().eventFilter(watched, event)
 
     def _apply_style(self) -> None:

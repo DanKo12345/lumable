@@ -10,6 +10,8 @@ from urllib.request import Request, urlopen
 
 from PySide6.QtCore import QObject, Signal
 
+from app.app_info import APP_UPDATE_PRERELEASES
+
 
 @dataclass(frozen=True)
 class UpdateInfo:
@@ -27,33 +29,113 @@ class UpdateResult:
     message: str = ""
 
 
-def _version_parts(version: str) -> tuple[int, ...]:
-    text = version.strip().lower()
+# Prerelease stages in ascending precedence. Anything unrecognised sorts below
+# the known stages (rank -1) but — because ``stable`` is compared first — never
+# above a final release of the same core version.
+_PRE_STAGE_RANK = {"alpha": 0, "beta": 1, "rc": 2}
+
+
+@dataclass(frozen=True, order=True)
+class VersionKey:
+    """A comparable version identity. Field order IS the precedence order:
+    numeric core first, then final-over-prerelease, then prerelease stage, then
+    the trailing prerelease number. ``0.3.5`` beats ``0.3.5-beta2`` because
+    ``stable`` (1 vs 0) is weighed before the prerelease fields."""
+
+    release: tuple[int, ...]
+    stable: int
+    pre_stage: int
+    pre_num: int
+
+
+def _parse_parts(tag: str) -> tuple[tuple[int, ...], bool, str, int]:
+    """Split a tag into (release, is_prerelease, prerelease_label, number).
+    The label is kept verbatim so callers that need identity (not just ordering)
+    can tell ``preview1`` from ``nightly1``."""
+    text = str(tag).strip().lower()
     if text.startswith("v"):
         text = text[1:]
-    parts = [int(part) for part in re.findall(r"\d+", text)]
-    return tuple(parts or [0])
+    # Build metadata (+build) never participates in precedence or identity, so
+    # drop it before anything else — otherwise its digits would leak into core.
+    text, _, _build = text.partition("+")
+    core, _, pre = text.partition("-")
+    nums = [int(part) for part in re.findall(r"\d+", core)] or [0]
+    # Canonicalise so 1.0.0 == 1.0 == 1: drop insignificant trailing zeros,
+    # keeping at least one component. Comparison no longer depends on how many
+    # segments the *other* version happens to have.
+    while len(nums) > 1 and nums[-1] == 0:
+        nums.pop()
+    release = tuple(nums)
+    if not pre:
+        return release, False, "", 0
+    match = re.match(r"([a-z]+)?\.?(\d+)?", pre)
+    label = (match.group(1) or "") if match else ""
+    number = int(match.group(2)) if (match and match.group(2)) else 0
+    return release, True, label, number
+
+
+def parse_version(tag: str) -> VersionKey:
+    release, is_pre, label, number = _parse_parts(tag)
+    if not is_pre:
+        return VersionKey(release, 1, 0, 0)
+    return VersionKey(release, 0, _PRE_STAGE_RANK.get(label, -1), number)
 
 
 def is_newer_version(latest: str, current: str) -> bool:
-    latest_parts = list(_version_parts(latest))
-    current_parts = list(_version_parts(current))
-    width = max(len(latest_parts), len(current_parts))
-    latest_parts.extend([0] * (width - len(latest_parts)))
-    current_parts.extend([0] * (width - len(current_parts)))
-    return tuple(latest_parts) > tuple(current_parts)
+    return parse_version(latest) > parse_version(current)
 
 
-def parse_update_payload(payload: dict[str, Any] | list[Any], current_version: str, fallback_url: str = "") -> UpdateResult:
-    if isinstance(payload, list):
-        return _parse_release_list(payload, current_version, fallback_url)
+def canonical_version(tag: str) -> str:
+    """A stable identity string for a version, used to remember a skipped
+    release. Build metadata is dropped and trailing zeros normalised, while the
+    prerelease label and number are kept verbatim — so ``beta``, ``beta2``,
+    ``rc1``, ``preview1``, ``nightly1`` and the final release never collapse
+    into the same skip id."""
+    release, is_pre, label, number = _parse_parts(tag)
+    core = ".".join(str(part) for part in release)
+    if not is_pre:
+        return core
+    return f"{core}-{label or 'pre'}{number}"
 
-    latest_version = str(payload.get("tag_name") or payload.get("version") or "").strip()
-    if latest_version.startswith("v"):
-        latest_version = latest_version[1:]
-    if not latest_version:
-        return UpdateResult("error", message="missing_version")
 
+# A supported version tag: optional leading "v", dotted numbers, an optional
+# -prerelease and an optional +build suffix (both may appear together). It must
+# match in full — "banana" has no numeric core and is not a version.
+#
+# The prerelease grammar is deliberately limited to what ``_parse_parts`` can
+# actually distinguish: a label optionally followed by a number (``beta``,
+# ``beta2``, ``beta.2``). A dotted alphabetic tail like ``preview.one`` is
+# rejected here rather than silently collapsing to the same canonical id later.
+_MAX_TAG_LENGTH = 64
+_VERSION_RE = re.compile(r"v?\d+(?:\.\d+)*(?:-[a-z]+(?:\.?\d+)?)?(?:\+[0-9a-z.]+)?", re.IGNORECASE)
+
+
+def is_valid_version(tag: str) -> bool:
+    text = str(tag).strip()
+    # Bound the length before any parsing so an absurd numeric tag can never
+    # reach int() on a huge string.
+    if not text or len(text) > _MAX_TAG_LENGTH:
+        return False
+    return bool(_VERSION_RE.fullmatch(text))
+
+
+def _tag_of(payload: dict[str, Any]) -> str:
+    return str(payload.get("tag_name") or payload.get("version") or "").strip()
+
+
+def _display_version(tag: str) -> str:
+    return tag[1:] if tag[:1].lower() == "v" else tag
+
+
+def _is_admissible(payload: dict[str, Any], allow_prereleases: bool) -> bool:
+    # A draft is never offered; a prerelease only when the build opts in.
+    if payload.get("draft") is True:
+        return False
+    return allow_prereleases or payload.get("prerelease") is not True
+
+
+def _build_info(payload: dict[str, Any], current_version: str, tag: str, fallback_url: str) -> UpdateInfo:
+    latest_version = _display_version(tag)
     url = str(
         payload.get("html_url")
         or payload.get("download_url")
@@ -61,27 +143,83 @@ def parse_update_payload(payload: dict[str, Any] | list[Any], current_version: s
         or fallback_url
         or ""
     ).strip()
-    info = UpdateInfo(
+    return UpdateInfo(
         current_version=current_version,
         latest_version=latest_version,
         title=str(payload.get("name") or f"Version {latest_version}").strip(),
         url=url,
         notes=str(payload.get("body") or payload.get("notes") or "").strip(),
     )
-    if is_newer_version(latest_version, current_version):
+
+
+def _current_result(current_version: str, fallback_url: str = "") -> UpdateResult:
+    # ``current`` must still carry an UpdateInfo: the controller reads a missing
+    # info as a corrupted response, so "you're up to date" (an empty-but-valid
+    # release list) must not look like an error.
+    return UpdateResult(
+        "current",
+        info=UpdateInfo(
+            current_version=current_version,
+            latest_version=current_version,
+            title="",
+            url=fallback_url.strip(),
+        ),
+    )
+
+
+def _decide(payload: dict[str, Any], current_version: str, tag: str, fallback_url: str) -> UpdateResult:
+    info = _build_info(payload, current_version, tag, fallback_url)
+    if is_newer_version(tag, current_version):
         return UpdateResult("available", info=info)
     return UpdateResult("current", info=info)
 
 
-def _parse_release_list(payload: list[Any], current_version: str, fallback_url: str = "") -> UpdateResult:
-    releases = [item for item in payload if isinstance(item, dict) and str(item.get("tag_name") or item.get("version") or "").strip()]
-    if not releases:
+def parse_update_payload(
+    payload: dict[str, Any] | list[Any],
+    current_version: str,
+    fallback_url: str = "",
+    *,
+    allow_prereleases: bool | None = None,
+) -> UpdateResult:
+    if allow_prereleases is None:
+        allow_prereleases = APP_UPDATE_PRERELEASES
+    if isinstance(payload, list):
+        return _parse_release_list(payload, current_version, fallback_url, allow_prereleases=allow_prereleases)
+
+    tag = _tag_of(payload)
+    if not is_valid_version(tag):
         return UpdateResult("error", message="missing_version")
-    latest_payload = max(
-        releases,
-        key=lambda item: _version_parts(str(item.get("tag_name") or item.get("version") or "")),
-    )
-    return parse_update_payload(latest_payload, current_version, fallback_url)
+    if not _is_admissible(payload, allow_prereleases):
+        return _current_result(current_version, fallback_url)
+    return _decide(payload, current_version, tag, fallback_url)
+
+
+def _parse_release_list(
+    payload: list[Any],
+    current_version: str,
+    fallback_url: str = "",
+    *,
+    allow_prereleases: bool | None = None,
+) -> UpdateResult:
+    if allow_prereleases is None:
+        allow_prereleases = APP_UPDATE_PRERELEASES
+    # Only genuinely valid versions decide error-vs-current. If *none* parse, the
+    # response is malformed (error). If some parse but the admission policy
+    # (draft always out, prerelease by build flag) filters them all, we are
+    # simply up to date (current) — not an error.
+    valid: list[tuple[dict[str, Any], str]] = []
+    for item in payload:
+        if isinstance(item, dict):
+            tag = _tag_of(item)
+            if is_valid_version(tag):
+                valid.append((item, tag))
+    if not valid:
+        return UpdateResult("error", message="missing_version")
+    admissible = [(item, tag) for item, tag in valid if _is_admissible(item, allow_prereleases)]
+    if not admissible:
+        return _current_result(current_version, fallback_url)
+    latest_item, latest_tag = max(admissible, key=lambda pair: parse_version(pair[1]))
+    return _decide(latest_item, current_version, latest_tag, fallback_url)
 
 
 class UpdateChecker(QObject):

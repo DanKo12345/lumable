@@ -2,33 +2,53 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Property, QAbstractAnimation, QEasingCurve, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainter
-from PySide6.QtWidgets import QLabel, QStyle, QStyleOption
+from PySide6.QtCore import Property, QAbstractAnimation, QEasingCurve, QRectF, Qt
+from PySide6.QtGui import QColor, QKeyEvent, QPainter
+from PySide6.QtWidgets import QAbstractButton, QStyle, QStyleOption
 
 from app.theme import qcolor_from_token, theme_manager
 from app.widgets.animation_helpers import make_property_animation, restart_animation
 
 
-class ValueChip(QLabel):
-    activated = Signal()
+class ValueChip(QAbstractButton):
+    """The numeric readout next to a slider; clicking it opens a value editor.
+
+    A QAbstractButton rather than a styled QLabel: it behaves as a button, so it
+    must report itself as one. As a QLabel it announced itself as static text,
+    which tells a screen-reader user there is nothing to activate here.
+    """
 
     def __init__(self, text: str, parent=None) -> None:
-        super().__init__("", parent)
+        super().__init__(parent)
         self._current_text = str(text)
         self._next_text = str(text)
+        self._purpose = ""
         self._roll = 1.0
         self._roll_direction = 1
         self._roll_anim = make_property_animation(self, b"rollValue", 170, QEasingCurve.OutQuint)
         super().setText(str(text))
         self.setObjectName("valueChip")
         self.setAttribute(Qt.WA_StyledBackground)
-        self.setAlignment(Qt.AlignCenter)
         # Fixed (not just minimum) width so the readout boxes line up in one
         # vertical column instead of jumping around with their content.
         self.setFixedWidth(74)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
+        self._refresh_accessible_name()
+
+    def set_purpose(self, purpose: str) -> None:
+        """Name what this readout controls, e.g. "Brightness".
+
+        The value alone ("50%") is meaningless read out on its own — the label
+        that gives it meaning lives in a separate widget at the other end of the
+        row, which assistive tools have no reason to connect to this one.
+        """
+        self._purpose = str(purpose)
+        self._refresh_accessible_name()
+
+    def _refresh_accessible_name(self) -> None:
+        value = self._next_text
+        self.setAccessibleName(f"{self._purpose}: {value}" if self._purpose else value)
 
     def get_roll_value(self) -> float:
         return self._roll
@@ -45,6 +65,7 @@ class ValueChip(QLabel):
         text = str(text)
         if text == self._next_text:
             super().setText(text)
+            self._refresh_accessible_name()
             return
         old_value = self._numeric_value(self._next_text)
         new_value = self._numeric_value(text)
@@ -61,6 +82,7 @@ class ValueChip(QLabel):
                 self._roll_direction = 1
         self._next_text = text
         super().setText(text)
+        self._refresh_accessible_name()
         if not running:
             restart_animation(self._roll_anim, 0.0, 1.0)
 
@@ -101,16 +123,12 @@ class ValueChip(QLabel):
         y = direction * (1.0 - progress) * height * 0.62
         painter.drawText(rect.translated(0.0, y), Qt.AlignCenter, self._next_text)
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.LeftButton:
-            self.activated.emit()
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.key() in {Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space}:
-            self.activated.emit()
+        # Space is QAbstractButton's own; Enter is added to match the buttons
+        # around it. Auto-repeat is ignored so holding the key opens one editor
+        # rather than firing on every repeat.
+        if event.key() in {Qt.Key_Return, Qt.Key_Enter} and not event.isAutoRepeat():
+            self.click()
             event.accept()
             return
         super().keyPressEvent(event)

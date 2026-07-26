@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import os
 import sys
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QEasingCurve, QPropertyAnimation, Qt, QTimer
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QCoreApplication,
+    QEasingCurve,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+)
 from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,6 +35,7 @@ from app.color_controller import ColorController
 from app.color_temperature import cct_to_rgb
 from app.constants import (
     CHIP_HEIGHT,
+    COMPACT_SIDEBAR_HEIGHT,
     CONTROL_HEIGHT,
     SLIDER_LABEL_WIDTH,
     SLIDER_ROW_MARGINS,
@@ -43,6 +52,7 @@ from app.license_refresh import LicenseRefresher
 from app.local_api.controller import LocalApiController
 from app.localization import localization_manager
 from app.main_layout import build_main_layout
+from app.motion_policy import DEFAULT_MOTION_MODE, motion_policy
 from app.music_ui_controller import MusicUiController
 from app.overlay_controller import OverlayController
 from app.performance import resolve_ui_fps
@@ -81,6 +91,20 @@ from app.widgets import (
 from app.widgets.onboarding_overlay import OnboardingOverlay
 from app.widgets.styled_tooltip import TooltipManager
 from app.window_state_controller import WindowStateController
+from app.windows_motion import windows_motion_reduced
+
+
+def _startup_services_disabled() -> bool:
+    """Deferred startup services are skipped when this is set.
+
+    The test suite sets it: autoconnect, the license refresh, app triggers,
+    hotkeys, the silent update check and the local API are all exercised
+    directly against their controllers, so scheduling them from a widget test
+    only adds background work — and their pending timers hold a bound method of
+    the window, which keeps every closed window (and its ~600 widgets) alive for
+    the rest of the process.
+    """
+    return os.environ.get("LUMABLE_NO_STARTUP_SERVICES", "").strip().lower() in {"1", "true", "yes"}
 
 
 class MainWindow(QMainWindow):
@@ -145,6 +169,8 @@ class MainWindow(QMainWindow):
         self._connect_in_progress = False
         self._connection_status_phase = 0
         self._status_pulsing = False
+        self._focus_follow_wired = False
+        motion_policy.changed.connect(self._on_motion_changed)
         self._reconnecting = False
         self._active_mode_key: str | None = None
         self._theme_transition = None
@@ -159,6 +185,7 @@ class MainWindow(QMainWindow):
         self._ui_feedback = None
         self._buttons: list[LiquidButton] = []
         self._slider_labels: dict[str, QLabel] = {}
+        self._slider_rows: dict[str, tuple] = {}  # key -> (slider, value chip)
         self._scroll_filters: list = []
 
     def _init_controllers(self) -> None:
@@ -370,6 +397,13 @@ class MainWindow(QMainWindow):
         label = self._slider_labels.get(key)
         if label is not None:
             label.setText(text)
+        # Single choke point for re-translation, so the slider and its readout
+        # follow the new language instead of announcing the old one.
+        row = self._slider_rows.get(key)
+        if row is not None:
+            slider, value = row
+            slider.setAccessibleName(text)
+            value.set_purpose(text)
 
     def _card(self, title: str, subtitle: str | None = None, icon: str | None = None) -> GlassCard:
         return GlassCard(title, subtitle, icon=icon)
@@ -404,6 +438,11 @@ class MainWindow(QMainWindow):
         label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         if key is not None:
             self._slider_labels[key] = label
+            self._slider_rows[key] = (slider, value)
+        # The row label and the readout are separate widgets; tell the chip what
+        # it stands for so it announces "Brightness: 50%", not a bare "50%".
+        value.set_purpose(name)
+        slider.setAccessibleName(name)
         layout.addWidget(label)
         layout.addWidget(slider, 1)
         # Centred, so the chip keeps its own compact height instead of
@@ -416,6 +455,46 @@ class MainWindow(QMainWindow):
         scroll_filter = SmoothScrollFilter(widget, step=step, duration=duration)
         viewport.installEventFilter(scroll_filter)
         self._scroll_filters.append(scroll_filter)
+
+    def _keep_focus_in_view(self, _old, new) -> None:
+        """Scroll the content page so the focused control stays on screen.
+
+        Tab can move focus to a control below the fold, leaving the focus ring
+        somewhere the user cannot see. ``ensureWidgetVisible`` is a no-op when
+        the widget is already visible, so mouse-driven focus is unaffected.
+        """
+        if new is None:
+            return
+        page = self.body_scroll.widget()
+        if page is None or not self.body_scroll.isVisible():
+            return
+        if new is not page and not page.isAncestorOf(new):
+            return  # focus went to the sidebar, an overlay or the window chrome
+        self.body_scroll.ensureWidgetVisible(new, 0, 40)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._set_focus_follow(True)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._set_focus_follow(False)
+
+    def _set_focus_follow(self, enabled: bool) -> None:
+        """Subscribe to the app-wide focus signal only while this window is up.
+
+        ``focusChanged`` lives on the QApplication, so a permanent subscription
+        from every window that was ever built would keep handing every focus
+        change to windows that are no longer on screen.
+        """
+        app = QApplication.instance()
+        if app is None or enabled == self._focus_follow_wired:
+            return
+        if enabled:
+            app.focusChanged.connect(self._keep_focus_in_view)
+        else:
+            app.focusChanged.disconnect(self._keep_focus_in_view)
+        self._focus_follow_wired = enabled
 
     def _wire_events(self):
         self._wire_device_events()
@@ -471,6 +550,7 @@ class MainWindow(QMainWindow):
         self.theme_button.clicked.connect(self._theme_controller.toggle_theme)
         self.language_combo.currentIndexChanged.connect(self._change_language)
         self.performance_combo.currentIndexChanged.connect(self._change_performance)
+        self.motion_combo.currentIndexChanged.connect(self._change_motion_mode)
 
     def _apply_ui_fps(self) -> None:
         fps = resolve_ui_fps(self._settings.get("ui_fps", "auto"))
@@ -486,6 +566,14 @@ class MainWindow(QMainWindow):
         save_settings(self._settings)
         self._apply_ui_fps()
 
+    def _change_motion_mode(self):
+        mode = self.motion_combo.currentData()
+        if not mode:
+            return
+        motion_policy.set_mode(mode)  # applies immediately; open windows react to changed
+        self._settings["motion_mode"] = str(mode)
+        save_settings(self._settings)
+
     def _wire_color_events(self):
         self.pick_color_button.clicked.connect(self._pick_color)
         self.power_button.clicked.connect(self._toggle_power)
@@ -493,18 +581,18 @@ class MainWindow(QMainWindow):
         self.speed_slider.valueChanged.connect(lambda v: self.speed_value.setText(f"{v}%"))
         self.speed_slider.valueChanged.connect(self.effect_preview.set_speed)
         self.speed_slider.sliderReleased.connect(self._apply_speed)
-        self.speed_value.activated.connect(lambda: self._edit_slider_value(self.speed_slider, self.speed_value, suffix="%"))
+        self.speed_value.clicked.connect(lambda: self._edit_slider_value(self.speed_slider, self.speed_value, suffix="%"))
         for index, button in enumerate(self.color_history_buttons):
             button.clicked.connect(lambda _checked=False, swatch_index=index: self._apply_color_history_item(swatch_index))
         self._wire_rgb_slider_events()
         self.brightness_slider.valueChanged.connect(lambda v: self.brightness_value.setText(f"{v}%"))
         self.brightness_slider.valueChanged.connect(self.preview.set_brightness)
         self.brightness_slider.valueChanged.connect(self._queue_current_color_update)
-        self.brightness_value.activated.connect(
+        self.brightness_value.clicked.connect(
             lambda: self._edit_slider_value(self.brightness_slider, self.brightness_value, suffix="%")
         )
         self.temperature_slider.valueChanged.connect(self._on_temperature_changed)
-        self.temperature_value.activated.connect(
+        self.temperature_value.clicked.connect(
             lambda: self._edit_slider_value(self.temperature_slider, self.temperature_value, suffix="K")
         )
         # Any hand-made change to the light means the strip no longer shows the
@@ -527,7 +615,11 @@ class MainWindow(QMainWindow):
             (self.blue_slider, self.blue_value),
         ):
             slider.valueChanged.connect(lambda v, t=label: t.setText(str(v)))
-            label.activated.connect(lambda s=slider, value_chip=label: self._edit_slider_value(s, value_chip))
+            # clicked carries a bool; it must land in _checked, not in the
+            # captured slider, or the editor would be handed False.
+            label.clicked.connect(
+                lambda _checked=False, s=slider, value_chip=label: self._edit_slider_value(s, value_chip)
+            )
             slider.valueChanged.connect(self._update_preview)
             slider.valueChanged.connect(self._queue_current_color_update)
 
@@ -607,6 +699,7 @@ class MainWindow(QMainWindow):
 
     def _load_initial_state(self):
         self._restore_startup_size()
+        self._apply_compact_sidebar()  # a restored small size may need it before first resize
         last = self._settings.get("last_state", {})
         color = last.get("color", DEFAULT_START_COLOR)
         with self._suppress_signals():
@@ -638,6 +731,29 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._apply_compact_sidebar()
+
+    def _apply_compact_sidebar(self) -> None:
+        # On a short window the sidebar can't fit its full-height footer, so drop
+        # the secondary status hint and shrink the status card. The primary
+        # status and all nav items stay — nothing is hidden that isn't redundant.
+        compact = self.height() < COMPACT_SIDEBAR_HEIGHT
+        if compact == getattr(self, "_sidebar_compact", None):
+            return
+        self._sidebar_compact = compact
+        card = getattr(self, "device_status_card", None)
+        if card is not None:
+            card.setMinimumHeight(self._sz(32 if compact else 56))
+        self._set_status_hint_visible(getattr(self, "_status_hint_wanted", True))
+
+    def _set_status_hint_visible(self, wanted: bool) -> None:
+        # Single source for the secondary status line's visibility: the
+        # connection state decides whether it is *wanted*, but the compact
+        # sidebar overrides it so the primary status never clips off the bottom.
+        self._status_hint_wanted = wanted
+        hint = getattr(self, "device_status_hint", None)
+        if hint is not None:
+            hint.setVisible(wanted and not getattr(self, "_sidebar_compact", False))
 
     def _apply_windows_backdrop(self):
         self._window_state.apply_windows_backdrop()
@@ -912,16 +1028,31 @@ class MainWindow(QMainWindow):
         else:
             color = "rgba(255, 255, 255, 0.30)"  # idle
         dot.setStyleSheet(f"background: {color}; border-radius: {max(2, dot.width() // 2)}px;")
-        pulsing = (
+        # _status_pulsing records what the connection state *wants*; whether the
+        # animation actually runs is decided by _sync_status_pulse, so a reduced
+        # motion session can flip back to full and pick the pulse up again.
+        self._status_pulsing = (
             self._connect_in_progress or self._scan_in_progress or self._reconnecting
         ) and not self._is_connected
-        if pulsing and not self._status_pulsing:
-            self._status_pulse.start()
-            self._status_pulsing = True
-        elif not pulsing and self._status_pulsing:
-            self._status_pulse.stop()
-            self._status_dot_effect.setOpacity(1.0)
-            self._status_pulsing = False
+        self._sync_status_pulse()
+
+    def _sync_status_pulse(self) -> None:
+        """Pulse the status dot only while an operation is in flight and motion is
+        allowed. Under reduced motion the dot sits at full opacity — its colour
+        already carries the state, so nothing is lost.
+        """
+        pulse = getattr(self, "_status_pulse", None)
+        if pulse is None:
+            return
+        if self._status_pulsing and not motion_policy.reduced:
+            if pulse.state() != QAbstractAnimation.Running:
+                pulse.start()
+            return
+        pulse.stop()
+        self._status_dot_effect.setOpacity(1.0)
+
+    def _on_motion_changed(self, _reduced: bool) -> None:
+        self._sync_status_pulse()
 
     def _apply_speed(self):
         self._color_ctrl.apply_speed()
@@ -1119,6 +1250,8 @@ class MainWindow(QMainWindow):
         is destroyed, and guarded so it never runs once a close is underway —
         this avoids stray network/UI work firing after the window goes away.
         """
+        if _startup_services_disabled():
+            return
         timer = QTimer(self)
         timer.setSingleShot(True)
         timer.timeout.connect(lambda: self._run_deferred(callback))
@@ -1182,6 +1315,11 @@ def run():
     single = SingleInstance()
     if single.is_already_running():
         sys.exit(0)
+
+    # Reduced Motion: install the OS probe and apply the stored mode BEFORE any
+    # widgets are built, so a reduced UI never starts an animation at launch.
+    _wire_motion_policy(app)
+
     window = MainWindow()
     single.set_activate_callback(lambda: _surface_window(window))
     # Open at a sane windowed size (restore_startup_size sets ~1320x860 centred)
@@ -1189,6 +1327,31 @@ def run():
     # huge empty area on wide monitors.
     window.show()
     sys.exit(app.exec())
+
+
+def _wire_motion_policy(app: QApplication) -> None:
+    """Install the OS motion probe, apply the stored mode, and re-probe on activation.
+
+    Kept separate from run() so the startup wiring can be exercised in tests
+    without spinning up the whole event loop.
+    """
+    # Provider and stored mode are (re)applied on every call — cheap and always
+    # reflects the latest settings.
+    motion_policy.set_provider(windows_motion_reduced)
+    motion_policy.set_mode(load_settings().get("motion_mode", DEFAULT_MOTION_MODE))
+    # The activation signal is connected exactly once per QApplication. run() calls
+    # this once, but tests share a single QApplication across cases, so a guard flag
+    # keeps repeated calls from stacking duplicate refresh handlers.
+    if not app.property("_lumable_motion_wired"):
+        # Re-probe the system setting whenever the app becomes active again — this
+        # picks up a change to Windows' animation setting without a native filter.
+        app.applicationStateChanged.connect(_on_application_state_changed)
+        app.setProperty("_lumable_motion_wired", True)
+
+
+def _on_application_state_changed(state: Qt.ApplicationState) -> None:
+    if state == Qt.ApplicationActive:
+        motion_policy.refresh()
 
 
 def _surface_window(window: MainWindow) -> None:

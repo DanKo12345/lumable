@@ -29,6 +29,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
+from app.widgets.animation_helpers import play_or_complete
 from app.widgets.liquid_button import LiquidButton
 from app.widgets.profile_action_overlay import _ProfileActionPanel
 
@@ -263,7 +264,9 @@ class OnboardingOverlay(QWidget):
         self._slide_out.addAnimation(move_out)
         self._slide_out.addAnimation(fade_out)
         self._slide_out.finished.connect(lambda: self._slide_in_new(new_index, direction))
-        self._slide_out.start()
+        # Reduced motion completes the group through the engine, so finished fires
+        # and synchronously builds + completes the slide-in below.
+        play_or_complete(self._slide_out)
 
     def _slide_in_new(self, new_index: int, direction: int) -> None:
         self._index = new_index
@@ -286,7 +289,7 @@ class OnboardingOverlay(QWidget):
         self._slide_in.addAnimation(move_in)
         self._slide_in.addAnimation(fade_in)
         self._slide_in.finished.connect(self._on_slide_done)
-        self._slide_in.start()
+        play_or_complete(self._slide_in)
 
     def _on_slide_done(self) -> None:
         self._sliding = False
@@ -320,8 +323,10 @@ class OnboardingOverlay(QWidget):
         self._panel_anim.setEndValue(end_pos)
         self._panel_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._fade_anim.finished.connect(self._drop_overlay_effect)
-        self._fade_anim.start()
-        self._panel_anim.start()
+        # The panel move carries no cleanup — complete it first; the fade's
+        # finished swaps the graphics effect, so complete it last.
+        play_or_complete(self._panel_anim)
+        play_or_complete(self._fade_anim)
 
     def _drop_overlay_effect(self) -> None:
         # Once the open fade is done, remove the overlay's own opacity effect and

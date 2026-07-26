@@ -297,7 +297,7 @@ def test_diagnostics_report_uses_current_language_for_report_labels() -> None:
         include_crashes=False,
     )
 
-    assert "Версия: 0.3.4" in report
+    assert "Версия: 0.3.5" in report
     assert "Устройство" in report
     assert "Подключено: да" in report
     assert "Поддерживаемые команды" in report
@@ -305,3 +305,22 @@ def test_diagnostics_report_uses_current_language_for_report_labels() -> None:
     assert "- команда: Установлен цвет RGB(1, 2, 3)" in report
     assert "Session logs" not in report
     assert "Connected: yes" not in report
+
+
+def test_diagnostics_report_includes_motion_mode_and_resolved_state(preserve_motion_policy) -> None:
+    from app.motion_policy import motion_policy
+
+    localization_manager.set_language("en")
+    motion_policy.set_provider(None)
+    motion_policy.set_mode("reduced")
+
+    report = build_diagnostics_report(
+        {"connected": False, "device": {}},
+        [],
+        include_crashes=False,
+    )
+
+    # The report states the chosen mode and the resolved reduced flag without
+    # probing the OS provider a second time (it reflects motion_policy state).
+    assert "Motion mode: reduced" in report
+    assert "Motion reduced: yes" in report

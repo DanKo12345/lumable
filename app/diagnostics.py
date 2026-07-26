@@ -10,6 +10,7 @@ from app.app_info import APP_AUTHOR, APP_NAME, APP_VERSION
 from app.constants import CRASH_LOG_MAX_AGE_DAYS
 from app.crash_logging import CRASH_LOG_DIR
 from app.localization import localization_manager
+from app.motion_policy import motion_policy
 
 
 def _line(label: str, value: object) -> str:
@@ -253,6 +254,8 @@ def build_diagnostics_report(
         _line_key("generated", datetime.now().isoformat(timespec="seconds")),
         _line_key("os", platform.platform()),
         _line_key("python", platform.python_version()),
+        _line_key("motion_mode", motion_policy.mode),
+        _line_key("motion_reduced", _yes_no(motion_policy.reduced)),
         "",
         _t("device_section"),
         _line_key("connected", _yes_no(snapshot.get("connected"))),

@@ -2,6 +2,30 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.3.5] - 2026-07-26
+
+Trust & Accessibility: update checks now understand beta releases and show what changed, the interface stays usable at Windows display scaling and short window heights, and motion and keyboard behaviour follow the user's needs.
+
+### Added
+- A redesigned update window shows the installed and available versions, the release title and notes, with clear actions to open the download page, be reminded later or skip that exact version.
+- A Motion setting with three choices: **Match Windows**, **Reduce motion** and **Full motion**. Reduced Motion removes decorative movement while preserving live strip effects and the completion of real background work.
+- Keyboard and assistive-technology support for weekday toggles, editable value readouts and scene tiles, including visible focus, automatic scrolling to focused controls and keyboard access to scene menus.
+
+### Changed
+- Update selection now handles beta / release-candidate / final ordering, ignores drafts, accepts prereleases in beta builds and treats build metadata correctly.
+- Main navigation and content use independent scrolling where needed, keeping the brand and connection status visible in short windows.
+- Logs, About, Pro, confirmations and the colour picker now fit the available window height. Their actions stay pinned while only the content that can overflow scrolls.
+- Window restoration uses the real available work area and a conservative frame allowance, improving layouts at 125% and 150% Windows scaling.
+- Theme and accent refreshes avoid unnecessary application-wide repolishing, making repeated interface updates lighter.
+- Update titles and notes are length-limited and rendered as plain text; short notes no longer leave an oversized empty scroll area.
+
+### Fixed
+- Skipping an update now suppresses only that exact release in background checks; a newer beta or final release is still announced, and manual checks still report skipped releases.
+- Closing the local API now wakes and joins open event-stream handlers instead of leaving a background thread and socket traceback behind.
+- Scene-tile arrow navigation stays inside the visual grid, preserves columns on incomplete rows and never applies a scene merely by moving focus.
+- Long confirmation messages remain readable and scroll when necessary instead of clipping their actions.
+- The light theme no longer gains opaque dark blocks inside newly scrollable dialogs.
+
 ## [0.3.4] - 2026-07-21
 
 Smart Atmosphere: screen sync that looks for the colours that matter instead of averaging the whole screen, with Work / Game / Movie response styles, a live source → strip preview, a flash guard, and extra strips that survive a restart.

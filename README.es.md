@@ -10,7 +10,7 @@ avanzadas.
 
 Autor: `dollza`
 
-Versión: `0.3.4 beta`
+Versión: `0.3.5 beta`
 
 Descarga la última build para Windows desde la página de
 [Releases](https://github.com/DanKo12345/lumable/releases).
