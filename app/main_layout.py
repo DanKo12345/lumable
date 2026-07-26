@@ -47,7 +47,7 @@ def _build_settings_card(host):
     rows = (
         ("settings.language", "globe", "#78a7ff", host.language_combo),
         ("settings.fps", "diagnostics", "#72c7b7", host.performance_combo),
-        ("settings.motion", "effects", "#b58fff", host.motion_combo),
+        ("settings.motion", "orbit", "#b58fff", host.motion_combo),
         ("settings.theme", "sun", "#ffb066", host.theme_button),
         ("settings.about", "settings", "#a9b0bd", host.about_button),
     )

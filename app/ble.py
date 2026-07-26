@@ -6,12 +6,14 @@ import time
 from collections.abc import Iterable
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
+from itertools import count
+from typing import Any
 
 from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 
 from app.ble_drivers import (
     EFFECTS,
@@ -106,12 +108,62 @@ class DeviceConnection:
     pacer: WritePacer = field(default_factory=WritePacer)
 
 
+# Outcome codes for a tracked operation.
+RESULT_SUCCESS = "success"
+RESULT_CANCELLED = "cancelled"
+RESULT_UNAVAILABLE = "unavailable"  # nothing was written: no target, or refused
+RESULT_BLE_ERROR = "ble_error"
+RESULT_SHUTDOWN = "shutdown"
+
+# Returned by a command that found no device to write to. Distinct from None so
+# a coroutine that simply returns nothing is not mistaken for a missing target.
+NO_TARGET = object()
+
+
+@dataclass
+class _OperationState:
+    """Everything known about one tracked operation, in a single object.
+
+    Kept together so the registry can be emptied in one step: separate
+    dictionaries for results, readiness and delivery grew without bound and made
+    "exactly once" a matter of thread timing.
+    """
+
+    future: Any = None
+    # Set once the command holds the serialized section. Before that a cancel
+    # can drop it outright; after, cancelling the future would release the lock
+    # while a write is still on its way, letting the next command overlap it.
+    started: bool = False
+    cancel_requested: bool = False
+    delivered: bool = False
+
+
+@dataclass(frozen=True)
+class BleOperationResult:
+    """How one tracked BLE command ended.
+
+    ``ok`` means the coroutine finished without raising. For a
+    write-without-response characteristic that is not an acknowledgement from
+    the strip itself — it is the strongest confirmation the BLE stack offers.
+    """
+
+    operation_id: int
+    ok: bool
+    code: str
+    message: str = ""
+
+
 class BleController(QObject):
     status_changed = Signal(str)
     devices_discovered = Signal(list)
     connected_changed = Signal(bool, str)
     error_occurred = Signal(str)
     shutdown_finished = Signal()
+    # Carries a BleOperationResult. An object rather than positional arguments so
+    # fields can be added later without breaking every receiver.
+    operation_finished = Signal(object)
+    # Internal hop that makes delivery queued regardless of the emitting thread.
+    _operation_ready = Signal(object)
     mirrors_changed = Signal(list)
     # An extra strip took over as the main one: (address, advertised name).
     primary_changed = Signal(str, str)
@@ -146,6 +198,16 @@ class BleController(QObject):
         self._shutdown_started = False
         self._manual_disconnect_requested = False
         self._operation_lock = asyncio.Lock()
+        # Tracked operations: automation needs to know whether a command really
+        # finished, which the fire-and-forget path cannot tell it.
+        self._operation_ids = count(1)
+        self._operations: dict[int, _OperationState] = {}
+        # One lock over the whole registry: results arrive on the BLE thread
+        # while cancels come from the UI thread.
+        self._operations_lock = threading.Lock()
+        # Queued on purpose: emitting straight from _submit would run the slot
+        # before the caller has the id it is meant to match.
+        self._operation_ready.connect(self._deliver_operation, Qt.QueuedConnection)
         self._preferred_payload_indices: dict[tuple[str, tuple[tuple[int, ...], ...]], int] = {}
         self._reconnect_task: asyncio.Task | None = None
         self._reconnect_address = ""
@@ -211,45 +273,146 @@ class BleController(QObject):
 
         future.add_done_callback(_finish)
 
-    def _submit(self, coroutine) -> None:
+    def _submit(self, coroutine, *, tracked: bool = False) -> int | None:
+        """Queue a BLE command. With ``tracked``, returns an id and reports back.
+
+        Untracked is the historical behaviour: fire and forget, errors surfaced
+        through ``error_occurred`` only. Tracked callers get exactly one
+        ``operation_finished`` for the id, in every branch below — automation
+        cannot confirm a rule as applied without that.
+
+        The result is always delivered through a queued connection, so a slot
+        never runs before this call returns and the caller has the id.
+        """
+        operation_id = next(self._operation_ids) if tracked else None
+        if operation_id is not None:
+            with self._operations_lock:
+                self._operations[operation_id] = _OperationState()
+
         if self._shutdown_started or not self._loop.is_running():
             coroutine.close()
-            return
+            self._finish_operation(operation_id, False, RESULT_SHUTDOWN)
+            return operation_id
 
-        wrapper = self._run_serialized(coroutine)
+        wrapper = self._run_serialized(coroutine, operation_id)
         try:
             future = asyncio.run_coroutine_threadsafe(wrapper, self._loop)
-        except RuntimeError:
+        except RuntimeError as exc:
             wrapper.close()
             coroutine.close()
-            return
-        future.add_done_callback(self._handle_future)
+            self._finish_operation(operation_id, False, RESULT_UNAVAILABLE, str(exc))
+            return operation_id
 
-    async def _run_serialized(self, coroutine):
+        if operation_id is not None:
+            with self._operations_lock:
+                state = self._operations.get(operation_id)
+                if state is not None:
+                    state.future = future
+        future.add_done_callback(lambda done: self._handle_future(done, operation_id))
+        return operation_id
+
+    def _finish_operation(
+        self, operation_id: int | None, ok: bool, code: str, message: str = ""
+    ) -> None:
+        """Record and deliver the outcome once. Later calls for the id do nothing.
+
+        The whole check-and-set happens under the lock: the BLE thread's done
+        callback and a cancel from the UI thread can arrive together, and
+        "exactly once" must not depend on which wins.
+        """
+        if operation_id is None:
+            return
+        with self._operations_lock:
+            state = self._operations.get(operation_id)
+            if state is None or state.delivered:
+                return
+            state.delivered = True
+            if state.cancel_requested and ok:
+                # It finished, but the user had already asked us to stop, so the
+                # result must not be counted as a rule doing its job.
+                ok, code = False, RESULT_CANCELLED
+            result = BleOperationResult(
+                operation_id=operation_id, ok=ok, code=code, message=message
+            )
+            self._operations.pop(operation_id, None)
+        self._operation_ready.emit(result)
+
+    def _deliver_operation(self, result: object) -> None:
+        """Queued slot: runs on this object's thread, after _submit returned."""
+        self.operation_finished.emit(result)
+
+    def cancel_operation(self, operation_id: int) -> bool:
+        """Ask a tracked operation to stop. False when it is already finished.
+
+        A command still waiting for the command lock is dropped outright. One
+        that is already running is asked to stop *cooperatively*: its future is
+        left alone so it keeps the lock until the write in progress finishes,
+        and the next command therefore starts after it rather than alongside it.
+        Nothing already handed to the BLE stack is recalled, and nothing is
+        undone.
+        """
+        with self._operations_lock:
+            state = self._operations.get(operation_id)
+            if state is None or state.delivered:
+                return False
+            state.cancel_requested = True
+            future = None if state.started else state.future
+        if future is not None and future.cancel():
+            # It never started, so no done callback will report for it.
+            self._finish_operation(operation_id, False, RESULT_CANCELLED)
+        return True
+
+    def _mark_operation_started(self, operation_id: int | None) -> None:
+        if operation_id is None:
+            return
+        with self._operations_lock:
+            state = self._operations.get(operation_id)
+            if state is not None:
+                state.started = True
+
+    def is_cancel_requested(self, operation_id: int) -> bool:
+        """For multi-step commands: stop before starting the next step."""
+        with self._operations_lock:
+            state = self._operations.get(operation_id)
+            return bool(state is not None and state.cancel_requested)
+
+    async def _run_serialized(self, coroutine, operation_id: int | None = None):
         coroutine_started = False
         try:
             async with self._operation_lock:
                 coroutine_started = True
+                self._mark_operation_started(operation_id)
                 return await coroutine
         finally:
             if not coroutine_started:
                 coroutine.close()
 
-    def _handle_future(self, future) -> None:
+    def _handle_future(self, future, operation_id: int | None = None) -> None:
         try:
-            future.result()
+            outcome = future.result()
         except CancelledError:
+            self._finish_operation(operation_id, False, RESULT_CANCELLED)
             return
         except BLE_OPERATION_ERRORS as exc:  # pragma: no cover
             message = self._exception_message(exc)
             self._set_last_ble_exception(exc)
+            self._finish_operation(operation_id, False, RESULT_BLE_ERROR, message)
             self.error_occurred.emit(message)
             self.status_changed.emit(f"BLE error: {message}")
+            return
         except Exception as exc:  # pragma: no cover
             message = self._exception_message(exc)
             self._set_last_ble_exception(exc)
+            self._finish_operation(operation_id, False, RESULT_BLE_ERROR, message)
             self.error_occurred.emit(message)
             self.status_changed.emit(f"BLE error: {message}")
+            return
+        # A command that found no target wrote nothing, so it is not a success —
+        # an addressed operation whose strip vanished must not confirm a rule.
+        if outcome is NO_TARGET:
+            self._finish_operation(operation_id, False, RESULT_UNAVAILABLE)
+            return
+        self._finish_operation(operation_id, True, RESULT_SUCCESS)
 
     @staticmethod
     def _exception_message(exc: Exception) -> str:
@@ -336,6 +499,50 @@ class BleController(QObject):
     def set_effect_for_addresses(self, code: int, speed: int | None, addresses: list[str] | None) -> None:
         self._submit(self._set_effect_for_addresses(code, speed, addresses))
 
+    # ── tracked variants ───────────────────────────────────────────────
+    # Separate methods rather than a flag on the existing ones: the UI and the
+    # Local API keep their fire-and-forget contract untouched, and only
+    # automation pays for tracking. Each runs the very same coroutine, so no
+    # BLE logic is duplicated here.
+
+    def primary_address(self) -> str:
+        """Address of the main strip, for a rule that targets it alone."""
+        return self._primary_address()
+
+    # One address per tracked operation, deliberately. A tracked call covering
+    # several strips would report success as soon as *any* of them accepted the
+    # write, hiding a scene that only half applied. Singular targets make each
+    # strip its own step, so a mirror that refused becomes a failed step and the
+    # scene reports partial instead of done. Callers wanting "all strips" expand
+    # that to concrete addresses first.
+
+    @staticmethod
+    def _single_target(address: str) -> list[str]:
+        if not isinstance(address, str) or not address.strip():
+            raise ValueError("a tracked command needs exactly one strip address")
+        return [address]
+
+    def set_power_for_address_tracked(self, enabled: bool, address: str) -> int:
+        return self._submit(
+            self._set_power_for_addresses(enabled, self._single_target(address)), tracked=True
+        )
+
+    def set_color_for_address_tracked(self, red: int, green: int, blue: int, address: str) -> int:
+        return self._submit(
+            self._set_color_for_addresses(red, green, blue, self._single_target(address)),
+            tracked=True,
+        )
+
+    def set_brightness_for_address_tracked(self, value: int, address: str) -> int:
+        return self._submit(
+            self._set_brightness_for_addresses(value, self._single_target(address)), tracked=True
+        )
+
+    def set_effect_for_address_tracked(self, code: int, speed: int | None, address: str) -> int:
+        return self._submit(
+            self._set_effect_for_addresses(code, speed, self._single_target(address)), tracked=True
+        )
+
     def set_power(self, enabled: bool, *, restore_state: bool = True) -> None:
         self._fade_seq = getattr(self, "_fade_seq", 0) + 1
         self._desired_power_on = bool(enabled)
@@ -371,6 +578,8 @@ class BleController(QObject):
             coroutine.close()
             self._stream_busy = False
             return
+        # Streaming frames are best-effort and never tracked: they are replaced
+        # by the next frame, so there is nothing for an automation to confirm.
         wrapper = self._run_serialized(coroutine)
         try:
             future = asyncio.run_coroutine_threadsafe(wrapper, self._loop)
@@ -718,44 +927,62 @@ class BleController(QObject):
     def _primary_writable(self, plan: dict) -> bool:
         return bool(plan["primary"]) and self._client is not None and self._write_characteristic is not None
 
-    async def _set_color_for_addresses(self, red: int, green: int, blue: int, addresses: list[str] | None) -> None:
+    async def _set_color_for_addresses(self, red: int, green: int, blue: int, addresses: list[str] | None):
         red, green, blue = clamp(red, 0, 255), clamp(green, 0, 255), clamp(blue, 0, 255)
         plan = self._plan_addresses(addresses)
+        wrote_primary = False
+        wrote_mirror = False
         if self._primary_writable(plan):
             await self._write_many(self._require_driver().color_payloads(red, green, blue), "", quiet=True)
+            wrote_primary = True
         for conn in self._targeted_mirrors(plan):
-            await self._mirror_write_payloads(conn, conn.driver.color_payloads(red, green, blue))
-        if plan["sync_primary"]:
+            wrote_mirror |= await self._mirror_write_payloads(
+                conn, conn.driver.color_payloads(red, green, blue)
+            )
+        # Only a write that happened may update the cache: the plan says where
+        # the command was aimed, not that anything got there.
+        if plan["sync_primary"] and wrote_primary:
             self._last_red, self._last_green, self._last_blue = red, green, blue
+        return None if wrote_primary or wrote_mirror else NO_TARGET
 
-    async def _set_power_for_addresses(self, enabled: bool, addresses: list[str] | None) -> None:
+    async def _set_power_for_addresses(self, enabled: bool, addresses: list[str] | None):
         enabled = bool(enabled)
         plan = self._plan_addresses(addresses)
+        wrote_primary = False
+        wrote_mirror = False
         if self._primary_writable(plan):
             await self._write_many(self._require_driver().power_payloads(enabled), "", quiet=True)
+            wrote_primary = True
         for conn in self._targeted_mirrors(plan):
-            await self._mirror_write_payloads(conn, conn.driver.power_payloads(enabled))
-        if plan["sync_primary"]:
+            wrote_mirror |= await self._mirror_write_payloads(
+                conn, conn.driver.power_payloads(enabled)
+            )
+        if plan["sync_primary"] and wrote_primary:
             # Reconnect restores the *desired* power state. Without this an
             # addressed power write to the primary would be undone by the next
             # dropped-link recovery, flipping the strip back against the scene.
             self._desired_power_on = enabled
+        return None if wrote_primary or wrote_mirror else NO_TARGET
 
-    async def _set_brightness_for_addresses(self, value: int, addresses: list[str] | None) -> None:
+    async def _set_brightness_for_addresses(self, value: int, addresses: list[str] | None):
         value = clamp(value, 0, 100)
         plan = self._plan_addresses(addresses)
         red, green, blue = self._last_red, self._last_green, self._last_blue
+        wrote_primary = False
+        wrote_mirror = False
         if self._primary_writable(plan):
             driver = self._require_driver()
             payloads = driver.brightness_payloads(value) or driver.color_payloads(red, green, blue)
             await self._write_many(payloads, "", quiet=True)
+            wrote_primary = True
         for conn in self._targeted_mirrors(plan):
             payloads = conn.driver.brightness_payloads(value) or conn.driver.color_payloads(red, green, blue)
-            await self._mirror_write_payloads(conn, payloads)
-        if plan["sync_primary"]:
+            wrote_mirror |= await self._mirror_write_payloads(conn, payloads)
+        if plan["sync_primary"] and wrote_primary:
             self._last_brightness = value
+        return None if wrote_primary or wrote_mirror else NO_TARGET
 
-    async def _set_effect_for_addresses(self, code: int, speed: int | None, addresses: list[str] | None) -> None:
+    async def _set_effect_for_addresses(self, code: int, speed: int | None, addresses: list[str] | None):
         code = int(code)
         plan = self._plan_addresses(addresses)
 
@@ -763,16 +990,22 @@ class BleController(QObject):
             payload = driver.effect_payload_with_speed(code, speed) if speed is not None else None
             return payload or driver.effect_payload(code)
 
+        wrote_primary = False
+        wrote_mirror = False
         if self._primary_writable(plan):
             payload = build(self._require_driver())
             if payload is not None:
                 await self._write_many([payload], "", quiet=True)
+                wrote_primary = True
         for conn in self._targeted_mirrors(plan):
             payload = build(conn.driver)
             if payload is not None:
-                await self._mirror_write_payloads(conn, [payload])
-        if plan["sync_primary"]:
+                wrote_mirror |= await self._mirror_write_payloads(conn, [payload])
+        # A driver with no payload for this effect wrote nothing, so the
+        # command did not happen — however willing the plan was.
+        if plan["sync_primary"] and wrote_primary:
             self._current_effect_code = code
+        return None if wrote_primary or wrote_mirror else NO_TARGET
 
     async def _set_brightness(self, value: int) -> None:
         driver = self._require_driver()
@@ -1151,12 +1384,18 @@ class BleController(QObject):
             except BLE_OPERATION_ERRORS:
                 continue
 
-    async def _mirror_write_payloads(self, conn: DeviceConnection, payloads, *, stream: bool = False) -> None:
+    async def _mirror_write_payloads(self, conn: DeviceConnection, payloads, *, stream: bool = False) -> bool:
         """Best-effort write of one payload variant to a mirror; failures swallowed.
+
+        Returns True only when a write actually succeeded. Fire-and-forget
+        callers ignore it, but a tracked command must not report success for a
+        mirror that had nothing to send, no writable characteristic, or refused
+        every attempt — the executor above trusts this verdict and cannot see
+        past it.
 
         Paced on that mirror's own link unless this is a streaming/fade frame."""
         if not payloads:
-            return
+            return False
         if not stream:
             wait = conn.pacer.reserve()
             if wait > 0:
@@ -1166,9 +1405,10 @@ class BleController(QObject):
                 properties = {prop.lower() for prop in characteristic.properties}
                 prefer_response = "write" in properties and "write-without-response" not in properties
                 if await self._write_attempt(characteristic, payload, prefer_response, client=conn.client) is None:
-                    return
+                    return True
                 if await self._write_attempt(characteristic, payload, not prefer_response, client=conn.client) is None:
-                    return
+                    return True
+        return False
 
     @staticmethod
     def _connection_candidates(conn: DeviceConnection) -> list:
