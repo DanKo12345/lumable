@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from platformdirs import user_data_dir
 
+from app.automation.file_lock import file_lock
+from app.automation.rules import rule_to_dict, validate_rules
 from app.constants import WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH
 from app.device_names import validate_device_names, validate_extra_addresses
 from app.hotkeys import ACTIONS as HOTKEY_ACTIONS
@@ -22,6 +26,68 @@ APP_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(user_data_dir("LumaBLE", False, roaming=True))
 PROFILES_PATH = DATA_DIR / "profiles.json"
 SETTINGS_PATH = DATA_DIR / "settings.json"
+
+# More rules than this and every tick would spend its time on a list no user
+# authored. Capped at the persistence boundary, exactly like scenes.
+MAX_AUTOMATION_RULES = 100
+
+# Long enough to outlast another process's write, short enough that a stuck lock
+# does not hold up the app: settings writes are milliseconds of work.
+SETTINGS_LOCK_TIMEOUT_SECONDS = 5.0
+
+
+def automation_journal_path() -> Path:
+    """Where the automation journal lives.
+
+    A function rather than a module constant so it follows ``DATA_DIR`` when that
+    is redirected — a constant would bind the developer's real directory at import
+    time and a test would write its journal there.
+    """
+    return DATA_DIR / "automation-journal.json"
+
+
+def automation_tasks_path() -> Path:
+    """What the Windows task compiler last put on the machine.
+
+    Its own file rather than a corner of the automation state: the state belongs to
+    whichever process is *running* automations, this belongs to whichever process
+    last *compiled* them, and neither should have to take the other's lock. Losing
+    it costs one round of "update everything", never a wrong task.
+    """
+    return DATA_DIR / "automation-tasks.json"
+
+
+def automation_migration_backup_path() -> Path:
+    """The settings and profiles as they were before the first migration.
+
+    Written once and never overwritten: a second migration must not replace the
+    original with a copy of the already-migrated state, which is precisely what
+    someone reaching for a backup would not want to find.
+    """
+    return DATA_DIR / "pre-automation-migration.json"
+
+
+def automation_control_path() -> Path:
+    """What the user has asked automations to do: at the moment, whether to pause.
+
+    Deliberately not part of the automation state. That file is guarded by the
+    execution lock, which is held for the whole length of a run — connect, write,
+    tear down — so an intent recorded there could be waiting on a BLE command to
+    finish. This one has a lock of its own that is never held for more than a small
+    write, which is what makes "pause" something the machine hears at once and keeps
+    hearing after the app that asked has closed.
+    """
+    return DATA_DIR / "automation-control.json"
+
+
+def automation_state_path() -> Path:
+    """Which rule occurrences have already been handled, and when each last ran.
+
+    Separate from settings: it is bookkeeping the app writes for itself, and a
+    corrupt state file must cost at most one duplicate run — never the user's
+    configuration. A function for the same reason as the journal path above.
+    """
+    return DATA_DIR / "automation-state.json"
 
 # Legacy source paths checked once during migration (oldest → newest order).
 # "RGB" + "Controller" split keeps the old app name out of plain-text search.
@@ -204,6 +270,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "software_fx": {"effect": "breathing", "speed": 30},
     "app_triggers": {"enabled": False, "default": "", "rules": []},
+    # 0.3.6 automations. Kept beside the old schedule and app_triggers blocks
+    # rather than replacing them: a user who rolls back to 0.3.5 must still find
+    # their schedule where that build looks for it.
+    "automations": {
+        "enabled": False,
+        "rules": [],
+        "migrated_version": 0,
+        "legacy_bridge": False,
+        "legacy_cleanup_pending": False,
+        "preset_scenes": {},
+    },
     "hotkeys": {"enabled": False, "bindings": dict(DEFAULT_HOTKEYS)},
     "diy": {
         "steps": [
@@ -616,6 +693,50 @@ def validate_schedule(data: Any) -> dict[str, Any]:
     }
 
 
+def validate_automations(data: Any, warnings: list[str] | None = None) -> dict[str, Any]:
+    """The automations block: a master switch and the rule list.
+
+    Rules go through ``app.automation.rules``, which never raises and drops only
+    what it cannot coerce — so one hand-edited rule costs that rule, not the rest
+    of them. Pass ``warnings`` to learn what was quietly adjusted (see the WARN_*
+    codes there), for instance a background rule downgraded to runtime.
+    """
+    defaults = DEFAULT_SETTINGS["automations"]
+    if not isinstance(data, dict):
+        data = {}
+    rules = validate_rules(data.get("rules", []), warnings)[:MAX_AUTOMATION_RULES]
+    return {
+        "enabled": _coerce_bool(data.get("enabled"), bool(defaults["enabled"])),
+        # Written back in canonical form: a rule read from disk and saved again
+        # must not drift in shape, or the next build's migration reads two.
+        "rules": [rule_to_dict(rule) for rule in rules],
+        # Which migration has already run. Losing this would run it again, so it is
+        # part of the validated shape rather than an incidental key.
+        "migrated_version": _coerce_int(data.get("migrated_version"), 0, 0, 1000),
+        # True while the 0.3.5 schedule tasks are still the executor for the rules
+        # migrated from them — see app.automation.migration.
+        "legacy_bridge": _coerce_bool(data.get("legacy_bridge"), False),
+        # The handoff has been recorded but the old pair is not off the machine yet.
+        # Written before the removal is attempted, so a removal that fails is
+        # something the next start can finish.
+        "legacy_cleanup_pending": _coerce_bool(data.get("legacy_cleanup_pending"), False),
+        # Which scene the migration made for each built-in preset. Kept so ownership
+        # of those scenes is something recorded rather than guessed from an id.
+        "preset_scenes": _coerce_preset_scenes(data.get("preset_scenes")),
+    }
+
+
+def _coerce_preset_scenes(data: Any) -> dict[str, str]:
+    if not isinstance(data, dict):
+        return {}
+    mapping: dict[str, str] = {}
+    for key, value in list(data.items())[:MAX_AUTOMATION_RULES]:
+        preset, scene_id = str(key).strip(), str(value).strip()
+        if preset and scene_id:
+            mapping[preset] = scene_id
+    return mapping
+
+
 def validate_scenes(data: Any) -> list[dict[str, Any]]:
     """Keep valid scene envelopes (re-canonicalised), drop corrupt ones, cap the
     count. Tolerates a bare scene dict saved by an older build."""
@@ -704,6 +825,7 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "music": validate_music(data.get("music", DEFAULT_SETTINGS["music"])),
         "software_fx": validate_software_fx(data.get("software_fx", DEFAULT_SETTINGS["software_fx"])),
         "app_triggers": validate_app_triggers(data.get("app_triggers", DEFAULT_SETTINGS["app_triggers"])),
+        "automations": validate_automations(data.get("automations", DEFAULT_SETTINGS["automations"])),
         "hotkeys": validate_hotkeys(data.get("hotkeys", DEFAULT_SETTINGS["hotkeys"])),
         "diy": validate_diy(data.get("diy", DEFAULT_SETTINGS["diy"])),
         "diy_saved": validate_diy_saved(data.get("diy_saved", [])),
@@ -777,8 +899,23 @@ def validate_profiles_payload(payload: Any) -> tuple[list[dict[str, Any]], int]:
 
 
 def _write_json(path: Path, payload: Any) -> None:
+    """Write through a temporary file, so a reader never sees half a file.
+
+    The temporary name carries this process's id: a headless automation run and the
+    open app write the same settings file, and one shared ``.tmp`` name would let
+    them rename each other's half-written content into place.
+    """
     _ensure_data_dir()
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary = path.with_suffix(f"{path.suffix}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - nothing more we can do
+            pass
+        raise
 
 
 def default_profiles() -> list[dict[str, Any]]:
@@ -886,4 +1023,53 @@ def load_settings() -> dict[str, Any]:
 
 
 def save_settings(settings: dict[str, Any]) -> None:
-    _write_json(SETTINGS_PATH, settings)
+    with file_lock(_settings_lock_path(), timeout=SETTINGS_LOCK_TIMEOUT_SECONDS) as locked:
+        if not locked:
+            raise TimeoutError("settings file is busy")
+
+        payload = json.loads(json.dumps(settings))
+        if SETTINGS_PATH.exists():
+            # Power is runtime state shared with the headless automation process.
+            # Most callers save an old, long-lived settings snapshot after changing
+            # an unrelated field; letting that snapshot own power would undo a
+            # background command that completed in the meantime. Actual power
+            # commands use update_power_setting() below.
+            current = validate_settings(_read_json(SETTINGS_PATH, DEFAULT_SETTINGS))
+            payload.setdefault("last_state", {})["power"] = current["last_state"]["power"]
+        _write_json(SETTINGS_PATH, payload)
+
+
+def update_settings(mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
+    """Change a few keys of the stored settings, without a stale full snapshot.
+
+    Read and write happen inside one lock, so a headless automation run that only
+    wants to record the new power state cannot overwrite everything the open app
+    has changed in the meantime. ``mutate`` is handed the freshly read settings and
+    must touch only the keys it owns.
+
+    Deliberately built on the low-level read/write rather than
+    ``load_settings``/``save_settings``: those take the same lock, and a second
+    handle on it in this process would wait for the one we are already holding.
+    """
+    with file_lock(_settings_lock_path(), timeout=SETTINGS_LOCK_TIMEOUT_SECONDS) as locked:
+        if not locked:
+            raise TimeoutError("settings file is busy")
+        settings = validate_settings(_read_json(SETTINGS_PATH, DEFAULT_SETTINGS))
+        mutate(settings)
+        _write_json(SETTINGS_PATH, settings)
+        return settings
+
+
+def update_power_setting(enabled: bool) -> dict[str, Any]:
+    """Persist a power command without exposing it to stale full snapshots."""
+
+    power = bool(enabled)
+
+    def set_power(settings: dict[str, Any]) -> None:
+        settings.setdefault("last_state", {})["power"] = power
+
+    return update_settings(set_power)
+
+
+def _settings_lock_path() -> Path:
+    return SETTINGS_PATH.with_suffix(SETTINGS_PATH.suffix + ".lock")

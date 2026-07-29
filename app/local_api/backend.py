@@ -109,6 +109,17 @@ class QtApiBackend:
     def delete_scene(self, scene_id: str) -> bool:
         return self._invoker.call(lambda: self._delete_scene(scene_id))
 
+    # ── shared with the automation executor ───────────────────────────
+    # It writes to the strips itself, through tracked BLE commands, but the
+    # questions of *which* strips a scene means and what each of them can do are
+    # already answered here — and answering them twice is how the phone and an
+    # automation would start applying the same scene differently.
+    def resolve_scene_targets(self, target: Any) -> list[str] | None:
+        return self._invoker.call(lambda: self._resolve_scene_targets(target))
+
+    def capabilities_for_device(self, device_id: str | None) -> dict[str, Any]:
+        return self._invoker.call(lambda: self._capabilities_for(device_id))
+
     # ── main-thread implementations ───────────────────────────────────
     def _build_status(self) -> dict[str, Any]:
         host = self._host
@@ -259,6 +270,14 @@ class QtApiBackend:
             host._ble.set_power_for_addresses(bool(on), [str(device_id).strip()])
             if self._is_primary(device_id):
                 host.power_button.setChecked(bool(on))  # reflect, don't re-send
+                remember_power = getattr(host, "_remember_power_setting", None)
+                if callable(remember_power):
+                    remember_power(bool(on))
+                else:
+                    # Lightweight protocol fakes and embedders may not own the
+                    # MainWindow persistence helper. Keep their in-memory status
+                    # truthful without assuming a concrete host class.
+                    self._settings().setdefault("last_state", {})["power"] = bool(on)
             return
         host.power_button.setChecked(bool(on))
         host._toggle_power()

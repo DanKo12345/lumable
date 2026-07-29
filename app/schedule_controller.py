@@ -33,6 +33,8 @@ class ScheduleHost(Protocol):
 
     def _show_license_overlay(self) -> None: ...
 
+    def _remember_power_setting(self, enabled: bool) -> None: ...
+
     def _show_error(self, message: str) -> None: ...
 
     def _suppress_signals(self): ...
@@ -89,9 +91,24 @@ class ScheduleController:
         if save and not host._initializing:
             host._settings["schedule"] = self.settings()
             self._last_fire.clear()
+            self._resync_migrated_rules()
             save_settings(host._settings)
             if run_check:
                 QTimer.singleShot(0, self._check_schedule)
+
+    def _resync_migrated_rules(self) -> None:
+        """Keep the rules migrated from this schedule pointing at the same times.
+
+        Loading a profile replaces the schedule wholesale, and the times the rules
+        were migrated with would otherwise stay behind — leaving the light following
+        whichever of the two the user was not looking at.
+        """
+        from app.automation.migration import resync_legacy_schedule_rules
+
+        try:
+            resync_legacy_schedule_rules(self._host._settings)
+        except Exception:  # pragma: no cover - never worth failing a save for
+            pass
 
     def time_from_text(self, text: str, fallback: QTime) -> QTime:
         parsed = QTime.fromString(text, "HH:mm")
@@ -116,6 +133,7 @@ class ScheduleController:
             return
         host._settings["schedule"] = self.settings()
         self._last_fire.clear()
+        self._resync_migrated_rules()
         save_settings(host._settings)
         if host.schedule_startup_button.isChecked() or are_schedule_tasks_enabled():
             self._sync_background_schedule_tasks()
@@ -246,5 +264,6 @@ class ScheduleController:
         host.power_button.setChecked(enabled)
         host._sync_power_button()
         host._ble.set_power(enabled)
+        host._remember_power_setting(enabled)
         host._sync_quick_mode_from_state()
         host._log(host._tr("schedule.power_on" if enabled else "schedule.power_off"))

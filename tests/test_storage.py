@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app import storage
 
 
@@ -256,6 +258,44 @@ def test_load_settings_saves_normalized_payload(tmp_path, monkeypatch) -> None:
     assert settings["window_width"] == 1320
     saved = json.loads(settings_path.read_text(encoding="utf-8"))
     assert saved == settings
+
+
+def test_a_stale_full_snapshot_cannot_undo_a_targeted_power_update() -> None:
+    initial = storage.load_settings()
+    initial["last_state"]["power"] = True
+    storage.update_power_setting(True)
+    storage.save_settings(initial)
+    stale_gui_snapshot = storage.load_settings()
+
+    storage.update_power_setting(False)
+    stale_gui_snapshot["color_temperature"] = 3000
+    storage.save_settings(stale_gui_snapshot)
+
+    saved = storage.load_settings()
+    assert saved["last_state"]["power"] is False
+    assert saved["color_temperature"] == 3000
+
+
+def test_settings_are_not_written_without_the_lock(monkeypatch) -> None:
+    from contextlib import contextmanager
+
+    original = storage.load_settings()
+    original["language"] = "en"
+    storage.save_settings(original)
+
+    @contextmanager
+    def busy(_path, *, timeout):
+        yield False
+
+    monkeypatch.setattr(storage, "file_lock", busy)
+    changed = dict(original)
+    changed["language"] = "ru"
+    with pytest.raises(TimeoutError):
+        storage.save_settings(changed)
+    with pytest.raises(TimeoutError):
+        storage.update_power_setting(False)
+
+    assert json.loads(storage.SETTINGS_PATH.read_text(encoding="utf-8"))["language"] == "en"
 
 
 def test_ensure_data_dir_migrates_old_author_data_dir(tmp_path, monkeypatch) -> None:

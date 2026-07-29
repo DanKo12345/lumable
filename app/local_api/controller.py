@@ -80,6 +80,17 @@ class LocalApiController:
         self._pair_timer: QTimer | None = None
         self._lan_confirm_overlay: LanAccessOverlay | None = None
 
+    def backend(self) -> QtApiBackend:
+        """The main-thread bridge to the app, created on first use.
+
+        Shared with the automation engine: it answers "which strips does this scene
+        mean" and "what can that strip do" the same way for a phone and for a rule,
+        and it exists whether or not the Local API server is switched on.
+        """
+        if self._backend is None:
+            self._backend = QtApiBackend(self._host)
+        return self._backend
+
     # ── lifecycle ─────────────────────────────────────────────────────
     def start(self) -> None:
         self.apply_settings()
@@ -104,8 +115,7 @@ class LocalApiController:
         if not config["token"]:
             config["token"] = generate_token()
             self._persist(config)
-        if self._backend is None:
-            self._backend = QtApiBackend(self._host)
+        self.backend()
         router = ApiRouter(
             self._backend,
             config["token"],

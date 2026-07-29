@@ -49,6 +49,8 @@ class ProfileActionsHost(Protocol):
 
     def _sync_power_button(self) -> None: ...
 
+    def _remember_power_setting(self, enabled: bool) -> None: ...
+
     def _sync_aurora_accent(self, *, enabled: bool | None = None) -> None: ...
 
     def _sync_effect_preview(self, *, reset_phase: bool = False) -> None: ...
@@ -222,6 +224,7 @@ class ProfileActions:
                 host._schedule_ctrl.apply_settings(profile.get("schedule", {}), save=True, run_check=True)
         if announce_load:
             host._log(localization_manager.status_config_event("loaded", profile))
+        host._remember_power_setting(host.power_button.isChecked())
         host._sync_aurora_accent()
         host._sync_quick_mode_from_state()
         if not host._is_connected:

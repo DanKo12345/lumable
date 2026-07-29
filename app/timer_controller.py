@@ -142,6 +142,11 @@ class TimerController:
             host.power_button.setChecked(True)
             host._toggle_power()
 
+    def _remember_power(self, enabled: bool) -> None:
+        remember_power = getattr(self._host, "_remember_power_setting", None)
+        if callable(remember_power):
+            remember_power(bool(enabled))
+
     # ── sleep timer ───────────────────────────────────────────────────
     def _toggle_sleep(self) -> None:
         host = self._host
@@ -175,6 +180,7 @@ class TimerController:
                 host._ble.set_power(False)
                 host.power_button.setChecked(False)
                 host._sync_power_button()
+                self._remember_power(False)
             else:
                 host._ble.set_color(*self._sleep_base)
             host._log(host._tr("timers.sleep_cancelled"))
@@ -188,6 +194,7 @@ class TimerController:
             host._ble.set_power(False)
             host.power_button.setChecked(False)
             host._sync_power_button()
+            self._remember_power(False)
             self._end_sleep(powered_off=True)
             host._log(host._tr("timers.sleep_done"))
             return

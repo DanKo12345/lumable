@@ -83,6 +83,39 @@ class ExecutionResult:
             raise ValueError("ok means every step completed")
 
 
+# ── context for the journal ───────────────────────────────────────────────
+# Module-level, not private to the dispatcher: the headless ``--run-rule`` path
+# writes to the same journal, and two spellings of "how a run is recorded" would
+# drift apart entry by entry.
+
+
+def success_code_for(decision: Decision) -> str:
+    return CODE_SCENE_APPLIED if decision.action.type == ACTION_APPLY_SCENE else CODE_POWER_SET
+
+
+def failure_code_for(result: ExecutionResult) -> str:
+    """What to file a failed run under when the executor named no code itself."""
+    return result.code or (CODE_PARTIAL if result.partial else CODE_EXECUTION_FAILED)
+
+
+def steps_context(result: ExecutionResult) -> dict:
+    if result.total_steps <= 0 and not result.partial_possible:
+        return {}
+    context: dict = {}
+    if result.total_steps > 0:
+        context["completed_steps"] = result.completed_steps
+        context["total_steps"] = result.total_steps
+    if result.partial_possible:
+        context["partial_possible"] = True
+    return context
+
+
+def decision_context(decision: Decision) -> dict:
+    if decision.action.type == ACTION_APPLY_SCENE:
+        return {"scene_id": decision.action.scene_id}
+    return {"target": decision.action.target, "power": decision.action.power}
+
+
 class ExecutionHandle(Protocol):
     def cancel(self) -> None:
         """Best-effort cancellation, without rollback. Safe to call late.
@@ -184,11 +217,11 @@ class AutomationDispatcher:
         now = self._clock()
         if not self._engine.ack(decision, success=result.ok):
             return  # the engine had already moved on (a pause, for instance)
-        context = self._decision_context(decision) | self._steps_context(result)
+        context = decision_context(decision) | steps_context(result)
         if result.ok:
             self._journal.record_success(
                 decision.rule_id,
-                message_code=result.code or self._success_code(decision),
+                message_code=result.code or success_code_for(decision),
                 now=now,
                 occurred_at=decision.occurred_at,
                 decided_at=decision.decided_at,
@@ -200,8 +233,7 @@ class AutomationDispatcher:
             # told so, which is what lets it try again.
             self._journal.record_error(
                 decision.rule_id,
-                message_code=result.code
-                or (CODE_PARTIAL if result.partial else CODE_EXECUTION_FAILED),
+                message_code=failure_code_for(result),
                 now=now,
                 occurred_at=decision.occurred_at,
                 decided_at=decision.decided_at,
@@ -241,7 +273,7 @@ class AutomationDispatcher:
             decided_at=in_flight.decision.decided_at,
             # Whether anything reached the strip is genuinely unknown here, so
             # the journal says "possibly" rather than picking a story.
-            context=self._decision_context(in_flight.decision) | {"partial_possible": True},
+            context=decision_context(in_flight.decision) | {"partial_possible": True},
         )
 
     # ── lifecycle ─────────────────────────────────────────────────────
@@ -266,12 +298,27 @@ class AutomationDispatcher:
                 now=now,
                 occurred_at=in_flight.decision.occurred_at,
                 decided_at=in_flight.decision.decided_at,
-                context=self._decision_context(in_flight.decision) | {"partial_possible": True},
+                context=decision_context(in_flight.decision) | {"partial_possible": True},
             )
         self._engine.pause(now, seconds)
 
     def resume(self) -> None:
         self._engine.resume()
+
+    def rules_changed(self) -> None:
+        """The rule set has been edited. Drop what was decided about the old one.
+
+        Anything in flight was decided for rules that no longer exist in that form,
+        so it is called off rather than allowed to land and be recorded as that
+        rule's doing. Not journalled: the user edited their automations, which is
+        not an event that happened to their light.
+        """
+        in_flight, self._in_flight = self._in_flight, None
+        if in_flight is not None:
+            if in_flight.handle is not None:
+                in_flight.handle.cancel()
+            self._engine.ack(in_flight.decision, success=False)
+        self._engine.rules_changed()
 
     def shutdown(self, now: datetime, monotonic_now: float = 0.0) -> None:
         """Abandon anything in flight and get the journal onto disk."""
@@ -284,28 +331,8 @@ class AutomationDispatcher:
         return self._in_flight.decision if self._in_flight is not None else None
 
     # ── context for the journal ───────────────────────────────────────
-    @staticmethod
-    def _success_code(decision: Decision) -> str:
-        return CODE_SCENE_APPLIED if decision.action.type == ACTION_APPLY_SCENE else CODE_POWER_SET
-
-    @staticmethod
-    def _steps_context(result: ExecutionResult) -> dict:
-        if result.total_steps <= 0 and not result.partial_possible:
-            return {}
-        context: dict = {}
-        if result.total_steps > 0:
-            context["completed_steps"] = result.completed_steps
-            context["total_steps"] = result.total_steps
-        if result.partial_possible:
-            context["partial_possible"] = True
-        return context
-
-    @staticmethod
-    def _decision_context(decision: Decision) -> dict:
-        if decision.action.type == ACTION_APPLY_SCENE:
-            return {"scene_id": decision.action.scene_id}
-        return {"target": decision.action.target, "power": decision.action.power}
-
+    # Only the skip reasons are the dispatcher's own: they read the engine. How a
+    # *run* is recorded lives at module level, shared with the headless path.
     def _skip_context(self, reason: str, rule_id: str, outcome, rules: list[Rule]) -> dict:
         """The detail that makes a skip actionable rather than just a label."""
         if reason == SKIP_OUTRANKED and outcome.decision is not None:

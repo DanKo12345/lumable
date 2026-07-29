@@ -103,6 +103,25 @@ def are_schedule_tasks_enabled() -> bool:
         return False
 
 
+def schedule_tasks_present() -> bool:
+    """Whether *any* of the 0.3.5 schedule pair is still on the machine.
+
+    Deliberately not ``are_schedule_tasks_enabled``, which wants both: a pair left
+    half-created — one deleted by hand, or a create that failed after the first —
+    still has a task that fires, and treating that as "no schedule tasks" is how the
+    migration would end up with two things switching the same light.
+    """
+    if not is_supported() or _schtasks_disabled():
+        return False
+    try:
+        return bool(
+            _run_schtasks(["/Query", "/TN", SCHEDULE_TASK_ON], allow_missing=True)
+            or _run_schtasks(["/Query", "/TN", SCHEDULE_TASK_OFF], allow_missing=True)
+        )
+    except OSError:
+        return False
+
+
 def set_schedule_tasks_enabled(
     enabled: bool, *, on_time: str, off_time: str, days: list[int] | None = None
 ) -> None:

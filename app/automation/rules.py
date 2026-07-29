@@ -64,6 +64,26 @@ EXECUTION_MODES = (EXECUTION_RUNTIME, EXECUTION_BACKGROUND)
 TARGET_PRIMARY = "primary"
 ACTION_TARGETS = (TARGET_PRIMARY,)
 
+# ── provenance ────────────────────────────────────────────────────────────
+# Where a rule came from. A rule the user wrote and one the migration derived from
+# the 0.3.5 schedule are not interchangeable: the migrated one has an old executor
+# still standing behind it, it must not be given a Windows task of its own while
+# that bridge is up, and a second migration has to recognise it rather than make
+# another. ``origin_ref`` says *which* one — the profile, or the app fragment.
+ORIGIN_MANUAL = ""  # authored in the app
+ORIGIN_LEGACY_SCHEDULE = "legacy_schedule"
+ORIGIN_PROFILE_SCHEDULE = "profile_schedule"
+ORIGIN_APP_TRIGGER = "app_trigger"
+ORIGIN_APP_TRIGGER_DEFAULT = "app_trigger_default"
+
+ORIGINS = (
+    ORIGIN_MANUAL,
+    ORIGIN_LEGACY_SCHEDULE,
+    ORIGIN_PROFILE_SCHEDULE,
+    ORIGIN_APP_TRIGGER,
+    ORIGIN_APP_TRIGGER_DEFAULT,
+)
+
 MAX_PRIORITY = 100
 MAX_COOLDOWN_SECONDS = 24 * 60 * 60
 MAX_NO_INPUT_MINUTES = 24 * 60
@@ -175,10 +195,17 @@ class Rule:
     priority: int = 0
     cooldown_seconds: int = 0
     enabled: bool = True
+    # Where this rule came from; see the ORIGIN_* constants.
+    origin: str = ORIGIN_MANUAL
+    origin_ref: str = ""
 
     @property
     def runs_in_background(self) -> bool:
         return self.execution == EXECUTION_BACKGROUND
+
+    @property
+    def is_migrated(self) -> bool:
+        return self.origin != ORIGIN_MANUAL
 
 
 def _validate_trigger(data: Any, warnings: list[str] | None, rule_id: str) -> Trigger | None:
@@ -277,6 +304,7 @@ def validate_rule(data: Any, warnings: list[str] | None = None) -> Rule | None:
     execution = _validate_execution(data.get("execution"), trigger, action)
     if execution != data.get("execution") and str(data.get("execution", "")) == EXECUTION_BACKGROUND:
         _warn(warnings, WARN_BACKGROUND_DOWNGRADED, rule_id)
+    origin = str(data.get("origin", ORIGIN_MANUAL)).strip()
     return Rule(
         id=rule_id,
         name=str(data.get("name", "")).strip()[:80],
@@ -286,6 +314,11 @@ def validate_rule(data: Any, warnings: list[str] | None = None) -> Rule | None:
         priority=_clamp_int(data.get("priority"), -MAX_PRIORITY, MAX_PRIORITY, 0),
         cooldown_seconds=_clamp_int(data.get("cooldown_seconds"), 0, MAX_COOLDOWN_SECONDS, 0),
         enabled=_coerce_bool(data.get("enabled"), True),
+        # An unknown origin becomes "authored here". Claiming a provenance we do not
+        # recognise would be worse than claiming none: the bridge rules are excluded
+        # from Windows tasks by exactly this field.
+        origin=origin if origin in ORIGINS else ORIGIN_MANUAL,
+        origin_ref=str(data.get("origin_ref", "")).strip()[:64],
     )
 
 
@@ -327,7 +360,7 @@ def rule_to_dict(rule: Rule) -> dict[str, Any]:
         action["power"] = rule.action.power
         action["target"] = rule.action.target
 
-    return {
+    stored: dict[str, Any] = {
         "id": rule.id,
         "name": rule.name,
         "trigger": trigger,
@@ -337,6 +370,13 @@ def rule_to_dict(rule: Rule) -> dict[str, Any]:
         "cooldown_seconds": rule.cooldown_seconds,
         "enabled": rule.enabled,
     }
+    if rule.origin != ORIGIN_MANUAL:
+        # Only written when there is something to say, so a hand-authored rule
+        # reads the way it was authored.
+        stored["origin"] = rule.origin
+        if rule.origin_ref:
+            stored["origin_ref"] = rule.origin_ref
+    return stored
 
 
 def with_enabled(rule: Rule, enabled: bool) -> Rule:

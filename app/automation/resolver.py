@@ -134,13 +134,18 @@ def _matches_stateful(rule: Rule, snapshot: Snapshot) -> bool:
     return False
 
 
-def _last_crossing(rule: Rule, previous: datetime, now: datetime) -> datetime | None:
+def last_crossing(rule: Rule, previous: datetime, now: datetime) -> datetime | None:
     """When the rule's time of day last fell in (previous, now], else None.
 
     Returns the moment rather than a bool because a tick may span several: a
     laptop asleep from 19:00 to 23:00 crossed both an "on at 19:00" and an
     "off at 23:00" rule, and the later one has to win. With only a bool both
     would carry the tick's timestamp and the tie would fall through to the id.
+
+    Public because the headless path has to answer the same question about the
+    same window. Two implementations of "which crossings did we miss" would drift,
+    and the drift would show as a schedule that behaves differently depending on
+    whether the app happened to be open.
     """
     hours, _, minutes = rule.trigger.time_at.partition(":")
     hour, minute = int(hours), int(minutes)
@@ -152,6 +157,20 @@ def _last_crossing(rule: Rule, previous: datetime, now: datetime) -> datetime | 
             latest = target
         day += timedelta(days=1)
     return latest
+
+
+def rank(rule: Rule, occurred_at: datetime) -> tuple[int, float, str]:
+    """How one candidate compares to another: priority, then freshness.
+
+    The single spelling of the conflict rule. Rule order in the list is
+    deliberately absent, and the trailing id is only there to make a complete tie
+    deterministic — it is never presented to the user as a rule of the system.
+
+    Public for the same reason as :func:`last_crossing`: the headless path settles
+    the same conflict between rules that came due while the machine was asleep, and
+    a second implementation would decide it differently.
+    """
+    return (rule.priority, occurred_at.timestamp(), rule.id)
 
 
 class AutomationEngine:
@@ -188,6 +207,17 @@ class AutomationEngine:
 
     def resume(self) -> None:
         self._paused_until = None
+        self._forget_current_state()
+
+    def rules_changed(self) -> None:
+        """The rules are no longer the ones that were applied. Forget the winner.
+
+        A stateful rule only acts when it *takes over*, so the engine remembers which
+        one is in force. That memory is about a rule as it was: edit the scene behind
+        the winning rule, or switch automations off and on again, and "already
+        applied" stops being true while still being remembered. The caller notices
+        the change; this is how it says so.
+        """
         self._forget_current_state()
 
     def paused_until(self) -> datetime | None:
@@ -383,7 +413,7 @@ class AutomationEngine:
                 # the 21:00 rule.
                 if previous_tick is None:
                     continue
-                occurred_at = _last_crossing(rule, previous_tick, snapshot.now)
+                occurred_at = last_crossing(rule, previous_tick, snapshot.now)
                 if occurred_at is not None:
                     fired.append((rule, occurred_at))
             elif kind in latest:
@@ -416,9 +446,4 @@ class AutomationEngine:
     def _rank(
         self, rule: Rule, recency: dict[str, datetime], now: datetime
     ) -> tuple[int, float, str]:
-        """Priority first, then how recently this rule became current.
-
-        The trailing id is only there to make a complete tie deterministic; it
-        is never presented to the user as a rule of the system.
-        """
-        return (rule.priority, recency.get(rule.id, now).timestamp(), rule.id)
+        return rank(rule, recency.get(rule.id, now))

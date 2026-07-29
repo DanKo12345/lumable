@@ -25,6 +25,7 @@ from app.automation.dispatcher import ExecutionResult
 
 # Mirrors app.ble result codes without importing them: this package stays free
 # of BLE and Qt so it can be tested with plain objects.
+CODE_SUCCESS = "success"
 CODE_CANCELLED = "cancelled"
 CODE_UNAVAILABLE = "unavailable"
 
@@ -57,6 +58,8 @@ class SceneOperationGroup:
         self._cancelled = False
         self._finished = False
         self._confirmed_at_cancel: set[int] | None = None
+        self._in_flight_at_cancel = False
+        self._cancel_code = CODE_CANCELLED
 
     # ── collecting ────────────────────────────────────────────────────
     def register(self, operation_id: int) -> bool:
@@ -83,11 +86,29 @@ class SceneOperationGroup:
         It still belongs in ``total_steps``: without it, "two of the five things
         the scene wanted" would be reported as "two of two".
         """
+        self._register_synthetic(ok=False, code=CODE_UNAVAILABLE)
+
+    def register_completed_step(self) -> None:
+        """Record a step that was done synchronously — starting a PC mode.
+
+        Nothing went to BLE, so no result will ever arrive for it: the step is
+        finished the moment it is registered. Without it a scene whose only field
+        is screen sync would produce no operations at all and be reported as
+        "nothing was sent".
+        """
+        self._register_synthetic(ok=True, code=CODE_SUCCESS)
+
+    def _register_synthetic(self, *, ok: bool, code: str) -> None:
+        """Add a step that has no BLE operation, answered on the spot.
+
+        The placeholder id is negative so it can never collide with a real
+        operation id, and unique because the list only ever grows.
+        """
         if not self._accepting():
             return
         placeholder = -(len(self._registered) + 1)
         self._registered.append(placeholder)
-        self._results[placeholder] = _Refused(placeholder)
+        self._results[placeholder] = _SyntheticStep(placeholder, ok, code)
         self._maybe_finish()
 
     def _accepting(self) -> bool:
@@ -108,16 +129,22 @@ class SceneOperationGroup:
         self._sealed = True
         self._maybe_finish()
 
-    def cancel(self) -> None:
+    def cancel(self, *, code: str = CODE_CANCELLED) -> None:
         """Stop the scene part-way.
 
         The flag goes up *before* any cancellation is requested: a result that
         lands in between would otherwise be counted towards a group the user has
         already called off.
+
+        ``code`` is what the verdict will be filed under. It defaults to the user
+        taking over, but the same machinery ends a scene whose dispatch blew up
+        half way through — and calling that "cancelled" in the journal would
+        blame the user for a fault.
         """
         if self._finished or self._cancelled:
             return  # cancelling twice must not re-take the snapshot below
         self._cancelled = True
+        self._cancel_code = code
         # Taken exactly once, right after the flag: only what was already
         # confirmed at this instant may count. A result arriving later — while
         # we work through the cancellations, or before a second call — belongs
@@ -128,10 +155,21 @@ class SceneOperationGroup:
             if getattr(result, "ok", False)
         }
         self._sealed = True
+        pending = [
+            operation_id
+            for operation_id in self._registered
+            if operation_id >= 0 and operation_id not in self._results
+        ]
+        # Whether anything could still be on its way, decided here rather than at
+        # verdict time: by then every operation has answered, and the doubt would
+        # be gone from the record even though it was real.
+        self._in_flight_at_cancel = bool(pending)
         if self._cancel_operation is not None:
-            for operation_id in list(self._registered):
-                if operation_id >= 0 and operation_id not in self._results:
-                    self._cancel_operation(operation_id)
+            for operation_id in pending:
+                # True from here means only that the request was accepted. A write
+                # already handed to the BLE stack still lands, and nothing is
+                # undone — hence the doubt above rather than a claim.
+                self._cancel_operation(operation_id)
         self._maybe_finish()
 
     @property
@@ -151,22 +189,27 @@ class SceneOperationGroup:
         total = len(self._registered)
         completed = sum(1 for result in self._results.values() if getattr(result, "ok", False))
 
-        if total == 0:
-            # The scene produced no operations at all — nothing was sent, so
-            # there is nothing to call a success.
-            return ExecutionResult(ok=False, code=CODE_UNAVAILABLE)
-
         if self._cancelled:
+            # Checked before the "no operations" case below: a scene called off
+            # before it managed to submit anything was cancelled, not targetless,
+            # and saying "unavailable" would send the user looking for a strip
+            # that was never the problem.
+            #
             # Only steps confirmed *before* the cancellation count. A write
             # already handed to the stack may still have landed, so the honest
             # answer is "possibly partial", never a count presented as fact.
             return ExecutionResult(
                 ok=False,
-                code=CODE_CANCELLED,
+                code=self._cancel_code,
                 completed_steps=len(self._confirmed_at_cancel or ()),
                 total_steps=total,
-                partial_possible=True,
+                partial_possible=self._in_flight_at_cancel,
             )
+
+        if total == 0:
+            # The scene produced no operations at all — nothing was sent, so
+            # there is nothing to call a success.
+            return ExecutionResult(ok=False, code=CODE_UNAVAILABLE)
 
         if completed == total:
             return ExecutionResult(ok=True, completed_steps=completed, total_steps=total)
@@ -180,9 +223,14 @@ class SceneOperationGroup:
 
 
 @dataclass(frozen=True)
-class _Refused:
-    """Stands in for a step that could not be formed into an operation."""
+class _SyntheticStep:
+    """Stands in for a step with no BLE operation behind it.
+
+    Two kinds end up here: one that could not be formed at all, and one that was
+    carried out synchronously. Both are steps the scene asked for, so both have to
+    appear in the counts.
+    """
 
     operation_id: int
-    ok: bool = False
-    code: str = CODE_UNAVAILABLE
+    ok: bool
+    code: str
