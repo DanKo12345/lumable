@@ -95,6 +95,42 @@ def _isolated_data_dir(theme: str, language: str) -> Path:
     return data_dir
 
 
+def _demo_journal_entries():
+    """A handful of entries covering all four outcomes, newest first."""
+    from datetime import datetime, timedelta
+
+    from app.automation.journal import (
+        KIND_CANCELLED,
+        KIND_ERROR,
+        KIND_SKIPPED,
+        KIND_SUCCESS,
+        JournalEntry,
+    )
+
+    now = datetime.now().replace(second=0, microsecond=0)
+    rows = [
+        (KIND_SUCCESS, "coding", "scene_applied", "", 1, now - timedelta(minutes=4)),
+        (KIND_SKIPPED, "evening", "", "disconnected", 6, now - timedelta(minutes=38)),
+        (KIND_ERROR, "weekend-night", "execution_timeout", "", 1, now - timedelta(hours=3)),
+        (KIND_CANCELLED, "fallback", "execution_cancelled", "", 1, now - timedelta(hours=9)),
+        (KIND_SUCCESS, "gone-rule", "power_set", "", 1, now - timedelta(days=1, hours=2)),
+    ]
+    return [
+        JournalEntry(
+            id=index,
+            kind=kind,
+            rule_id=rule_id,
+            message_code=code,
+            reason=reason,
+            count=count,
+            first_seen=seen,
+            last_seen=seen,
+            uid=f"demo-{index}",
+        )
+        for index, (kind, rule_id, code, reason, count, seen) in enumerate(rows)
+    ]
+
+
 def _apply_automations_demo(window) -> None:
     from app.automation.windows_tasks import TaskSyncResult
     from app.automation_ui_controller import PAUSE_PENDING
@@ -111,7 +147,24 @@ def _apply_automations_demo(window) -> None:
     controller.pause_status = lambda: PAUSE_PENDING
     controller.paused_until = lambda: None
     controller._last_task_result = TaskSyncResult(unchanged=("evening", "weekend-night"))
+    entries = _demo_journal_entries()
+    controller.journal = lambda limit=100: entries[:limit]
     window._automation_ui.sync_controls()
+
+
+def _apply_journal_demo(window) -> None:
+    """The page scrolled to the history card, which is below the fold on any window."""
+    from PySide6.QtWidgets import QApplication
+
+    _apply_automations_demo(window)
+    # The page has just been filled in; without letting the layout settle first, the
+    # scroll would be computed against geometry that is still all zeroes.
+    app = QApplication.instance()
+    for _ in range(8):
+        app.processEvents()
+    # Not the scrollbar's maximum: the canvas keeps a stretch below the cards, so
+    # the bottom of the range is empty space past the last one.
+    window.body_scroll.ensureWidgetVisible(window.automations_journal_card, 0, 24)
 
 
 def _apply_rule_new_demo(window) -> None:
@@ -132,6 +185,7 @@ def _apply_rule_edit_demo(window) -> None:
 
 DEMOS = {
     "automations": _apply_automations_demo,
+    "journal": _apply_journal_demo,
     "rule-new": _apply_rule_new_demo,
     "rule-edit": _apply_rule_edit_demo,
 }

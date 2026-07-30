@@ -122,15 +122,18 @@ def screen(request):
     from app.automation_ui_controller import AutomationUiController
     from app.panels.automations_panel import (
         build_automation_bridge_section,
+        build_automation_journal_section,
         build_automation_rules_section,
         build_automations_section,
     )
 
     QApplication.instance() or QApplication([])
     host = Host()
+    # The same builders, in the same order, as the automations page itself.
     for builder in (
         build_automations_section,
         build_automation_rules_section,
+        build_automation_journal_section,
         build_automation_bridge_section,
     ):
         host._column.addWidget(builder(host))

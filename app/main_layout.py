@@ -20,6 +20,7 @@ from app.panels import (
     build_ambient_section,
     build_app_triggers_section,
     build_automation_bridge_section,
+    build_automation_journal_section,
     build_automation_rules_section,
     build_automations_section,
     build_color_section,
@@ -92,7 +93,12 @@ _NAV_SECTIONS = (
     (
         "automations",
         "nav.automations",
-        (build_automations_section, build_automation_rules_section, build_automation_bridge_section),
+        (
+            build_automations_section,
+            build_automation_rules_section,
+            build_automation_journal_section,
+            build_automation_bridge_section,
+        ),
     ),
     (
         "settings",

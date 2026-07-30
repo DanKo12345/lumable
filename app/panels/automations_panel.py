@@ -104,6 +104,24 @@ def build_automation_rules_section(host: PanelHost) -> GlassCard:
     return host.automations_rules_card
 
 
+def build_automation_journal_section(host: PanelHost) -> GlassCard:
+    """What actually happened. Rows are built by the controller, from the journal."""
+    host.automations_journal_card = host._card(
+        host._tr("automations.journal_title"),
+        host._tr("automations.journal_subtitle"),
+        icon="logs",
+    )
+
+    host.automations_journal_empty = QLabel(host._tr("automations.journal_empty"))
+    host.automations_journal_empty.setObjectName("cardSubtitle")
+    host.automations_journal_empty.setWordWrap(True)
+    host.automations_journal_card.content_layout.addWidget(host.automations_journal_empty)
+
+    host.automations_journal_list, host.automations_journal_layout = list_container(host)
+    host.automations_journal_card.content_layout.addWidget(host.automations_journal_list)
+    return host.automations_journal_card
+
+
 def build_automation_bridge_section(host: PanelHost) -> GlassCard:
     """The 0.3.5 handoff, shown only while there is something to hand over.
 

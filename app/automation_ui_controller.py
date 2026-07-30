@@ -95,6 +95,21 @@ _TRIGGER_TILES = {
 }
 _FALLBACK_TILE = ("workflow", "#a9b0bd")
 
+# How many journal entries the card shows. The file keeps 300; a screen that listed
+# them all would be a log viewer, and the question this card answers — "what did it
+# just do, and why not" — is answered by the most recent handful.
+JOURNAL_LIMIT = 20
+
+# One tile per outcome. Cancelled is deliberately not red: the user taking over is
+# not a fault, and a journal that paints it as one teaches them to ignore the real
+# failures next to it.
+_JOURNAL_TILES = {
+    "success": ("circle-play", "#72c7b7"),
+    "skipped": ("circle-dot", "#a9b0bd"),
+    "error": ("power", "#ff8f8f"),
+    "cancelled": ("moon", "#8fbfff"),
+}
+
 # The four pause states, drawn four ways. The two amber ones are the states where
 # this app and the machine disagree; they share the colour of "not settled yet" and
 # differ in glyph and wording.
@@ -214,6 +229,65 @@ def pause_text(status: str, ends_at: datetime | None, tr: Any) -> tuple[str, str
     return tr("automations.state_running"), ""
 
 
+def entry_headline(entry: Any, tr: Any, rule_name: str = "") -> str:
+    """Whose line this is: the rule's current name, or that it is gone.
+
+    A journal outlives the rules it describes — that is most of its value — so an
+    entry for a deleted rule has to say something rather than render blank.
+    """
+    if rule_name:
+        return rule_name
+    return tr("automations.journal_unknown_rule")
+
+
+def entry_outcome(entry: Any, tr: Any) -> str:
+    """What happened, from the stored code.
+
+    Codes are stable and untranslated on disk, which is what lets the journal
+    survive a language change. An unknown one — written by a newer build, or by a
+    path added since — falls back to its kind rather than to nothing: "Skipped" with
+    no reason is poor, and a blank line is a bug the user has to report to explain.
+    """
+    code = str(getattr(entry, "message_code", "") or getattr(entry, "reason", "") or "")
+    if code:
+        text = tr(f"automations.journal_code_{code}")
+        if not text.startswith("automations.journal_code_"):
+            return text
+    kind = str(getattr(entry, "kind", ""))
+    fallback = tr(f"automations.journal_kind_{kind}")
+    if fallback.startswith("automations.journal_kind_"):
+        # Neither the code nor the kind is known. The raw code is ugly and it is
+        # also the only true thing left to say.
+        return code or kind
+    return fallback
+
+
+def entry_when(entry: Any, tr: Any, *, now: datetime | None = None) -> str:
+    """The time, and the date as well when it was not today.
+
+    Numeric, not a month name: this line is read next to a rule's own times, and a
+    localised month would be the only prose in a column of clocks.
+    """
+    moment = getattr(entry, "last_seen", None) or getattr(entry, "first_seen", None)
+    if not isinstance(moment, datetime):
+        return ""
+    today = (now or datetime.now()).date()
+    if moment.date() == today:
+        return moment.strftime("%H:%M")
+    return moment.strftime("%d.%m %H:%M")
+
+
+def entry_detail(entry: Any, tr: Any, *, now: datetime | None = None) -> str:
+    """When, what, and how many times — one line under the rule's name."""
+    parts = [part for part in (entry_when(entry, tr, now=now), entry_outcome(entry, tr)) if part]
+    count = int(getattr(entry, "count", 1) or 1)
+    if count > 1:
+        # Repeats of one skip are collapsed on the way in, so the count is the only
+        # thing saying this happened all evening rather than once.
+        parts.append(tr("automations.journal_repeat", count=count))
+    return " · ".join(parts)
+
+
 def tasks_text(result: Any, tr: Any, *, syncing: bool = False) -> str:
     """What Windows has been told, or "" while nothing has been attempted yet.
 
@@ -252,6 +326,11 @@ class AutomationUiController:
         # One editor at a time, and the rule it is editing ("" for a new one).
         self._editor: RuleEditorOverlay | None = None
         self._editing_id = ""
+        # What the journal looked like last time it was drawn, so a re-read that
+        # found nothing new does not rebuild the rows underneath the user. None, not
+        # (): an empty journal has an empty signature, and starting them equal would
+        # skip the first draw — the one that hides the list and shows the hint.
+        self._journal_signature: tuple | None = None
 
     def wire(self) -> None:
         host = self._host
@@ -283,19 +362,27 @@ class AutomationUiController:
         self._sync_pause()
         self._sync_tasks_note()
         self._rebuild_rules()
+        self._rebuild_journal()
         self._sync_bridge()
 
     def relocalize(self) -> None:
         # Row text is generated from the rules, so the rows are rebuilt rather than
         # patched; the rest of the card is static text the localisation pass owns.
+        # The journal is redrawn from the same entries, so its "nothing changed"
+        # guard has to be cleared or the old language would stay on screen.
+        self._journal_signature = None
         self.sync_controls()
 
     def _tick(self) -> None:
         card = getattr(self._host, "automations_card", None)
         if card is None or not card.isVisible():
-            # Nobody is looking, and the pause state lives in files on disk.
+            # Nobody is looking, and both of these live in files on disk.
             return
         self._sync_pause()
+        # A rule carried out by a Windows task, or by this app while the page sat
+        # open, writes to the journal without anything telling the screen. Nothing
+        # announces it, so while the page is on screen it is re-read.
+        self._rebuild_journal()
 
     # ── the master switch ─────────────────────────────────────────────
     def _toggle_enabled(self) -> None:
@@ -438,6 +525,46 @@ class AutomationUiController:
     def _toggle_rule(self, rule_id: str, button: Any) -> None:
         if not self._host._automations.set_rule_enabled(rule_id, button.isChecked()):
             self.sync_controls()
+
+    # ── the journal ───────────────────────────────────────────────────
+    def _rebuild_journal(self) -> None:
+        host = self._host
+        layout = getattr(host, "automations_journal_layout", None)
+        if layout is None:
+            return
+        entries = host._automations.journal(JOURNAL_LIMIT)
+        signature = tuple(
+            (entry.uid, entry.count, entry.last_seen) for entry in entries
+        )
+        if signature == self._journal_signature:
+            # Read every few seconds while the page is open: rebuilding an unchanged
+            # list would throw away the user's scroll position for nothing.
+            return
+        self._journal_signature = signature
+
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+        host.automations_journal_empty.setVisible(not entries)
+        host.automations_journal_list.setVisible(bool(entries))
+        names = {rule.id: rule_headline(rule, host._tr, self._scene_name(rule)) for rule in host._automations.rules()}
+        for index, entry in enumerate(entries):
+            if index:
+                layout.addWidget(divider(host))
+            layout.addWidget(self._build_journal_row(entry, names.get(entry.rule_id, "")))
+
+    def _build_journal_row(self, entry: Any, rule_name: str) -> QWidget:
+        host = self._host
+        kind, tint = _JOURNAL_TILES.get(str(entry.kind), _FALLBACK_TILE)
+        row, _controls, _title, status, _tile = list_row(
+            host, kind, tint, entry_headline(entry, host._tr, rule_name)
+        )
+        status.setText(entry_detail(entry, host._tr))
+        return row
 
     # ── the editor ────────────────────────────────────────────────────
     def _add_rule(self) -> None:

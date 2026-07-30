@@ -166,7 +166,43 @@ def _fill_automations(window) -> None:
     controller.pause_status = lambda: PAUSE_PENDING
     controller.paused_until = lambda: None
     controller._last_task_result = TaskSyncResult(unchanged=("evening", "weekend-night"))
+    controller.journal = lambda limit=100: _automation_journal()[:limit]
     window._automation_ui.sync_controls()
+
+
+def _automation_journal() -> list:
+    """A few entries covering all four outcomes, so the history card has rows."""
+    from datetime import datetime, timedelta
+
+    from app.automation.journal import (
+        KIND_CANCELLED,
+        KIND_ERROR,
+        KIND_SKIPPED,
+        KIND_SUCCESS,
+        JournalEntry,
+    )
+
+    now = datetime.now()
+    kinds = (
+        (KIND_SUCCESS, "coding", "scene_applied", "", 1),
+        (KIND_SKIPPED, "evening", "", "disconnected", 6),
+        (KIND_ERROR, "weekend-night", "execution_timeout", "", 1),
+        (KIND_CANCELLED, "fallback", "execution_cancelled", "", 1),
+    )
+    return [
+        JournalEntry(
+            id=index,
+            kind=kind,
+            rule_id=rule_id,
+            message_code=code,
+            reason=reason,
+            count=count,
+            first_seen=now - timedelta(minutes=index * 30),
+            last_seen=now - timedelta(minutes=index * 30),
+            uid=f"entry-{index}",
+        )
+        for index, (kind, rule_id, code, reason, count) in enumerate(kinds)
+    ]
 
 
 def _fits_horizontally(widget, parent) -> bool:
@@ -187,6 +223,7 @@ def _automation_page_is_intact(window) -> None:
     cards = (
         window.automations_card,
         window.automations_rules_card,
+        window.automations_journal_card,
         window.automations_bridge_card,
     )
     for card in cards:

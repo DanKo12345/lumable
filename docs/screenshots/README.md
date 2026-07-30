@@ -17,6 +17,11 @@ python tools/shoot_screen.py automations --demo rule-edit  --size 1280x860 --the
 where clipping shows up first. Both themes are kept because the tinted icon tiles
 and the hairline dividers are the two things that go wrong when only one is checked.
 
+`journal` scrolls to the history card, which sits below the fold on any window size.
+Its demo entries cover all four outcomes on purpose — including a run the user called
+off, which must not be painted as a failure, and an entry whose rule has since been
+deleted.
+
 `rule-new` and `rule-edit` are the two states of the rule editor that differ in kind:
 a new rule cannot be saved until it is named (the problem line and the disabled Save
 are the point of the shot), and an existing one is deletable, may hold a scene, and

@@ -2,6 +2,7 @@ from .ambient_panel import build_ambient_section
 from .app_triggers_panel import build_app_triggers_section
 from .automations_panel import (
     build_automation_bridge_section,
+    build_automation_journal_section,
     build_automation_rules_section,
     build_automations_section,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "build_ambient_section",
     "build_app_triggers_section",
     "build_automation_bridge_section",
+    "build_automation_journal_section",
     "build_automation_rules_section",
     "build_automations_section",
     "build_color_section",

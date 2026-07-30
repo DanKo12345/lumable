@@ -237,6 +237,10 @@ class UiLocalizationController:
             host.automations_rules_card.subtitle_label.setText(host._tr("automations.rules_subtitle"))
         host.automations_empty_hint.setText(host._tr("automations.empty_hint"))
         host.automations_add_button.setText(host._tr("automations.add_rule"))
+        host.automations_journal_card.title_label.setText(host._tr("automations.journal_title"))
+        if host.automations_journal_card.subtitle_label is not None:
+            host.automations_journal_card.subtitle_label.setText(host._tr("automations.journal_subtitle"))
+        host.automations_journal_empty.setText(host._tr("automations.journal_empty"))
         host.automations_bridge_card.title_label.setText(host._tr("automations.bridge_title"))
         # Every row's text is generated from its rule, and the pause row's from the
         # pause state, so the controller regenerates them rather than being patched.

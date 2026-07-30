@@ -53,6 +53,8 @@ class FakeAutomations(QObject):
         self.status = PAUSE_OFF
         self.ends_at: datetime | None = None
         self.stored_rules: list = []
+        # Newest first, as the facade hands them over.
+        self.entries: list = []
         self.task_result: TaskSyncResult | None = None
         self.syncing = False
         self.bridge = False
@@ -72,6 +74,10 @@ class FakeAutomations(QObject):
 
     def rule(self, rule_id: str):
         return next((rule for rule in self.stored_rules if rule.id == str(rule_id)), None)
+
+    def journal(self, limit: int = 100) -> list:
+        self.calls.append(("journal", int(limit)))
+        return list(self.entries[: int(limit)])
 
     def pause_status(self) -> str:
         return self.status

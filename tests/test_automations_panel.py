@@ -631,6 +631,17 @@ def test_every_string_this_screen_shows_exists_in_every_language() -> None:
         "automations.cooldown_none",
         "automations.cooldown_minutes",
         "automations.cooldown_seconds",
+        # The history card. Every code the engine can write is covered by its own
+        # test in test_automation_journal_view; these are the card's own strings.
+        "automations.journal_title",
+        "automations.journal_subtitle",
+        "automations.journal_empty",
+        "automations.journal_unknown_rule",
+        "automations.journal_repeat",
+        "automations.journal_kind_success",
+        "automations.journal_kind_skipped",
+        "automations.journal_kind_error",
+        "automations.journal_kind_cancelled",
     ]
     for language in ("ru", "en", "es", "zh"):
         localization_manager.set_language(language)
