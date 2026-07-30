@@ -876,6 +876,7 @@
         "automations.bridge_button": "Перейти",
         "automations.bridge_working": "Переходим…",
         "automations.bridge_failed": "Не удалось перейти: {detail}",
-        "automations.bridge_done": "Переход выполнен: LumaBLE будит себя сам."
+        "automations.bridge_done": "Переход выполнен: LumaBLE будит себя сам.",
+        "automations.tasks_syncing": "Обновляем задачи Windows…"
     }
 }

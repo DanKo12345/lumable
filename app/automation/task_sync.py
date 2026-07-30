@@ -47,7 +47,8 @@ class AutomationTaskSync(QObject):
 
     ``finished`` carries a :class:`TaskSyncResult`, and the same result stays
     readable afterwards as :attr:`last_result`, so a screen opened later can show
-    the state of things without provoking another reconciliation.
+    the state of things without provoking another reconciliation. Whether that
+    result is the *final* word is a separate question, and :attr:`busy` answers it.
     """
 
     finished = Signal(object)
@@ -60,6 +61,14 @@ class AutomationTaskSync(QObject):
         self._running = False
         # Something changed while a reconciliation was out. Answered when it returns.
         self._again = False
+        # Which request each side is on. Every ``sync()`` takes a number, a run
+        # records the number it set out to answer, and a result records that it did.
+        # Counted rather than inferred from ``_running``: the run clears that flag on
+        # the worker thread before it reports, so for a moment "not running" and "the
+        # answer is out of date" are both true, and a screen must be told the second.
+        self._requested = 0
+        self._serving = 0
+        self._answered = 0
         self._last_result: TaskSyncResult | None = None
         # Queued back onto this object's thread: the run reports from a worker, and
         # the rules must be read where they are owned, not from that thread.
@@ -69,6 +78,18 @@ class AutomationTaskSync(QObject):
     def last_result(self) -> TaskSyncResult | None:
         """What the last reconciliation did, or None if none has finished yet."""
         return self._last_result
+
+    @property
+    def busy(self) -> bool:
+        """Whether a reconciliation is still owed, so ``last_result`` is provisional.
+
+        This is the difference between "Windows is set up" and "Windows was set up
+        for the rules as they were a moment ago". Edit a rule while a reconciliation
+        is out at ``schtasks`` and the result that comes back describes the *old*
+        rule; presenting it as the final word would tell the user their new rule is
+        armed while the task for it has not been written yet — and may still fail.
+        """
+        return self._answered < self._requested
 
     def sync(self) -> None:
         """Reconcile once, and once more if anything changed while it was running.
@@ -80,6 +101,7 @@ class AutomationTaskSync(QObject):
         afterwards, from a fresh reading of the rules rather than the one being
         worked on now.
         """
+        self._requested += 1
         if self._running:
             self._again = True
             return
@@ -89,12 +111,14 @@ class AutomationTaskSync(QObject):
             # The settings could not be read. Handing on an empty list here would
             # read as "the user has no rules" and take every task off the machine,
             # so nothing is touched at all — not even looked at.
+            self._serving = self._requested
             self._report(
                 TaskSyncResult(errors=(("", "the automation settings could not be read"),)),
                 fallback_code=CODE_SETTINGS_UNREADABLE,
             )
             return
         self._running = True
+        self._serving = self._requested
         thread = threading.Thread(target=self._run, args=(rules,), daemon=True)
         thread.start()
 
@@ -141,6 +165,9 @@ class AutomationTaskSync(QObject):
 
     def _report(self, result: TaskSyncResult, *, fallback_code: str = "") -> None:
         self._last_result = result
+        # Answered before anything is told about it, so that a slot reading ``busy``
+        # from this very signal cannot see the result and still be told to wait.
+        self._answered = self._serving
         self._record_errors(result, fallback_code=fallback_code)
         try:
             self.finished.emit(result)

@@ -158,8 +158,16 @@ def pause_text(status: str, ends_at: datetime | None, tr: Any) -> tuple[str, str
     return tr("automations.state_running"), ""
 
 
-def tasks_text(result: Any, tr: Any) -> str:
-    """What Windows has been told, or "" while nothing has been attempted yet."""
+def tasks_text(result: Any, tr: Any, *, syncing: bool = False) -> str:
+    """What Windows has been told, or "" while nothing has been attempted yet.
+
+    ``syncing`` wins over whatever result is on hand. A reconciliation that is still
+    owed means the result describes the rules as they were, and the difference is the
+    whole point of the line: "set up" and "set up for the rule you just replaced" are
+    not the same claim, and the second one must never be made in the first one's words.
+    """
+    if syncing:
+        return tr("automations.tasks_syncing")
     if result is None:
         return ""
     if not getattr(result, "available", True):
@@ -194,6 +202,9 @@ class AutomationUiController:
         host.automations_bridge_button.clicked.connect(self._start_handoff)
         automations.changed.connect(self.sync_controls)
         automations.tasks_synced.connect(self._on_tasks_synced)
+        # Both edges. Without the start, a rule edit would leave the previous result
+        # on screen — as an answer about the rule it no longer describes.
+        automations.tasks_sync_started.connect(self._sync_tasks_note)
         automations.handoff_started.connect(self._sync_bridge)
         automations.handoff_finished.connect(self._on_handoff_finished)
         # Opening the page must not wait for the next timer tick to show the truth.
@@ -261,15 +272,20 @@ class AutomationUiController:
         row = getattr(host, "automations_pause_row", None)
         if row is None:
             return
-        # With automations switched off, or with no engine running, there is nothing
-        # to pause — and a button that could only fail is worse than no button.
-        available = automations.is_enabled() and automations.is_running()
-        row.setVisible(available)
-        host.automations_pause_divider.setVisible(available)
-        if not available:
+        status = automations.pause_status()
+        # Two reasons to show the row, and the second one is the important one. With
+        # the engine up there is something to pause. With it down — automations
+        # switched off, or an engine that never came up — there is nothing to pause,
+        # but a pause outlives the session it was set in, so as long as one is in
+        # force the row stays and offers to lift it. Hiding it would leave the user
+        # with a pause they cannot end without switching automations back on, only to
+        # find the old pause waiting for them.
+        visible = (automations.is_enabled() and automations.is_running()) or status != PAUSE_OFF
+        row.setVisible(visible)
+        host.automations_pause_divider.setVisible(visible)
+        if not visible:
             return
 
-        status = automations.pause_status()
         headline, hint = pause_text(status, automations.paused_until(), host._tr)
         kind, tint = _PAUSE_TILES.get(status, _FALLBACK_TILE)
         host.automations_pause_tile.set_kind(kind)
@@ -293,7 +309,11 @@ class AutomationUiController:
         note = getattr(host, "automations_tasks_note", None)
         if note is None:
             return
-        text = tasks_text(host._automations.last_task_result(), host._tr)
+        text = tasks_text(
+            host._automations.last_task_result(),
+            host._tr,
+            syncing=host._automations.tasks_syncing(),
+        )
         note.setText(text)
         note.setVisible(bool(text))
 

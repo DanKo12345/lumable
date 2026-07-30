@@ -231,6 +231,40 @@ def test_without_an_engine_nothing_claims_to_be_paused(monkeypatch) -> None:
     assert controller.paused_until() is None
 
 
+def test_a_pause_from_an_earlier_session_can_still_be_lifted(monkeypatch) -> None:
+    """A pause outlives the window it was set in — that is the point of writing it
+    where every process can see it. So a controller whose engine never came up must
+    still report the pause and still be able to end it: without that the user is left
+    with a pause they cannot lift except by switching automations off and on, only to
+    find the old pause waiting for them."""
+    from app.automation import headless
+
+    controller = _controller(monkeypatch)
+    assert headless.pause_automations(datetime.now(), 3600) is True
+
+    assert controller.pause_status() == PAUSE_ACTIVE
+    assert controller.paused_until() is not None
+
+    assert controller.resume() is True
+    assert controller.pause_status() == PAUSE_OFF
+
+
+def test_a_reconciliation_still_owed_is_reported_as_such(monkeypatch) -> None:
+    """``last_task_result`` is what the screen shows, so the facade has to say when
+    that result no longer describes the rules. The answer belongs to the task
+    controller; keeping a second copy here would let the two disagree."""
+    controller = _controller(monkeypatch)
+    started: list[int] = []
+    controller.tasks_sync_started.connect(lambda: started.append(1))
+
+    controller.sync_tasks()
+
+    assert started == [1], "a screen was never told the reconciliation had begun"
+    assert controller.tasks_syncing() is False
+    monkeypatch.setattr(type(controller._tasks), "busy", property(lambda _self: True))
+    assert controller.tasks_syncing() is True
+
+
 # ── lifecycle ─────────────────────────────────────────────────────────
 def test_starting_brings_the_engine_up_and_stopping_takes_it_down(monkeypatch) -> None:
     controller, runtime = _started(monkeypatch)

@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 from app.constants import WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH
 from app.main_layout import select_section
 from app.main_window import MainWindow
+from app.widgets import LiquidButton
 from app.widgets.license_overlay import LicenseOverlay
 from app.widgets.logs_overlay import LogsOverlay
 
@@ -107,6 +108,153 @@ def test_dense_page_scrolls_at_the_minimum_window_size() -> None:
         app.processEvents()
 
 
+_AUTOMATION_RULES = [
+    {
+        "id": "evening",
+        "name": "Evening",
+        "trigger": {"kind": "time", "time_at": "21:00", "days": [0, 1, 2, 3, 4, 5, 6]},
+        "action": {"type": "set_power", "power": True, "target": "primary"},
+        "execution": "background",
+    },
+    {
+        "id": "weekend-night",
+        "trigger": {"kind": "time", "time_at": "23:30", "days": [4, 5]},
+        "action": {"type": "set_power", "power": False, "target": "primary"},
+        "execution": "background",
+    },
+    {
+        "id": "coding",
+        "name": "Coding",
+        "trigger": {"kind": "app_foreground", "app": "code.exe"},
+        "action": {"type": "apply_scene", "scene_id": "scene-desk"},
+    },
+    {
+        "id": "away",
+        "trigger": {"kind": "no_input", "minutes": 20},
+        "action": {"type": "set_power", "power": False, "target": "primary"},
+        "enabled": False,
+    },
+    {
+        "id": "fallback",
+        "name": "Movie night",
+        "trigger": {"kind": "always"},
+        "action": {"type": "apply_scene", "scene_id": "scene-gone"},
+    },
+]
+
+
+def _fill_automations(window) -> None:
+    """The busiest honest state of the automations page.
+
+    Five rules of four different kinds, a pause the machine has not been told about
+    (which is the two-line one), and the 0.3.5 bridge card. Anything that fits this
+    fits the page.
+    """
+    from app.automation.runtime import PAUSE_PENDING
+    from app.automation.windows_tasks import TaskSyncResult
+
+    window._settings["automations"] = {
+        "enabled": True,
+        "rules": _AUTOMATION_RULES,
+        "legacy_bridge": True,
+    }
+    window._settings["scenes"] = [
+        {"scene_id": "scene-desk", "name": "Warm desk", "state": {"rgb": [255, 170, 90]}}
+    ]
+    controller = window._automations
+    controller.is_running = lambda: True
+    controller.pause_status = lambda: PAUSE_PENDING
+    controller.paused_until = lambda: None
+    controller._last_task_result = TaskSyncResult(unchanged=("evening", "weekend-night"))
+    window._automation_ui.sync_controls()
+
+
+def _fits_horizontally(widget, parent) -> bool:
+    left = widget.mapTo(parent, widget.rect().topLeft()).x()
+    right = widget.mapTo(parent, widget.rect().topRight()).x()
+    return left >= 0 and right <= parent.width()
+
+
+def _automation_page_is_intact(window) -> None:
+    """Every card fits the page's width, and no row's control is cut off.
+
+    Width is the axis that has no escape hatch: the page scrolls vertically, so a
+    tall page is fine, but a card wider than the canvas takes its right-hand column —
+    which is where every toggle on this screen lives — off the edge.
+    """
+    canvas = window.body_scroll.widget()
+    page = window._nav_pages["automations"]
+    cards = (
+        window.automations_card,
+        window.automations_rules_card,
+        window.automations_bridge_card,
+    )
+    for card in cards:
+        assert card.isVisibleTo(page), "a card on the automations page is hidden"
+        assert _fits_horizontally(card, canvas), "a card is wider than the page"
+
+    for button in (
+        window.automations_toggle_button,
+        window.automations_pause_button,
+        window.automations_bridge_button,
+    ):
+        assert _fits_horizontally(button, canvas), "a control fell off the page"
+
+    # Each rule's own toggle stays inside its row, and the generated detail line is
+    # given the height it needs rather than being clipped to one line.
+    for row in window._automation_ui._rows:
+        toggle = row.findChildren(LiquidButton)[0]
+        assert _fits_horizontally(toggle, row), "a rule's toggle is outside its row"
+
+    status = window.automations_pause_status
+    assert "\n" in status.text(), "this check wants the two-line pause state"
+    assert status.heightForWidth(status.width()) <= status.height(), "the pause caveat is clipped"
+
+
+def test_the_automations_page_scrolls_instead_of_clipping_at_the_minimum_window() -> None:
+    """Five rules, a two-line pause row and the bridge card are together taller than a
+    860×420 window. That has to scroll: the bridge card carries an irreversible action
+    and a rule's toggle is its only switch, so neither may be cut off the bottom."""
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window.show()
+        window.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        select_section(window, "automations")
+        _fill_automations(window)
+        app.processEvents()
+        window.body_scroll.widget().adjustSize()
+        app.processEvents()
+
+        assert window.body_scroll.verticalScrollBar().maximum() > 0, "the page did not scroll"
+        assert window.body_scroll.horizontalScrollBar().maximum() == 0, "the page scrolls sideways"
+        _automation_page_is_intact(window)
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_the_automations_page_stays_intact_at_a_normal_window_size() -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window.show()
+        window.resize(1320, 860)
+        select_section(window, "automations")
+        _fill_automations(window)
+        app.processEvents()
+        window.body_scroll.widget().adjustSize()
+        app.processEvents()
+
+        assert window.body_scroll.horizontalScrollBar().maximum() == 0
+        _automation_page_is_intact(window)
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def test_sidebar_compacts_at_minimum_height() -> None:
     """At the minimum window height the sidebar keeps the primary connection
     status and all nav items, but deliberately hides the secondary hint so the
@@ -140,7 +288,7 @@ def test_sidebar_compacts_at_minimum_height() -> None:
         assert _contained_vertically(window.device_status_card, window)
         assert _contained_vertically(window.device_status, window.device_status_card)
 
-        # No nav item is dropped — all eight remain children of the scrolled list
+        # No nav item is dropped — every one remains a child of the scrolled list
         # and thus reachable, even when the list is taller than its viewport.
         nav_list = window.nav_scroll.widget()
         for button in window._nav_buttons.values():

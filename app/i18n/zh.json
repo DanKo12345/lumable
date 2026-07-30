@@ -876,6 +876,7 @@
         "automations.bridge_button": "切换",
         "automations.bridge_working": "正在切换…",
         "automations.bridge_failed": "切换失败：{detail}",
-        "automations.bridge_done": "已切换：LumaBLE 现在自己唤醒。"
+        "automations.bridge_done": "已切换：LumaBLE 现在自己唤醒。",
+        "automations.tasks_syncing": "正在更新 Windows 唤醒任务…"
     }
 }

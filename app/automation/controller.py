@@ -31,6 +31,8 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from app.automation.headless import paused_until as durable_paused_until
+from app.automation.headless import resume_automations
 from app.automation.journal import AutomationJournal, JournalEntry
 from app.automation.migration import (
     MIGRATED_KEYS,
@@ -115,6 +117,10 @@ class AutomationController(QObject):
     applied = Signal(object)
     # A TaskSyncResult, whenever the Windows tasks have been reconciled.
     tasks_synced = Signal(object)
+    # A reconciliation has been asked for. Paired with ``tasks_synced`` so a screen
+    # can stop presenting the result it is holding as the current state of the
+    # machine — see :meth:`tasks_syncing`.
+    tasks_sync_started = Signal()
     # The 0.3.5 handoff has begun, and later: a HandoffResult. Two signals rather
     # than one because the work takes seconds of Windows' time, and a button that
     # cannot say "working" for those seconds looks broken.
@@ -258,24 +264,54 @@ class AutomationController(QObject):
         return bool(self._runtime is not None and self._runtime.pause(seconds))
 
     def resume(self) -> bool:
-        return bool(self._runtime is not None and self._runtime.resume())
+        """Let the automations go again. False when only *this app* has been told.
+
+        Works with no engine running, which is the case that matters: a pause
+        outlives the window it was set in, so refusing to lift one because the engine
+        did not come up would leave the user with a pause and no way to end it.
+        """
+        if self._runtime is not None:
+            return self._runtime.resume()
+        return resume_automations(datetime.now())
 
     def pause_status(self) -> str:
-        """One of off / active / pending / ending — four states, not two."""
+        """One of off / active / pending / ending — four states, not two.
+
+        With no engine, only two of them are possible: ``pending`` and ``ending`` are
+        disagreements between this process and the machine, and a process that is not
+        running the automations has no side to be on. The durable state is still read,
+        because a pause set in an earlier session is still holding the machine off.
+        """
         if self._runtime is None:
-            return PAUSE_OFF
+            ends_at = durable_paused_until()
+            if ends_at is None or ends_at <= datetime.now():
+                return PAUSE_OFF
+            return PAUSE_ACTIVE
         return self._runtime.pause_status()
 
     def paused_until(self) -> datetime | None:
-        return self._runtime.paused_until() if self._runtime is not None else None
+        if self._runtime is not None:
+            return self._runtime.paused_until()
+        return durable_paused_until()
 
     # ── the Windows tasks ─────────────────────────────────────────────
     def sync_tasks(self) -> None:
         """Reconcile the tasks in the background. Answers on ``tasks_synced``."""
         self._tasks.sync()
+        self.tasks_sync_started.emit()
 
     def last_task_result(self) -> TaskSyncResult | None:
         return self._last_task_result
+
+    def tasks_syncing(self) -> bool:
+        """Whether ``last_task_result`` is provisional because one is still owed.
+
+        A rule edited while a reconciliation was out at ``schtasks`` is not covered
+        by the result that comes back from it, and a second reconciliation is queued
+        behind it. Until that one answers, the result on hand describes the rules as
+        they were — so a screen must say it is working, not that Windows is set up.
+        """
+        return self._tasks.busy
 
     # ── the 0.3.5 bridge ──────────────────────────────────────────────
     def bridge_active(self) -> bool:

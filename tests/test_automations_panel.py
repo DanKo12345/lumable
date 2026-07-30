@@ -205,12 +205,25 @@ def test_the_task_line_reports_what_windows_said() -> None:
     assert "Access is denied" in failed
 
 
+def test_a_result_that_is_being_replaced_is_never_shown_as_the_final_state() -> None:
+    """"Windows is set up" and "Windows was set up for the rule you just replaced"
+    are different claims, and the second must not be made in the first one's words."""
+    settled = TaskSyncResult(unchanged=("rule-1",))
+
+    assert tasks_text(settled, _tr) == _tr("automations.tasks_ok")
+    assert tasks_text(settled, _tr, syncing=True) == _tr("automations.tasks_syncing")
+    # Even a failure is superseded by a retry that is already under way.
+    stale_error = TaskSyncResult(errors=(("rule-1", "Access is denied"),))
+    assert tasks_text(stale_error, _tr, syncing=True) == _tr("automations.tasks_syncing")
+
+
 # ── the wiring ────────────────────────────────────────────────────────
 class _FakeAutomations(QObject):
     """The facade as a screen sees it. Every call is recorded."""
 
     changed = Signal()
     tasks_synced = Signal(object)
+    tasks_sync_started = Signal()
     handoff_started = Signal()
     handoff_finished = Signal(object)
 
@@ -222,6 +235,7 @@ class _FakeAutomations(QObject):
         self.ends_at: datetime | None = None
         self.stored_rules: list = []
         self.task_result: TaskSyncResult | None = None
+        self.syncing = False
         self.bridge = False
         self.handoff_running = False
         self.writes_land = True
@@ -245,6 +259,9 @@ class _FakeAutomations(QObject):
 
     def last_task_result(self):
         return self.task_result
+
+    def tasks_syncing(self) -> bool:
+        return self.syncing
 
     def bridge_active(self) -> bool:
         return self.bridge
@@ -412,6 +429,39 @@ def test_the_pause_row_is_gone_when_there_is_nothing_to_pause(screen) -> None:
     assert host.automations_pause_row.isHidden() is True
 
 
+def test_a_pause_in_force_stays_liftable_with_automations_switched_off(screen) -> None:
+    """The pause is machine-wide and outlives the session. Hiding the row with the
+    master switch would leave the user holding a pause they cannot end — and finding
+    it again, unexplained, the moment they switch automations back on."""
+    host, controller = screen
+    host._automations.status = PAUSE_ACTIVE
+    host._automations.ends_at = datetime.now() + timedelta(minutes=30)
+    host._automations.enabled = False
+    controller.sync_controls()
+
+    assert host.automations_pause_row.isHidden() is False
+    assert host.automations_pause_button.text() == _tr("automations.resume_button")
+
+    host.automations_pause_button.click()
+
+    assert host._automations.calls[-1] == ("resume",)
+    # Lifted, there is nothing left to pause and the row goes.
+    assert host.automations_pause_row.isHidden() is True
+
+
+def test_a_pause_survives_an_engine_that_never_came_up(screen) -> None:
+    """Same case from the other side: the facade reads the durable pause state, so a
+    window whose engine failed to start still shows it and still offers Resume."""
+    host, controller = screen
+    host._automations.running = False
+    host._automations.status = PAUSE_ACTIVE
+    host._automations.ends_at = datetime.now() + timedelta(minutes=30)
+    controller.sync_controls()
+
+    assert host.automations_pause_row.isHidden() is False
+    assert host.automations_pause_button.text() == _tr("automations.resume_button")
+
+
 def test_the_pause_button_asks_the_facade_and_reads_the_answer_back(screen) -> None:
     host, _controller = screen
 
@@ -502,6 +552,32 @@ def test_the_task_note_follows_the_last_synchronisation(screen) -> None:
 
     assert host.automations_tasks_note.isHidden() is False
     assert "Access is denied" in host.automations_tasks_note.text()
+
+
+def test_the_note_says_it_is_working_from_the_moment_a_sync_is_asked_for(screen) -> None:
+    """A rule edited while a reconciliation is out is not covered by the result that
+    comes back from it. Between the edit and the second result the screen must say it
+    is working — otherwise it claims Windows is set up for a rule whose task has not
+    been written yet, and may still fail."""
+    host, _controller = screen
+    host._automations.task_result = TaskSyncResult(unchanged=("rule-1",))
+    host._automations.tasks_synced.emit(host._automations.task_result)
+    assert host.automations_tasks_note.text() == _tr("automations.tasks_ok")
+
+    # The user edits a rule: a reconciliation is asked for and now one is owed.
+    host._automations.syncing = True
+    host._automations.tasks_sync_started.emit()
+    assert host.automations_tasks_note.text() == _tr("automations.tasks_syncing")
+
+    # The first (stale) result arrives while the rerun is still out — still working.
+    host._automations.tasks_synced.emit(host._automations.task_result)
+    assert host.automations_tasks_note.text() == _tr("automations.tasks_syncing")
+
+    # Only the settled answer speaks for the machine.
+    host._automations.syncing = False
+    host._automations.task_result = TaskSyncResult(created=("rule-1",))
+    host._automations.tasks_synced.emit(host._automations.task_result)
+    assert host.automations_tasks_note.text() == _tr("automations.tasks_ok")
 
 
 # ── the 0.3.5 bridge ──────────────────────────────────────────────────

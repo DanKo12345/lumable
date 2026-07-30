@@ -79,6 +79,17 @@ def _wait_for(reported: list, timeout: float = 5.0) -> None:
     assert reported, "the reconciliation never reported back"
 
 
+def _wait_until(condition, timeout: float = 5.0) -> None:
+    """Spin the Qt loop until a condition holds. Same reason as :func:`_wait_for`."""
+    app = QApplication.instance() or QApplication([])
+    deadline = monotonic() + timeout
+    while not condition() and monotonic() < deadline:
+        app.processEvents()
+        sleep(0.01)
+    app.processEvents()
+    assert condition(), "the reconciliation never reached the expected state"
+
+
 def test_the_rules_reach_the_compiler(monkeypatch) -> None:
     seen, _controller = _synced(monkeypatch, _settings())
 
@@ -249,6 +260,66 @@ def test_a_change_during_a_run_gets_its_own_reconciliation(monkeypatch) -> None:
     assert len(seen) == 2, "the change made during a run never reached Windows"
     assert seen[0] == ["evening-off@23:00"]
     assert seen[1] == ["evening-off@07:30"], "the second run used a stale snapshot"
+
+
+def test_a_result_that_predates_a_change_is_not_the_final_word(monkeypatch) -> None:
+    """The screen shows ``last_result``, so the controller has to say when that result
+    no longer describes the rules. Otherwise: block the first run, change the rule,
+    let it go — and the first result comes back "all set" while the task for the new
+    rule has not been written yet, and may still fail."""
+    import threading
+
+    settings = _settings()
+    # One gate per run, so the moment *between* them can actually be looked at. With
+    # an instant second run there is no window to observe, and the test would be
+    # asserting about a state the machine never spends any time in.
+    gates = [threading.Event(), threading.Event()]
+    seen: list = []
+
+    def blocking_sync(rules, **kwargs):
+        seen.append(list(rules))
+        gates[len(seen) - 1].wait(timeout=5.0)
+        return TaskSyncResult(unchanged=("evening-off",))
+
+    monkeypatch.setattr(task_sync_module, "sync_tasks", blocking_sync)
+    controller = AutomationTaskSync(lambda: settings)
+    finished: list = []
+    controller.finished.connect(finished.append)
+
+    assert controller.busy is False, "nothing has been asked for yet"
+    controller.sync()
+    assert controller.busy is True
+    _wait_until(lambda: len(seen) == 1)  # the first run is holding the door
+
+    settings["automations"]["rules"] = [{**RULE, "trigger": {**RULE["trigger"], "time_at": "07:30"}}]
+    controller.sync()
+    gates[0].set()
+    _wait_until(lambda: len(seen) == 2)  # the rerun is now the one out at schtasks
+
+    # This is the state the screen must not misread: an "all set" result on hand,
+    # about the rule that has since been replaced.
+    assert finished and finished[0].ok is True
+    assert controller.last_result is finished[0]
+    assert controller.busy is True, "the stale result was presented as the final word"
+
+    gates[1].set()
+    _wait_until(lambda: len(finished) == 2)
+    assert controller.busy is False, "the settled result was still called provisional"
+
+
+def test_a_run_that_cannot_read_the_settings_still_settles(monkeypatch) -> None:
+    """It reports without ever starting a thread. If that path forgot to answer the
+    request, the screen would say "updating" for the rest of the session."""
+
+    def broken() -> dict[str, Any]:
+        raise RuntimeError("settings are gone")
+
+    monkeypatch.setattr(task_sync_module, "sync_tasks", lambda rules, **kwargs: TaskSyncResult())
+    controller = AutomationTaskSync(broken)
+
+    controller.sync()
+
+    assert controller.busy is False
 
 
 def test_nothing_is_repeated_when_no_one_asked_twice(monkeypatch) -> None:
