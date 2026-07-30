@@ -926,6 +926,7 @@
         "automations.cooldown_none": "No limit",
         "automations.cooldown_minutes": "{minutes} min",
         "automations.cooldown_seconds": "{seconds} s",
-        "automations.save_failed": "The rule could not be saved. Nothing was changed."
+        "automations.save_failed": "The rule could not be saved. Nothing was changed.",
+        "automations.delete_failed": "The rule could not be deleted. It is still there."
     }
 }

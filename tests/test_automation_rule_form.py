@@ -218,6 +218,21 @@ def test_a_rule_written_by_the_form_is_one_the_schema_accepts() -> None:
     assert rule.name == "Bedtime"
 
 
+def test_the_name_limit_is_one_number_in_one_place() -> None:
+    """The schema truncates, the form truncates and the field stops the user. All
+    three have to be the same length, so all three read it from the same constant —
+    two of them agreeing and one drifting is how the app ends up renaming a rule."""
+    from app.automation.rules import MAX_NAME_LENGTH
+
+    long_name = "N" * (MAX_NAME_LENGTH + 25)
+    form = blank_form() | {"name": long_name}
+
+    stored = form_to_rule(form, rule_id="rule-x")
+    assert len(stored["name"]) == MAX_NAME_LENGTH
+    # And what the schema keeps is exactly what the form wrote: neither cuts further.
+    assert validate_rule(stored).name == stored["name"]
+
+
 def test_an_app_name_is_stored_the_way_the_engine_matches_it() -> None:
     """The engine lower-cases the foreground process name, so a rule typed as
     "Code.exe" has to be stored that way or it would never match."""

@@ -926,6 +926,7 @@
         "automations.cooldown_none": "不限",
         "automations.cooldown_minutes": "{minutes} 分钟",
         "automations.cooldown_seconds": "{seconds} 秒",
-        "automations.save_failed": "规则未能保存，什么都没有改动。"
+        "automations.save_failed": "规则未能保存，什么都没有改动。",
+        "automations.delete_failed": "规则未能删除，它仍然存在。"
     }
 }

@@ -516,11 +516,23 @@ class AutomationUiController:
         confirm.open()
 
     def _delete_rule(self, rule_id: str) -> None:
-        editor, self._editor = self._editor, None
-        if editor is not None:
-            editor.close_overlay()
-        if not self._host._automations.delete_rule(str(rule_id)):
+        """Delete first, close after. The order is the whole point.
+
+        Deleting is a settings write like any other and can fail — a busy lock, a
+        file that will not take it. Closed first, a failure left the rule in place
+        and the window gone: the user has confirmed a deletion, watched the editor
+        disappear, and still has the rule. So the editor only goes once the rule
+        has, and stays to say so when it has not.
+        """
+        editor = self._editor
+        if self._host._automations.delete_rule(str(rule_id)):
+            if editor is not None:
+                editor.close_overlay()
             self.sync_controls()
+            return
+        if editor is not None:
+            editor.show_problem(self._host._tr("automations.delete_failed"))
+        self.sync_controls()
 
     def _scene_options(self) -> list[tuple[str, str]]:
         settings = getattr(self._host, "_settings", None)

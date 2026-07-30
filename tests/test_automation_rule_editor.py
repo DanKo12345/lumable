@@ -347,6 +347,27 @@ def test_confirming_deletes_the_rule_and_closes_the_editor(screen) -> None:
     assert host._automation_ui._editor is None
 
 
+def test_a_delete_that_did_not_land_keeps_the_editor_open_and_says_so(screen) -> None:
+    """Deleting is a settings write like any other and can fail. Closed first, the
+    user has confirmed a deletion, watched the editor go, and still has the rule."""
+    host, controller = screen
+    host._automations.stored_rules = [make_rule(id="rule-1", name="Evening")]
+    controller.sync_controls()
+    _edit_button(controller, 0).click()
+    _pump()
+    editor = _editor(host)
+    editor.delete_button.click()
+    _pump()
+    host._automations.writes_land = False
+
+    _confirm_overlay(host)._confirm_button.click()
+    _pump()
+
+    assert host._automation_ui._editor is editor, "the editor closed on a failed delete"
+    assert editor.problem_label.text() == _tr("automations.delete_failed")
+    assert [rule.id for rule in host._automations.rules()] == ["rule-1"]
+
+
 def test_backing_out_of_the_confirmation_deletes_nothing(screen) -> None:
     host, controller = screen
     host._automations.stored_rules = [make_rule(id="rule-1", name="Evening")]
@@ -438,6 +459,28 @@ def test_a_day_chip_in_the_editor_announces_itself_as_a_checkable_control(screen
     assert interface is not None
     assert interface.state().checkable
     assert interface.state().checked  # a new rule starts on every day
+
+
+def test_the_name_field_stops_where_the_schema_stops(screen) -> None:
+    """The schema stores 80 characters. Typed past that and truncated on save, the
+    user would name a rule one thing and be shown another."""
+    from app.automation.controller import MAX_NAME_LENGTH
+
+    host, _controller = screen
+    host.automations_add_button.click()
+    _pump()
+    editor = _editor(host)
+
+    assert editor.name_input.maxLength() == MAX_NAME_LENGTH
+
+    editor.name_input.setText("N" * (MAX_NAME_LENGTH + 40))
+    editor.save_button.click()
+    _pump()
+
+    typed = editor.name_input.text()
+    stored = next(call for call in host._automations.calls if call[0] == "save_rule")[1]
+    assert len(typed) == MAX_NAME_LENGTH
+    assert stored["name"] == typed, "the name shown and the name saved differ"
 
 
 def test_a_field_control_announces_what_it_sets(screen) -> None:

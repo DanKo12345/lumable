@@ -33,6 +33,7 @@ from app.automation.controller import (
     ACTION_APPLY_SCENE,
     ACTION_SET_POWER,
     ALL_DAYS,
+    MAX_NAME_LENGTH,
     TRIGGER_ALWAYS,
     TRIGGER_APP_FOREGROUND,
     TRIGGER_LUMABLE_START,
@@ -273,7 +274,7 @@ def form_to_rule(form: dict[str, Any], *, rule_id: str) -> dict[str, Any]:
 
     stored: dict[str, Any] = {
         "id": rule_id,
-        "name": str(settled.get("name", "")).strip()[:80],
+        "name": str(settled.get("name", "")).strip()[:MAX_NAME_LENGTH],
         "trigger": trigger,
         "action": action,
         "execution": settled["execution"],

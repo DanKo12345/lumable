@@ -926,6 +926,7 @@
         "automations.cooldown_none": "Без ограничения",
         "automations.cooldown_minutes": "{minutes} мин",
         "automations.cooldown_seconds": "{seconds} с",
-        "automations.save_failed": "Не удалось сохранить правило. Ничего не изменилось."
+        "automations.save_failed": "Не удалось сохранить правило. Ничего не изменилось.",
+        "automations.delete_failed": "Не удалось удалить правило. Оно осталось на месте."
     }
 }

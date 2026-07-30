@@ -608,6 +608,7 @@ def test_every_string_this_screen_shows_exists_in_every_language() -> None:
         "automations.save",
         "automations.save_failed",
         "automations.delete",
+        "automations.delete_failed",
         "automations.delete_title",
         "automations.delete_message",
         "automations.delete_confirm",

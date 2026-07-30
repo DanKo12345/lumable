@@ -85,6 +85,10 @@ ORIGINS = (
 )
 
 MAX_PRIORITY = 100
+# A name is a label, not a document. Stated as a constant because an editor has to
+# stop the user at the same length the schema stores: typed past it and truncated
+# here, they would name a rule one thing and be shown another after saving.
+MAX_NAME_LENGTH = 80
 MAX_COOLDOWN_SECONDS = 24 * 60 * 60
 MAX_NO_INPUT_MINUTES = 24 * 60
 DEFAULT_NO_INPUT_MINUTES = 10
@@ -307,7 +311,7 @@ def validate_rule(data: Any, warnings: list[str] | None = None) -> Rule | None:
     origin = str(data.get("origin", ORIGIN_MANUAL)).strip()
     return Rule(
         id=rule_id,
-        name=str(data.get("name", "")).strip()[:80],
+        name=str(data.get("name", "")).strip()[:MAX_NAME_LENGTH],
         trigger=trigger,
         action=action,
         execution=execution,

@@ -59,6 +59,7 @@ from app.automation_rule_form import (
     CHOICE_SCENE,
     EXECUTION_BACKGROUND,
     EXECUTION_RUNTIME,
+    MAX_NAME_LENGTH,
     PROBLEM_SCENE,
     PROBLEM_SCENE_MISSING,
     TRIGGER_CHOICES,
@@ -229,6 +230,10 @@ class RuleEditorOverlay(QWidget):
         self.name_input = ThemedLineEdit(centre)
         self.name_input.setObjectName("ruleEditorInput")
         self.name_input.setPlaceholderText(self._labels.get("name_placeholder", ""))
+        # Stopped at the length the schema stores rather than truncated on the way
+        # in: typing a name and being shown a shorter one after saving is the app
+        # editing the user's label without saying so.
+        self.name_input.setMaxLength(MAX_NAME_LENGTH)
         self.name_input.setMinimumHeight(FIELD_H)
         self.name_input.textChanged.connect(self._on_changed)
         column.addWidget(self._row("name", self._labels.get("name", ""), self.name_input))

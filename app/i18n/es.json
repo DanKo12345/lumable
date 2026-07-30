@@ -926,6 +926,7 @@
         "automations.cooldown_none": "Sin límite",
         "automations.cooldown_minutes": "{minutes} min",
         "automations.cooldown_seconds": "{seconds} s",
-        "automations.save_failed": "No se pudo guardar la regla. No se cambió nada."
+        "automations.save_failed": "No se pudo guardar la regla. No se cambió nada.",
+        "automations.delete_failed": "No se pudo eliminar la regla. Sigue ahí."
     }
 }
