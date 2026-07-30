@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel
 
 from app.panels.list_rows import BTN_H, BTN_W, divider, list_container, list_row
 from app.panels.types import PanelHost
+from app.ui_metrics import SPACE_MD
 from app.widgets import GlassCard
 
 # The master switch keeps the accent hue of the section itself; the pause row is
@@ -97,7 +98,7 @@ def build_automation_rules_section(host: PanelHost) -> GlassCard:
     host.automations_add_button.setFixedHeight(host._sz(BTN_H))
     host.automations_add_button.setMinimumWidth(host._sz(BTN_W))
     add_row = QHBoxLayout()
-    add_row.setContentsMargins(0, host._sz(10), 0, 0)
+    add_row.setContentsMargins(0, host._sz(SPACE_MD), 0, 0)
     add_row.addStretch(1)
     add_row.addWidget(host.automations_add_button)
     host.automations_rules_card.content_layout.addLayout(add_row)

@@ -458,6 +458,7 @@ def test_license_overlay_buy_button_uses_checkout_callback() -> None:
 def _free_labels() -> dict:
     return {
         "title": "LumaBLE Pro",
+        "hero_title": "Unlock every feature",
         "subtitle": "Value first",
         "have_key": "I already have a key",
         "key_label": "License key",
@@ -476,6 +477,14 @@ def _free_labels() -> dict:
         "feat_music_desc": "React to audio",
         "feat_screen": "Screen sync",
         "feat_screen_desc": "Mirror the screen",
+        "feat_diy": "Custom effects",
+        "feat_diy_desc": "Custom colour transitions and code sharing",
+        "feat_schedule": "Schedule",
+        "feat_schedule_desc": "Automatic power by day",
+        "feat_effects": "Every effect and mode",
+        "feat_effects_desc": "A full set and custom quick modes",
+        "feat_profiles": "Unlimited profiles",
+        "feat_profiles_desc": "Import and export configurations",
     }
 
 
@@ -528,6 +537,52 @@ def test_license_overlay_features_grid_reflects_supplied_labels() -> None:
         assert "Music & mic" in names
         assert "Screen sync" in names
         assert all("сцен" not in n.lower() and "scene" not in n.lower() for n in names)
+    finally:
+        overlay.close_overlay()
+        parent.deleteLater()
+        app.processEvents()
+
+
+def test_license_purchase_view_has_the_premium_hierarchy() -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QLabel, QWidget
+
+    from app.widgets.icon_tile import IconTile
+    from app.widgets.license_overlay import LicenseOverlay
+
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    parent.resize(1280, 860)
+    parent.show()
+    overlay = LicenseOverlay(_free_labels(), lambda _key: (False, "Invalid"), parent)
+    try:
+        overlay.open()
+        app.processEvents()
+        assert overlay._title_label.text() == "LumaBLE"
+        assert overlay._title_pro_label is not None
+        assert overlay._title_pro_label.text() == "Pro"
+        assert overlay._hero_title is not None
+        assert overlay._hero_title.text() == "Unlock every feature"
+        assert overlay.buy_button._role == "premium"
+        assert overlay.buy_button._icon_kind == "crown"
+        assert (overlay.buy_button.width(), overlay.buy_button.height()) == (400, 52)
+        assert overlay._have_key_link.text().endswith("→")
+        assert overlay._have_key_link.accessibleName() == "I already have a key"
+        feature_icons = overlay._panel.findChildren(IconTile)
+        assert feature_icons
+        assert all((icon.width(), icon.height()) == (42, 42) for icon in feature_icons)
+        descriptions = {
+            label.text(): label
+            for label in overlay._panel.findChildren(QLabel)
+            if label.objectName() == "licenseFeatureDesc"
+        }
+        left = descriptions["A full set and custom quick modes"]
+        right = descriptions["Import and export configurations"]
+        assert right.alignment() & Qt.AlignTop
+        assert left.mapTo(overlay._panel, left.rect().topLeft()).y() == right.mapTo(
+            overlay._panel,
+            right.rect().topLeft(),
+        ).y()
     finally:
         overlay.close_overlay()
         parent.deleteLater()

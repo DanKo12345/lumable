@@ -71,31 +71,61 @@ from app.automation_rule_form import (
     normalized,
     priority_options,
 )
-from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
+from app.theme import (
+    overlay_panel_colors,
+    pro_badge_tokens,
+    qcolor_from_token,
+    theme_manager,
+)
+from app.ui_metrics import (
+    ACTION_HEIGHT,
+    ACTION_WIDTH,
+    FIELD_HEIGHT,
+    FIELD_RADIUS,
+    OVERLAY_RADIUS,
+    PANEL_INSET,
+    SPACE_LG,
+    SPACE_MD,
+    SPACE_SM,
+    SPACE_XL,
+    SPACE_XS,
+)
+from app.widgets.accent_switch import AccentSwitch
 from app.widgets.animation_helpers import play_or_complete
 from app.widgets.clickable_label import ClickableLabel
 from app.widgets.day_toggle import DayToggle
 from app.widgets.liquid_button import LiquidButton
+from app.widgets.section_icon import SectionIcon
 from app.widgets.static_popup_combo_box import StaticPopupComboBox
 from app.widgets.themed_line_edit import ThemedLineEdit
 from app.widgets.time_button import TimeButton
 
-PANEL_W = 560
+PANEL_W = 600
 PANEL_MIN_H = 320
 PANEL_MAX_H = 620
-# The label column and the chips are sized together: seven day chips plus the label
-# have to fit the panel's content width with the scrollbar showing, or the last chip
-# ends up underneath it.
-LABEL_W = 132
-FIELD_H = 40
-DAY_W = 40
-DAY_H = 32
+FIELD_H = FIELD_HEIGHT
+DAY_W = FIELD_HEIGHT
+DAY_H = FIELD_HEIGHT
+
+TRIGGER_ICONS = {
+    "time": "clock-3",
+    "app_foreground": "app-window",
+    "no_input": "moon",
+    "lumable_start": "power",
+    "strip_connected": "device",
+    "always": "circle-dot",
+}
+ACTION_ICONS = {
+    "scene": "layers-3",
+    "power_on": "lightbulb",
+    "power_off": "power",
+}
 
 
 class _EditorPanel(QFrame):
     """The dialog surface, painted like the other overlay panels."""
 
-    RADIUS = 24.0
+    RADIUS = float(OVERLAY_RADIUS)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -144,6 +174,7 @@ class RuleEditorOverlay(QWidget):
         *,
         scene_options: Any = (),
         can_delete: bool = False,
+        background_unlocked: bool = True,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -151,6 +182,7 @@ class RuleEditorOverlay(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self._labels = labels
         self._form = dict(form)
+        self._background_unlocked = bool(background_unlocked)
         self._scene_options = [(str(key), str(name)) for key, name in scene_options]
         self._scene_ids = {key for key, _name in self._scene_options}
         # A scene this rule points at that no longer exists. Remembered because the
@@ -163,6 +195,7 @@ class RuleEditorOverlay(QWidget):
         )
         self._fade_anim: QPropertyAnimation | None = None
         self._panel_anim: QPropertyAnimation | None = None
+        self._advanced_height_anim: QPropertyAnimation | None = None
         self._rows: dict[str, QWidget] = {}
         # Set before anything is built: adding the first item to a combo emits
         # currentIndexChanged, which would reach _on_changed before the widgets it
@@ -184,8 +217,8 @@ class RuleEditorOverlay(QWidget):
         layout.addStretch(1)
 
         panel_layout = QVBoxLayout(self._panel)
-        panel_layout.setContentsMargins(28, 16, 28, 18)
-        panel_layout.setSpacing(10)
+        panel_layout.setContentsMargins(PANEL_INSET, SPACE_XL, PANEL_INSET, SPACE_XL)
+        panel_layout.setSpacing(SPACE_MD)
         panel_layout.addLayout(self._build_header())
         panel_layout.addWidget(self._build_form(), 1)
         panel_layout.addWidget(self._build_footer(can_delete))
@@ -196,7 +229,7 @@ class RuleEditorOverlay(QWidget):
     def _build_header(self) -> QHBoxLayout:
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
+        header.setSpacing(SPACE_SM)
         title = QLabel(self._labels.get("title", ""), self._panel)
         title.setObjectName("ruleEditorTitle")
         title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -223,9 +256,11 @@ class RuleEditorOverlay(QWidget):
 
         centre = QWidget()
         centre.setObjectName("ruleEditorContent")
+        self._content = centre
         column = QVBoxLayout(centre)
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(8)
+        column.setContentsMargins(0, SPACE_XS, 0, SPACE_XS)
+        column.setSpacing(SPACE_MD)
+        column.setAlignment(Qt.AlignTop)
 
         self.name_input = ThemedLineEdit(centre)
         self.name_input.setObjectName("ruleEditorInput")
@@ -236,29 +271,40 @@ class RuleEditorOverlay(QWidget):
         self.name_input.setMaxLength(MAX_NAME_LENGTH)
         self.name_input.setMinimumHeight(FIELD_H)
         self.name_input.textChanged.connect(self._on_changed)
-        column.addWidget(self._row("name", self._labels.get("name", ""), self.name_input))
+        column.addWidget(self._field("name", self._labels.get("name", ""), self.name_input))
 
+        column.addWidget(self._section_title(self._labels.get("trigger", "")))
         self.trigger_combo = self._combo()
         for kind in TRIGGER_CHOICES:
             self.trigger_combo.addItem(self._labels.get(f"trigger_{kind}", kind), kind)
+        self.trigger_combo.setAccessibleName(self._labels.get("trigger", ""))
         self.trigger_combo.currentIndexChanged.connect(self._on_changed)
-        column.addWidget(self._row("trigger", self._labels.get("trigger", ""), self.trigger_combo))
+        self.trigger_icon = SectionIcon("clock-3", centre)
+        column.addWidget(
+            self._field(
+                "trigger",
+                "",
+                self._choice_row(self.trigger_icon, self.trigger_combo, centre),
+            )
+        )
 
         self.time_button = TimeButton("21:00", centre)
+        self.time_button.setFixedHeight(FIELD_HEIGHT)
         self.time_button.set_picker_title(self._labels.get("time", ""))
         self.time_button.set_picker_labels(
             hours=self._labels.get("picker_hours", "Hours"),
             minutes=self._labels.get("picker_minutes", "Minutes"),
             ok=self._labels.get("picker_ok", "OK"),
         )
+        self.time_button.setAccessibleName(self._labels.get("time", ""))
         self.time_button.timeChanged.connect(self._on_changed)
-        column.addWidget(self._row("time_at", self._labels.get("time", ""), self.time_button, stretch=False))
+        time_field = self._field("time_at", self._labels.get("time", ""), self.time_button)
 
         self.day_buttons: list[DayToggle] = []
         days_box = QWidget(centre)
         days_layout = QHBoxLayout(days_box)
         days_layout.setContentsMargins(0, 0, 0, 0)
-        days_layout.setSpacing(5)
+        days_layout.setSpacing(SPACE_XS)
         for index in range(7):
             chip = DayToggle(self._labels.get(f"day_{index}", str(index)), lambda: theme_manager.palette, days_box)
             chip.setFixedSize(DAY_W, DAY_H)
@@ -266,76 +312,124 @@ class RuleEditorOverlay(QWidget):
             self.day_buttons.append(chip)
             days_layout.addWidget(chip)
         days_layout.addStretch(1)
-        column.addWidget(self._row("days", self._labels.get("days", ""), days_box))
+        days_field = self._field("days", self._labels.get("days", ""), days_box)
+        schedule_row = QWidget(centre)
+        schedule_layout = QHBoxLayout(schedule_row)
+        schedule_layout.setContentsMargins(0, 0, 0, 0)
+        schedule_layout.setSpacing(SPACE_LG)
+        schedule_layout.addWidget(time_field, 0)
+        schedule_layout.addWidget(days_field, 1)
+        column.addWidget(schedule_row)
 
         self.app_input = ThemedLineEdit(centre)
         self.app_input.setObjectName("ruleEditorInput")
         self.app_input.setPlaceholderText(self._labels.get("app_placeholder", ""))
         self.app_input.setMinimumHeight(FIELD_H)
         self.app_input.textChanged.connect(self._on_changed)
-        column.addWidget(self._row("app", self._labels.get("app", ""), self.app_input))
+        column.addWidget(self._field("app", self._labels.get("app", ""), self.app_input))
 
         self.idle_combo = self._combo()
         self.idle_combo.currentIndexChanged.connect(self._on_changed)
-        column.addWidget(self._row("minutes", self._labels.get("idle", ""), self.idle_combo))
+        column.addWidget(self._field("minutes", self._labels.get("idle", ""), self.idle_combo))
 
+        column.addWidget(self._section_title(self._labels.get("action", "")))
         self.action_combo = self._combo()
         for choice in ACTION_CHOICES:
             self.action_combo.addItem(self._labels.get(f"action_{choice}", choice), choice)
+        self.action_combo.setAccessibleName(self._labels.get("action", ""))
         self.action_combo.currentIndexChanged.connect(self._on_changed)
-        column.addWidget(self._row("action", self._labels.get("action", ""), self.action_combo))
+        self.action_icon = SectionIcon("lightbulb", centre)
+        column.addWidget(
+            self._field(
+                "action",
+                "",
+                self._choice_row(self.action_icon, self.action_combo, centre),
+            )
+        )
 
         self.scene_combo = self._combo()
         self.scene_combo.addItem(self._labels.get("scene_none", ""), "")
         for scene_id, name in self._scene_options:
             self.scene_combo.addItem(name, scene_id)
         self.scene_combo.currentIndexChanged.connect(self._on_changed)
-        column.addWidget(self._row("scene_id", self._labels.get("scene", ""), self.scene_combo))
+        column.addWidget(self._field("scene_id", self._labels.get("scene", ""), self.scene_combo))
 
-        self.background_button = LiquidButton(self._labels.get("off", ""), "ghost", centre)
-        self.background_button.setCheckable(True)
-        self.background_button.setFixedHeight(FIELD_H)
-        self.background_button.setMinimumWidth(120)
+        self.background_button = AccentSwitch(centre)
         self.background_button.setAccessibleName(self._labels.get("background", ""))
         self.background_button.clicked.connect(self._on_changed)
-        column.addWidget(
-            self._row("execution", self._labels.get("background", ""), self.background_button, stretch=False)
+        execution_row = QFrame(centre)
+        execution_row.setObjectName("ruleEditorSetting")
+        execution_layout = QHBoxLayout(execution_row)
+        execution_layout.setContentsMargins(
+            SPACE_LG, SPACE_MD, SPACE_MD, SPACE_MD
         )
-        self.background_hint = QLabel(self._labels.get("background_hint", ""), centre)
+        execution_layout.setSpacing(SPACE_LG)
+        execution_text = QWidget(execution_row)
+        execution_text_layout = QVBoxLayout(execution_text)
+        execution_text_layout.setContentsMargins(0, 0, 0, 0)
+        execution_text_layout.setSpacing(SPACE_XS)
+        execution_heading = QHBoxLayout()
+        execution_heading.setContentsMargins(0, 0, 0, 0)
+        execution_heading.setSpacing(SPACE_SM)
+        execution_title = QLabel(self._labels.get("background", ""), execution_text)
+        execution_title.setObjectName("ruleEditorSettingTitle")
+        execution_title.setWordWrap(False)
+        execution_heading.addWidget(execution_title, 0, Qt.AlignVCenter)
+        self.background_pro_badge = QLabel(self._labels.get("pro", "Pro"), execution_text)
+        self.background_pro_badge.setObjectName("ruleEditorProBadge")
+        self.background_pro_badge.setVisible(not self._background_unlocked)
+        execution_heading.addWidget(self.background_pro_badge, 0, Qt.AlignVCenter)
+        execution_heading.addStretch(1)
+        execution_text_layout.addLayout(execution_heading)
+        self.background_hint = QLabel(self._labels.get("background_hint", ""), execution_text)
         self.background_hint.setObjectName("ruleEditorHint")
         self.background_hint.setWordWrap(True)
-        column.addWidget(self.background_hint)
+        if not self._background_unlocked:
+            self.background_button.setAccessibleDescription(
+                self._labels.get("background_pro_hint", "")
+            )
+        execution_text_layout.addWidget(self.background_hint)
+        execution_layout.addWidget(execution_text, 1)
+        execution_layout.addWidget(self.background_button, 0, Qt.AlignVCenter)
+        column.addWidget(execution_row)
 
         # Priority and cooldown are real, and almost nobody needs them. Folded away
         # so the form reads as "when / then" at a glance, and still reachable.
         self.advanced_button = LiquidButton(self._labels.get("advanced", ""), "ghost", centre)
         self.advanced_button.setCheckable(True)
-        self.advanced_button.setFixedHeight(34)
-        self.advanced_button.setMinimumWidth(140)
+        self.advanced_button.setFixedHeight(FIELD_HEIGHT)
+        self.advanced_button.set_icon_kind("settings")
         self.advanced_button.clicked.connect(self._toggle_advanced)
         advanced_row = QHBoxLayout()
-        advanced_row.setContentsMargins(0, 4, 0, 0)
-        advanced_row.addWidget(self.advanced_button)
-        advanced_row.addStretch(1)
+        advanced_row.setContentsMargins(0, SPACE_XS, 0, 0)
+        advanced_row.addWidget(self.advanced_button, 1)
         column.addLayout(advanced_row)
 
         self.advanced_box = QWidget(centre)
-        advanced_layout = QVBoxLayout(self.advanced_box)
+        advanced_layout = QHBoxLayout(self.advanced_box)
         advanced_layout.setContentsMargins(0, 0, 0, 0)
-        advanced_layout.setSpacing(8)
+        advanced_layout.setSpacing(SPACE_MD)
         self.priority_combo = self._combo()
         self.priority_combo.currentIndexChanged.connect(self._on_changed)
         advanced_layout.addWidget(
-            self._row("priority", self._labels.get("priority", ""), self.priority_combo, track=False)
+            self._field("priority", self._labels.get("priority", ""), self.priority_combo, track=False),
+            1,
         )
         self.cooldown_combo = self._combo()
         self.cooldown_combo.currentIndexChanged.connect(self._on_changed)
         advanced_layout.addWidget(
-            self._row("cooldown", self._labels.get("cooldown", ""), self.cooldown_combo, track=False)
+            self._field("cooldown", self._labels.get("cooldown", ""), self.cooldown_combo, track=False),
+            1,
         )
+        self.advanced_box.setMaximumHeight(0)
         self.advanced_box.setVisible(False)
+        self._advanced_height_anim = QPropertyAnimation(
+            self.advanced_box, b"maximumHeight", self
+        )
+        self._advanced_height_anim.setDuration(210)
+        self._advanced_height_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._advanced_height_anim.finished.connect(self._finish_advanced_animation)
         column.addWidget(self.advanced_box)
-        column.addStretch(1)
 
         self._scroll.setWidget(centre)
         return self._scroll
@@ -344,7 +438,7 @@ class RuleEditorOverlay(QWidget):
         footer = QWidget(self._panel)
         column = QVBoxLayout(footer)
         column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(8)
+        column.setSpacing(SPACE_SM)
 
         # Pinned with the buttons, never inside the scroll: the reason Save is
         # refused has to be visible at the moment the user reaches for Save.
@@ -354,24 +448,26 @@ class RuleEditorOverlay(QWidget):
         self.problem_label.setVisible(False)
         column.addWidget(self.problem_label)
 
+        divider = QFrame(footer)
+        divider.setObjectName("ruleEditorFooterLine")
+        divider.setFixedHeight(1)
+        column.addWidget(divider)
+
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
-        buttons.setSpacing(10)
+        buttons.setSpacing(SPACE_SM)
+        buttons.addStretch(1)
         self.delete_button: LiquidButton | None = None
         if can_delete:
             self.delete_button = LiquidButton(self._labels.get("delete", ""), "danger", footer)
-            self.delete_button.setFixedHeight(42)
-            self.delete_button.setMinimumWidth(120)
+            self.delete_button.setFixedSize(ACTION_WIDTH, ACTION_HEIGHT)
             self.delete_button.clicked.connect(self.delete_requested.emit)
             buttons.addWidget(self.delete_button)
-        buttons.addStretch(1)
         self.cancel_button = LiquidButton(self._labels.get("cancel", ""), "ghost", footer)
-        self.cancel_button.setFixedHeight(42)
-        self.cancel_button.setMinimumWidth(120)
+        self.cancel_button.setFixedSize(ACTION_WIDTH, ACTION_HEIGHT)
         self.cancel_button.clicked.connect(self.close_overlay)
-        self.save_button = LiquidButton(self._labels.get("save", ""), "accent", footer)
-        self.save_button.setFixedHeight(42)
-        self.save_button.setMinimumWidth(140)
+        self.save_button = LiquidButton(self._labels.get("save", ""), "led", footer)
+        self.save_button.setFixedSize(ACTION_WIDTH, ACTION_HEIGHT)
         self.save_button.clicked.connect(self._accept)
         buttons.addWidget(self.cancel_button)
         buttons.addWidget(self.save_button)
@@ -380,35 +476,47 @@ class RuleEditorOverlay(QWidget):
 
     def _combo(self) -> StaticPopupComboBox:
         combo = StaticPopupComboBox(lambda: theme_manager.palette, lambda: theme_manager.is_dark)
-        # Fixed, not minimum: the app's combo style asks for more height than a line
-        # edit, and a column of fields where every other row is a different height
-        # reads as an accident.
-        combo.setFixedHeight(FIELD_H)
+        combo.setObjectName("ruleEditorCombo")
+        combo.setFixedHeight(FIELD_HEIGHT)
         return combo
 
-    def _row(
-        self, key: str, label: str, control: QWidget, *, stretch: bool = True, track: bool = True
-    ) -> QWidget:
-        row = QWidget()
+    def _choice_row(
+        self,
+        icon: SectionIcon,
+        combo: StaticPopupComboBox,
+        parent: QWidget,
+    ) -> QFrame:
+        row = QFrame(parent)
+        row.setObjectName("ruleEditorChoice")
         layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-        caption = QLabel(label, row)
-        caption.setObjectName("ruleEditorLabel")
-        caption.setFixedWidth(LABEL_W)
-        caption.setWordWrap(True)
-        # The label is a separate widget, so on its own the control would announce
-        # only its value. Buddy plus an accessible name carry the field's meaning.
-        caption.setBuddy(control)
-        if not control.accessibleName():
-            control.setAccessibleName(label)
-        layout.addWidget(caption, 0, Qt.AlignVCenter)
-        layout.addWidget(control, 1 if stretch else 0, Qt.AlignVCenter)
-        if not stretch:
-            layout.addStretch(1)
-        if track:
-            self._rows[key] = row
+        layout.setContentsMargins(SPACE_MD, 0, SPACE_XS, 0)
+        layout.setSpacing(SPACE_SM)
+        layout.addWidget(icon, 0, Qt.AlignVCenter)
+        combo.setObjectName("ruleEditorComboInline")
+        layout.addWidget(combo, 1)
         return row
+
+    def _section_title(self, text: str) -> QLabel:
+        title = QLabel(text)
+        title.setObjectName("ruleEditorSection")
+        return title
+
+    def _field(self, key: str, label: str, control: QWidget, *, track: bool = True) -> QWidget:
+        field = QWidget()
+        layout = QVBoxLayout(field)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACE_XS)
+        if label:
+            caption = QLabel(label, field)
+            caption.setObjectName("ruleEditorLabel")
+            caption.setBuddy(control)
+            if not control.accessibleName():
+                control.setAccessibleName(label)
+            layout.addWidget(caption)
+        layout.addWidget(control)
+        if track:
+            self._rows[key] = field
+        return field
 
     # ── state ─────────────────────────────────────────────────────────
     def _load(self, form: dict[str, Any]) -> None:
@@ -508,7 +616,16 @@ class RuleEditorOverlay(QWidget):
             # thing standing in the way.
             self._missing_scene = ""
         self._sync_fields()
+        self._sync_choice_icons()
         self._sync_problems()
+
+    def _sync_choice_icons(self) -> None:
+        self.trigger_icon.set_kind(
+            TRIGGER_ICONS.get(str(self.trigger_combo.currentData()), "circle-dot")
+        )
+        self.action_icon.set_kind(
+            ACTION_ICONS.get(str(self.action_combo.currentData()), "lightbulb")
+        )
 
     def _sync_fields(self) -> None:
         """Show only what the current choices use, and only offer what is possible."""
@@ -523,15 +640,18 @@ class RuleEditorOverlay(QWidget):
             scene_row.setVisible(form["action"] == CHOICE_SCENE)
 
         allowed = background_allowed(form)
-        self.background_button.setEnabled(allowed)
+        self.background_button.setEnabled(allowed and self._background_unlocked)
         if not allowed and self.background_button.isChecked():
             # The capability went away with the action; the flag goes with it rather
             # than being stored for the schema to drop on the next read.
             self.background_button.setChecked(False)
-        on = self.background_button.isChecked()
-        self.background_button.setText(self._labels.get("on" if on else "off", ""))
-        self.background_button.set_role("accent_soft" if on else "ghost")
-        self.background_hint.setVisible(not allowed)
+        self.background_button.update()
+        if not self._background_unlocked:
+            self.background_hint.setText(self._labels.get("background_pro_hint", ""))
+            self.background_hint.setVisible(True)
+        else:
+            self.background_hint.setText(self._labels.get("background_hint", ""))
+            self.background_hint.setVisible(not allowed)
 
     def _sync_problems(self) -> None:
         problems = self.problems()
@@ -544,10 +664,34 @@ class RuleEditorOverlay(QWidget):
 
     def _toggle_advanced(self) -> None:
         opening = self.advanced_button.isChecked()
-        self.advanced_box.setVisible(opening)
         self.advanced_button.set_role("accent_soft" if opening else "ghost")
+        if self._advanced_height_anim is None:
+            self.advanced_box.setVisible(opening)
+            return
+
+        self._advanced_height_anim.stop()
         if opening:
-            QTimer.singleShot(0, lambda: self._scroll.ensureWidgetVisible(self.advanced_box, 0, 20))
+            self.advanced_box.setVisible(True)
+            self.advanced_box.setMaximumHeight(16777215)
+            target = self.advanced_box.sizeHint().height()
+            self.advanced_box.setMaximumHeight(0)
+            self._advanced_height_anim.setStartValue(0)
+            self._advanced_height_anim.setEndValue(target)
+        else:
+            self._advanced_height_anim.setStartValue(self.advanced_box.height())
+            self._advanced_height_anim.setEndValue(0)
+        play_or_complete(self._advanced_height_anim)
+
+    def _finish_advanced_animation(self) -> None:
+        if self.advanced_button.isChecked():
+            self.advanced_box.setMaximumHeight(self.advanced_box.sizeHint().height())
+            QTimer.singleShot(
+                0,
+                self._scroll,
+                lambda: self._scroll.ensureWidgetVisible(self.advanced_box, 0, 20),
+            )
+            return
+        self.advanced_box.setVisible(False)
 
     def show_problem(self, text: str) -> None:
         """Report something only the owner could know — a write that did not land.
@@ -607,12 +751,26 @@ class RuleEditorOverlay(QWidget):
         play_or_complete(self._panel_anim)
 
     def close_overlay(self) -> None:
+        self._stop_local_animations()
         parent = self.parentWidget()
         if parent is not None:
             parent.removeEventFilter(self)
         self.hide()
         self.closed.emit()
         self.deleteLater()
+
+    def _stop_local_animations(self) -> None:
+        for animation in (
+            self._advanced_height_anim,
+            self._fade_anim,
+            self._panel_anim,
+        ):
+            if animation is not None:
+                animation.stop()
+
+    def hideEvent(self, event) -> None:
+        self._stop_local_animations()
+        super().hideEvent(event)
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -639,6 +797,7 @@ class RuleEditorOverlay(QWidget):
 
     def _apply_style(self) -> None:
         palette = theme_manager.palette
+        pro = pro_badge_tokens(theme_manager.is_dark)
         self.setStyleSheet(
             f"""
             #ruleEditorTitle {{
@@ -650,7 +809,7 @@ class RuleEditorOverlay(QWidget):
                 color: {palette["muted"]};
                 font-size: 15px;
                 font-weight: 700;
-                border-radius: 16px;
+                border-radius: {SPACE_LG}px;
             }}
             #ruleEditorClose:hover {{
                 color: {palette["text"]};
@@ -660,27 +819,72 @@ class RuleEditorOverlay(QWidget):
                 background: transparent;
                 border: none;
             }}
+            #ruleEditorSection {{
+                color: {palette["accent_start"]};
+                font-size: 13px;
+                font-weight: 800;
+                padding-top: {SPACE_XS}px;
+            }}
             #ruleEditorLabel {{
+                color: {palette["text_soft"]};
+                font-size: 11px;
+                font-weight: 700;
+            }}
+            QFrame#ruleEditorSetting {{
+                background: {palette["field"]};
+                border: 1px solid {palette["field_border"]};
+                border-radius: {FIELD_RADIUS}px;
+            }}
+            #ruleEditorSettingTitle {{
                 color: {palette["text"]};
                 font-size: 12px;
-                font-weight: 700;
+                font-weight: 800;
             }}
             #ruleEditorHint {{
                 color: {palette["muted"]};
                 font-size: 11px;
                 font-weight: 600;
             }}
+            #ruleEditorProBadge {{
+                color: {pro["text"]};
+                background: {pro["background"]};
+                border: 1px solid {pro["border"]};
+                border-radius: 7px;
+                padding: 1px 6px;
+                font-size: 10px;
+                font-weight: 800;
+            }}
             #ruleEditorProblem {{
                 color: #ff8f8f;
                 font-size: 12px;
                 font-weight: 700;
             }}
+            #ruleEditorFooterLine {{
+                background: {palette["surface_line"]};
+                border: none;
+            }}
+            QFrame#ruleEditorChoice {{
+                background: {palette["field"]};
+                border: 1px solid {palette["field_border"]};
+                border-radius: {FIELD_RADIUS}px;
+            }}
+            QComboBox#ruleEditorCombo {{
+                min-height: {FIELD_HEIGHT - 2}px;
+                padding: 0 {SPACE_LG}px;
+                border-radius: {FIELD_RADIUS}px;
+            }}
+            QComboBox#ruleEditorComboInline {{
+                min-height: {FIELD_HEIGHT - 2}px;
+                padding: 0 {SPACE_MD}px 0 0;
+                background: transparent;
+                border: none;
+            }}
             #ruleEditorInput {{
                 background: {palette["field"]};
                 border: 1px solid {palette["field_border"]};
-                border-radius: 12px;
+                border-radius: {FIELD_RADIUS}px;
                 color: {palette["text"]};
-                padding: 0 12px;
+                padding: 0 {SPACE_MD}px;
                 font-size: 13px;
                 font-weight: 600;
                 selection-background-color: {palette["list_sel"]};

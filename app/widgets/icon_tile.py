@@ -22,16 +22,26 @@ class IconTile(QWidget):
     RADIUS = 10.0
     GLYPH = 19
 
-    def __init__(self, kind: str, tint: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        kind: str,
+        tint: str,
+        parent: QWidget | None = None,
+        *,
+        tile_size: int | None = None,
+        glyph_size: int | None = None,
+    ) -> None:
         super().__init__(parent)
         self.kind = kind
         self._tint = QColor(tint)
+        self._tile_size = int(tile_size or self.TILE)
+        self._glyph_size = int(glyph_size or self.GLYPH)
         self._renderer = QSvgRenderer(str(LUCIDE_ICON_DIR / f"{kind}.svg"), self)
-        self.setFixedSize(self.TILE, self.TILE)
+        self.setFixedSize(self._tile_size, self._tile_size)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
 
     def sizeHint(self) -> QSize:
-        return QSize(self.TILE, self.TILE)
+        return QSize(self._tile_size, self._tile_size)
 
     def set_tint(self, tint: str) -> None:
         self._tint = QColor(tint)
@@ -77,8 +87,8 @@ class IconTile(QWidget):
         # Render the glyph at native pixel density: thin Lucide strokes look
         # stepped if drawn small and scaled up afterwards.
         pixel_ratio = self.devicePixelRatioF()
-        offset = (self.TILE - self.GLYPH) / 2
-        glyph_rect = QRectF(offset, offset, self.GLYPH, self.GLYPH)
+        offset = (self._tile_size - self._glyph_size) / 2
+        glyph_rect = QRectF(offset, offset, self._glyph_size, self._glyph_size)
 
         image = QImage(
             round(self.width() * pixel_ratio),

@@ -3,6 +3,7 @@
 import tomllib
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from app.app_info import (
@@ -14,6 +15,7 @@ from app.app_info import (
     APP_VERSION,
 )
 from app.crash_logging import _build_exception_report, _display_path
+from app.hero_header import build_brand
 from app.widgets import AuthorSignatureMark
 
 
@@ -49,12 +51,39 @@ def test_author_signature_mark_uses_shared_signature() -> None:
     mark = AuthorSignatureMark(lambda: {"muted": "rgba(255,255,255,0.5)", "text": "#ffffff"})
 
     assert APP_AUTHOR_SIGNATURE == "by dollza"
-    assert APP_VERSION == "0.3.5"
+    assert APP_VERSION == "0.3.6"
     mark.set_edition("Free", "Current app edition")
     assert mark.edition_label.text() == "Free"
     assert not hasattr(mark, "version_label")
-    assert mark.sizeHint().width() >= 64
-    assert mark.sizeHint().height() >= 40
+    assert mark.sizeHint().width() >= 40
+    assert mark.sizeHint().height() >= 28
+    assert mark.layout().contentsMargins().left() == 0
+    assert mark.layout().contentsMargins().top() == 3
+    assert mark.edition_label.alignment() & Qt.AlignTop
+    app.processEvents()
+
+
+def test_brand_edition_is_a_raised_status_with_a_five_pixel_gap() -> None:
+    app = QApplication.instance() or QApplication([])
+
+    class Host:
+        _theme_tokens = {"muted": "#888888", "text": "#ffffff"}
+
+        @staticmethod
+        def _tr(key: str) -> str:
+            return {"hero.title": "LumaBLE", "hero.subtitle": "Bluetooth lighting"}[key]
+
+        @staticmethod
+        def _show_license_overlay() -> None:
+            return None
+
+    host = Host()
+    brand = build_brand(host)
+    top = brand.layout().itemAt(0).layout()
+
+    assert top.spacing() == 5
+    assert top.itemAt(0).alignment() & Qt.AlignBottom
+    assert top.itemAt(1).alignment() & Qt.AlignTop
     app.processEvents()
 
 

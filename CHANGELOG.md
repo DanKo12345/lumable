@@ -2,6 +2,32 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.3.6] - 2026-07-30
+
+Automations: schedules and App Triggers become one rule system that can explain what ran, why a rule was skipped and whether Windows can run it while LumaBLE is closed.
+
+### Added
+- A complete Automations section with an overview, master switch, durable pause, rule list, editor and recent history.
+- Rules for a time of day, foreground applications, idle time, LumaBLE startup, strip connection and an always-active fallback.
+- Scene and power actions, priorities, cooldowns, weekday selection and background execution for supported Pro rules.
+- Windows Task Scheduler integration for power rules that must run while LumaBLE is closed, including missed-start handling after sleep and reconciliation of orphaned tasks.
+- A durable automation journal with success, skip, cancellation and error reasons that remain readable after rules are renamed or removed.
+
+### Changed
+- Existing schedules and App Triggers migrate into rules with a backup and an explicit, rollback-aware handoff from the old scheduled tasks.
+- Runtime and headless automation execution share one arbitration state, so the same occurrence is not applied twice when the app and Windows task overlap.
+- The rule editor, Automations cards, Pro window, badges, icons and several compact controls now follow the newer spacing and accent system.
+- The Local API phone remote has a compact mobile-first layout, a clearer pairing screen, sticky connection status and browser-safe bottom spacing.
+- Background execution is clearly marked as Pro and unavailable in Free instead of silently accepting a setting that cannot run.
+
+### Fixed
+- Partial scene writes no longer confirm a rule or start its cooldown; failed targets remain eligible for retry.
+- Manual pause and resume survive restarts and are honoured by both the open app and scheduled background process.
+- Overdue time rules choose one winner and settle older losing occurrences instead of switching the light back on the next tick.
+- Already running BLE operations keep their ordering during cancellation, and late results cannot confirm an abandoned rule.
+- Clicking the discovered-controller status now completes the connection flow instead of stopping at a scan result.
+- Automation editor fields, advanced options and action buttons no longer clip or jump on short windows.
+
 ## [0.3.5] - 2026-07-26
 
 Trust & Accessibility: update checks now understand beta releases and show what changed, the interface stays usable at Windows display scaling and short window heights, and motion and keyboard behaviour follow the user's needs.

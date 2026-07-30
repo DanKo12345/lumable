@@ -321,6 +321,20 @@ class BleEventHandler:
         host._sync_connect_buttons()
         host._ble.scan()
 
+    def connect_or_scan(self) -> None:
+        """Use an existing scan result before starting the scanner again.
+
+        The compact status card is the app's one-click connection entry point.
+        Once a scan has populated and selected a controller, clicking that card
+        again must connect it rather than throwing the result away and scanning
+        forever.
+        """
+        host = self._host
+        if host._devices and not host._scan_in_progress:
+            self.handle_connect()
+            return
+        self.start_scan()
+
     def handle_connect(self) -> None:
         host = self._host
         if host._scan_in_progress:
@@ -392,8 +406,8 @@ class BleEventHandler:
         preferred = host._settings.get("last_device_address", "")
         preferred_index = host.device_combo.findData(preferred) if preferred else -1
         host.device_combo.setCurrentIndex(preferred_index if preferred_index >= 0 else 0)
-        if preferred_index >= 0:
-            preferred_device = devices[preferred_index]
+        preferred_device = devices[preferred_index] if preferred_index >= 0 else None
+        if preferred_device is not None:
             self._sync_last_device_hint(
                 name=str(preferred_device.get("name", "")).strip(),
                 address=str(preferred_device.get("address", "")).strip(),
@@ -405,8 +419,13 @@ class BleEventHandler:
         # Auto-connect when exactly one *supported* controller is found, even if
         # unrecognised BLE devices are also nearby (there usually are several).
         # Unknown devices are never auto-connected — the user picks one to probe.
-        if len(supported) == 1:
-            device = supported[0]
+        automatic = (
+            preferred_device
+            if preferred_device is not None and preferred_device.get("supported", True)
+            else supported[0] if len(supported) == 1 else None
+        )
+        if automatic is not None:
+            device = automatic
             index = host.device_combo.findData(device["address"])
             if index >= 0:
                 host.device_combo.setCurrentIndex(index)

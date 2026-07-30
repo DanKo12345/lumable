@@ -11,6 +11,7 @@ import json
 from collections.abc import Mapping
 
 _FALLBACK_LABELS = {
+    "pair_title": "Connect your phone",
     "pair_prompt": "Enter the pairing code shown in LumaBLE on your PC.",
     "pair_connect": "Connect",
     "pair_invalid": "Wrong or expired code.",
@@ -59,53 +60,74 @@ _TEMPLATE = """<!DOCTYPE html>
 <title>LumaBLE</title>
 <style>
   :root {
-    --bg:#0e1015; --surface:#181b25; --surface-hi:#202431; --line:#303544;
-    --text:#f2f4f8; --muted:#a7afc2; --accent:#9ab9ee; --accent-soft:rgba(154,185,238,.16);
-    --live:rgb(154,185,238); --ok:#48d6a0; --warn:#f4bb5e;
+    --bg:#0c0e13; --surface:#171a22; --surface-hi:#20242e; --field:#11141b;
+    --line:#303641; --line-soft:rgba(255,255,255,.075);
+    --text:#f5f6f8; --text-soft:#d7dbe4; --muted:#9199aa;
+    --accent:#8fbfff; --accent-soft:rgba(143,191,255,.14);
+    --live:rgb(143,191,255); --ok:#58d6aa; --warn:#eeb65d; --danger:#ff8392;
+    --radius:18px;
   }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html { background:var(--bg); scroll-behavior:smooth; }
   body {
-    margin:0; min-width:280px; background:var(--bg); color:var(--text);
-    font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    padding:max(18px, env(safe-area-inset-top)) 18px max(26px, env(safe-area-inset-bottom));
+    margin:0; min-width:280px; min-height:100dvh; background:var(--bg); color:var(--text);
+    font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding:0 16px calc(112px + env(safe-area-inset-bottom));
   }
-  .shell { max-width:520px; margin:0 auto; }
-  header { display:flex; align-items:center; justify-content:space-between; margin:8px 2px 18px; }
-  h1 { font-size:28px; letter-spacing:0; margin:0; }
-  .device-sub { color:var(--muted); font-size:14px; font-weight:600; margin-top:3px; }
-  .live-dot { width:11px; height:11px; border-radius:50%; background:var(--live); box-shadow:0 0 16px var(--live); transition:background .25s,box-shadow .25s; }
+  .shell { width:100%; max-width:460px; margin:0 auto; }
+  header {
+    position:sticky; top:0; z-index:6; display:flex; align-items:center; justify-content:space-between;
+    min-height:82px; margin:0 -4px 14px; padding:max(18px,env(safe-area-inset-top)) 4px 12px;
+    background:linear-gradient(180deg,var(--bg) 70%,rgba(12,14,19,0));
+  }
+  h1 { margin:0; font-size:25px; line-height:1; letter-spacing:0; font-weight:800; }
+  .device-line { display:flex; align-items:center; gap:7px; min-height:18px; margin-top:7px; color:var(--muted); font-size:12px; font-weight:650; }
+  .device-line span + span::before { content:"·"; margin-right:7px; color:var(--line); }
+  .device-line .hide + span::before { display:none; }
+  .pairing .device-line, .pairing header > .dot { visibility:hidden; }
   .card {
-    background:var(--surface); border:1px solid var(--line); border-radius:20px;
-    padding:18px; margin-bottom:14px; animation:rise .32s both;
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+    padding:16px; margin-bottom:12px; animation:rise .28s both;
   }
-  #remote .card:nth-child(1) { animation-delay:.02s; } #remote .card:nth-child(2) { animation-delay:.06s; }
-  #remote .card:nth-child(3) { animation-delay:.10s; } #remote .card:nth-child(4) { animation-delay:.14s; }
-  #remote .card:nth-child(5) { animation-delay:.18s; }
+  #remote .card:nth-child(1) { animation-delay:.02s; } #remote .card:nth-child(2) { animation-delay:.05s; }
+  #remote .card:nth-child(3) { animation-delay:.08s; } #remote .card:nth-child(4) { animation-delay:.11s; }
+  #remote .card:nth-child(5) { animation-delay:.14s; }
   @keyframes rise { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
-  .label, .muted { color:var(--muted); font-size:14px; }
-  .section-title { color:var(--muted); font-size:16px; margin:0 0 12px; }
-  .status { display:flex; align-items:center; gap:10px; min-height:24px; }
+  .label, .muted { color:var(--muted); font-size:13px; }
+  .section-heading, .value-line { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:13px; }
+  .section-title { color:var(--text-soft); font-size:14px; font-weight:750; }
+  .heading-copy { display:flex; align-items:center; gap:9px; min-width:0; }
+  .mini-icon { width:19px; height:19px; color:var(--muted); flex:0 0 19px; }
+  .mini-icon svg { display:block; width:100%; height:100%; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
   .dot { width:10px; height:10px; flex:0 0 10px; border-radius:50%; background:var(--warn); transition:background .2s,box-shadow .2s; }
   .dot.on { background:var(--ok); box-shadow:0 0 12px rgba(72,214,160,.7); }
   .dot.off { background:var(--warn); }
   button {
-    font:inherit; color:var(--text); min-height:52px; background:var(--surface-hi);
-    border:1px solid var(--line); border-radius:15px; padding:12px; transition:background .16s,border-color .16s,transform .09s,box-shadow .16s;
+    font:inherit; color:var(--text); min-height:46px; background:var(--surface-hi);
+    border:1px solid var(--line); border-radius:14px; padding:10px 12px;
+    transition:background .16s,border-color .16s,transform .09s,box-shadow .16s;
   }
   button:active { transform:scale(.975); } button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   .row { display:flex; gap:10px; } .row > * { flex:1; }
   .sel { background:var(--accent-soft); border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); font-weight:700; }
   .power-on.sel { border-color:var(--ok); background:rgba(72,214,160,.14); box-shadow:inset 0 0 0 1px var(--ok); }
   .power-off.sel { border-color:var(--warn); background:rgba(244,187,94,.13); box-shadow:inset 0 0 0 1px var(--warn); }
-  input { font:inherit; color:var(--text); background:#10131a; border:1px solid var(--line); border-radius:14px; padding:14px; width:100%; text-align:center; letter-spacing:4px; }
-  input[type=range] { accent-color:var(--live); padding:0; width:100%; }
-  .value-line { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:10px; }
+  input { font:inherit; color:var(--text); background:var(--field); border:1px solid var(--line); border-radius:14px; padding:14px; width:100%; }
+  #code { min-height:58px; text-align:center; letter-spacing:.34em; font-size:21px; font-variant-numeric:tabular-nums; }
+  input[type=range] { appearance:none; -webkit-appearance:none; height:28px; padding:0; border:0; background:transparent; }
+  input[type=range]::-webkit-slider-runnable-track { height:6px; border-radius:99px; background:linear-gradient(90deg,var(--live) 0 var(--range,100%),var(--field) var(--range,100%) 100%); border:1px solid var(--line); }
+  input[type=range]::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:24px; height:24px; margin-top:-10px; border-radius:50%; border:3px solid var(--text); background:var(--live); box-shadow:0 2px 8px rgba(0,0,0,.42); }
+  input[type=range]::-moz-range-track { height:6px; border-radius:99px; background:var(--field); border:1px solid var(--line); }
+  input[type=range]::-moz-range-progress { height:6px; border-radius:99px; background:var(--live); }
+  input[type=range]::-moz-range-thumb { width:18px; height:18px; border-radius:50%; border:3px solid var(--text); background:var(--live); }
   .value { color:var(--text); font-weight:700; font-variant-numeric:tabular-nums; }
+  .divider { height:1px; margin:14px 0; background:var(--line-soft); }
   .colour-head { display:flex; align-items:center; gap:11px; margin-bottom:14px; }
-  .colour-chip { width:30px; height:30px; border-radius:10px; background:var(--live); border:1px solid rgba(255,255,255,.38); box-shadow:0 0 16px color-mix(in srgb, var(--live) 48%, transparent); transition:background .2s,box-shadow .2s; }
+  .colour-chip { width:34px; height:34px; border-radius:11px; background:var(--live); border:1px solid rgba(255,255,255,.38); box-shadow:0 0 16px color-mix(in srgb,var(--live) 42%,transparent); transition:background .2s,box-shadow .2s; }
   .hex { color:var(--text); font-weight:750; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.04em; }
-  .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
-  .sw { aspect-ratio:1; min-height:0; padding:0; border-radius:16px; border:1px solid var(--line); }
+  .grid { display:grid; gap:9px; }
+  .swatches { grid-template-columns:repeat(4,52px); justify-content:space-between; }
+  .sw { width:52px; height:52px; min-height:0; padding:0; border-radius:14px; border:1px solid var(--line); }
   .sw.sel { box-shadow:0 0 0 3px var(--bg),0 0 0 5px var(--text); transform:scale(.94); }
   .modes { grid-template-columns:repeat(2,1fr); }
   .pc { grid-template-columns:repeat(2,1fr); }
@@ -113,16 +135,16 @@ _TEMPLATE = """<!DOCTYPE html>
   .pc-active { display:flex; align-items:center; gap:12px; margin-top:12px; }
   .pc-active .pc-active-text { flex:1; color:var(--text); font-weight:650; font-size:13px; line-height:1.3; }
   .pc-active .pc-active-text b { color:var(--live); }
-  #pcStop { flex:0 0 auto; min-height:44px; padding:10px 18px; border-color:var(--warn); color:var(--warn); }
-  .wide { width:100%; margin-top:10px; color:var(--muted); }
-  .chip-btn { width:auto; min-height:38px; padding:8px 14px; color:var(--muted); font-size:14px; }
+  #pcStop { flex:0 0 auto; min-height:40px; padding:8px 15px; border-color:var(--warn); color:var(--warn); }
+  .quiet { width:100%; min-height:40px; margin-top:9px; padding:7px; color:var(--muted); background:transparent; border-color:transparent; }
+  .chip-btn { width:auto; min-height:36px; padding:7px 12px; color:var(--text-soft); font-size:13px; }
   .scenes { display:flex; flex-direction:column; gap:8px; }
   .scene-row { display:flex; gap:8px; }
   .scene-apply { flex:1; text-align:left; font-weight:650; display:flex; align-items:center; gap:10px; }
   .scene-dot { width:14px; height:14px; flex:0 0 14px; border-radius:5px; border:1px solid rgba(255,255,255,.25); }
-  .scene-del { flex:0 0 auto; width:50px; min-height:52px; color:var(--muted); }
+  .scene-del { flex:0 0 auto; width:46px; min-height:46px; color:var(--muted); }
   .scenes .muted { padding:6px 2px; }
-  .palette-toggle { width:100%; min-height:46px; margin-top:12px; color:var(--muted); background:transparent; }
+  .palette-toggle { width:100%; min-height:42px; margin-top:12px; color:var(--muted); background:transparent; }
   .palette-toggle[aria-expanded="true"] { color:var(--text); border-color:var(--accent); background:var(--accent-soft); }
   .picker {
     max-height:0; margin-top:0; overflow:hidden; opacity:0; transform:translateY(-8px) scale(.985);
@@ -132,15 +154,27 @@ _TEMPLATE = """<!DOCTYPE html>
   .picker.open { max-height:310px; margin-top:14px; opacity:1; transform:none; visibility:visible; pointer-events:auto; transition-delay:0s; }
   .picker-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
   canvas {
-    display:block; width:100%; height:210px; border:1px solid var(--line); border-radius:16px;
+    display:block; width:100%; height:190px; border:1px solid var(--line); border-radius:14px;
     touch-action:none; cursor:crosshair; background:#fff;
   }
-  .hue { appearance:none; -webkit-appearance:none; height:14px; margin:16px 0 2px; border:0; border-radius:99px; background:linear-gradient(90deg,#f33,#ffeb3b,#28d878,#19a9ff,#7045ff,#ef27b8,#f33); }
-  .hue::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:25px; height:25px; border-radius:50%; border:3px solid #fff; background:transparent; box-shadow:0 1px 6px rgba(0,0,0,.48); }
-  .hue::-moz-range-thumb { width:19px; height:19px; border-radius:50%; border:3px solid #fff; background:transparent; box-shadow:0 1px 6px rgba(0,0,0,.48); }
-  .recent-label { margin:14px 0 10px; }
+  .hue { height:28px; margin:14px 0 0; }
+  .hue::-webkit-slider-runnable-track { height:12px; border:0; background:linear-gradient(90deg,#f33,#ffeb3b,#28d878,#19a9ff,#7045ff,#ef27b8,#f33); }
+  .hue::-webkit-slider-thumb { width:24px; height:24px; margin-top:-6px; border:3px solid #fff; background:transparent; }
+  .hue::-moz-range-track { height:12px; border:0; background:linear-gradient(90deg,#f33,#ffeb3b,#28d878,#19a9ff,#7045ff,#ef27b8,#f33); }
+  .hue::-moz-range-progress { background:transparent; }
+  .hue::-moz-range-thumb { width:18px; height:18px; border:3px solid #fff; background:transparent; }
+  .recent-label { margin:14px 0 9px; }
+  #recent { grid-template-columns:repeat(5,42px); justify-content:space-between; }
+  #recent .sw { width:42px; height:42px; border-radius:12px; }
+  #pair { margin-top:clamp(24px,9vh,82px); padding:22px; }
+  .pair-mark { display:grid; place-items:center; width:48px; height:48px; margin-bottom:18px; color:var(--accent); background:var(--accent-soft); border:1px solid rgba(143,191,255,.28); border-radius:15px; }
+  .pair-mark svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .pair-title { margin:0 0 6px; font-size:20px; font-weight:800; }
+  #pairPrompt { margin:0 0 18px; line-height:1.5; }
+  #pairButton { width:100%; margin-top:12px; color:#102035; background:var(--accent); border-color:transparent; font-weight:800; }
+  #pairError { min-height:20px; margin-top:10px; color:var(--danger); font-size:13px; }
   .toast {
-    position:fixed; left:50%; bottom:max(20px, env(safe-area-inset-bottom)); transform:translate(-50%,14px);
+    position:fixed; left:50%; bottom:calc(92px + env(safe-area-inset-bottom)); transform:translate(-50%,14px);
     background:var(--surface-hi); border:1px solid var(--line); color:var(--text);
     padding:10px 18px; border-radius:18px; font-size:14px; font-weight:650;
     max-width:calc(100% - 36px); text-align:center; line-height:1.35;
@@ -150,30 +184,57 @@ _TEMPLATE = """<!DOCTYPE html>
   .toast.error { border-color:var(--warn); color:var(--warn); }
   .hide { display:none!important; }
   .busy button { pointer-events:none; opacity:.72; }
-  @media (max-width:350px) { body { padding-left:12px; padding-right:12px; } .card { padding:15px; } h1 { font-size:25px; } }
+  @media (max-width:350px) {
+    body { padding-left:12px; padding-right:12px; }
+    .card { padding:14px; }
+    .swatches { grid-template-columns:repeat(4,46px); }
+    .sw { width:46px; height:46px; }
+  }
+  @media (prefers-color-scheme:light) {
+    :root {
+      --bg:#f1f3f6; --surface:#fff; --surface-hi:#f6f7fa; --field:#eef1f5;
+      --line:#cfd5df; --line-soft:rgba(30,40,58,.09); --text:#171a20;
+      --text-soft:#353b47; --muted:#6f7889; --accent-soft:rgba(74,124,218,.13);
+    }
+    header { background:linear-gradient(180deg,var(--bg) 70%,rgba(241,243,246,0)); }
+    .sw.sel { box-shadow:0 0 0 3px var(--bg),0 0 0 5px #273044; }
+  }
   @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration:.01ms!important; transition-duration:.01ms!important; scroll-behavior:auto!important; } }
 </style>
 </head>
 <body>
 <main class="shell">
-  <header><div class="title"><h1>LumaBLE</h1><div class="device-sub hide" id="deviceName"></div></div><span class="live-dot" aria-hidden="true"></span></header>
+  <header>
+    <div><h1>LumaBLE</h1><div class="device-line"><span class="hide" id="deviceName"></span><span id="status" aria-live="polite">...</span></div></div>
+    <span class="dot" id="conn" aria-hidden="true"></span>
+  </header>
 
   <section id="pair" class="card hide">
-    <div class="muted" style="margin-bottom:12px" id="pairPrompt"></div>
+    <div class="pair-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></div>
+    <h2 class="pair-title" id="pairTitle"></h2>
+    <div class="muted" id="pairPrompt"></div>
     <input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" aria-label="Pairing code">
-    <div style="height:10px"></div>
-    <button class="sel" id="pairButton" onclick="pair()"></button>
-    <div id="pairError" class="muted" style="color:#ff9a9a;margin-top:10px" aria-live="polite"></div>
+    <button id="pairButton" onclick="pair()"></button>
+    <div id="pairError" aria-live="polite"></div>
   </section>
 
   <section id="remote" class="hide">
-    <div class="card"><div class="status"><span class="dot" id="conn"></span><span id="status" class="muted" aria-live="polite">...</span></div></div>
-    <div class="card"><div class="row"><button class="power-on" id="btnOn" onclick="power(true)"></button><button class="power-off" id="btnOff" onclick="power(false)"></button></div><button class="wide" id="btnAllOff" onclick="masterOff()"></button></div>
-    <div class="card"><div class="value-line"><span class="section-title" id="scenesLabel"></span><button class="chip-btn" id="saveScene" onclick="saveScene()"></button></div><div class="scenes" id="scenes"></div></div>
-    <div class="card"><div class="section-title" id="pcLabel"></div><div class="grid pc" id="pcModes"></div><div class="pc-active hide" id="pcActive"><span class="pc-active-text" id="pcActiveText"></span><button id="pcStop" onclick="pcMode('off')"></button></div></div>
-    <div class="card"><div class="value-line"><span class="section-title" id="brightnessLabel"></span><span class="value" id="brightnessValue">100%</span></div><input type="range" id="bri" min="0" max="100" value="100" oninput="queueBrightness(this.value)"></div>
-    <div class="card"><div class="colour-head"><span class="colour-chip" id="colourChip"></span><div><div class="label" id="colourLabel"></div><div class="hex" id="hex">#FFFFFF</div></div></div><div class="grid" id="swatches"></div><div class="label recent-label hide" id="recentLabel"></div><div class="grid hide" id="recent"></div><button class="palette-toggle" id="paletteToggle" aria-expanded="false" aria-controls="picker" onclick="togglePalette()"></button><div class="picker" id="picker" aria-hidden="true"><div class="picker-head"><span class="section-title" id="customColourLabel"></span><span class="hex" id="pickerHex">#FFFFFF</span></div><canvas id="sv" aria-label="Colour palette"></canvas><input class="hue" id="hue" type="range" min="0" max="360" value="0" oninput="setHue(this.value)"></div></div>
-    <div class="card"><div class="section-title" id="modesLabel"></div><div class="grid modes" id="modes"></div></div>
+    <section class="card">
+      <div class="row"><button class="power-on" id="btnOn" onclick="power(true)"></button><button class="power-off" id="btnOff" onclick="power(false)"></button></div>
+      <button class="quiet" id="btnAllOff" onclick="masterOff()"></button>
+      <div class="divider"></div>
+      <div class="value-line"><div class="heading-copy"><span class="mini-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></span><span class="section-title" id="brightnessLabel"></span></div><span class="value" id="brightnessValue">100%</span></div>
+      <input type="range" id="bri" min="0" max="100" value="100" oninput="queueBrightness(this.value)">
+    </section>
+    <section class="card">
+      <div class="colour-head"><span class="colour-chip" id="colourChip"></span><div><div class="label" id="colourLabel"></div><div class="hex" id="hex">#FFFFFF</div></div></div>
+      <div class="grid swatches" id="swatches"></div><div class="label recent-label hide" id="recentLabel"></div><div class="grid hide" id="recent"></div>
+      <button class="palette-toggle" id="paletteToggle" aria-expanded="false" aria-controls="picker" onclick="togglePalette()"></button>
+      <div class="picker" id="picker" aria-hidden="true"><div class="picker-head"><span class="section-title" id="customColourLabel"></span><span class="hex" id="pickerHex">#FFFFFF</span></div><canvas id="sv" aria-label="Colour palette"></canvas><input class="hue" id="hue" type="range" min="0" max="360" value="0" oninput="setHue(this.value)"></div>
+    </section>
+    <section class="card"><div class="section-heading"><div class="heading-copy"><span class="mini-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3-1.9 4.3L6 9.2l4.1 1.9L12 15l1.9-3.9L18 9.2l-4.1-1.9L12 3z"/><path d="m19 15-.9 2.1L16 18l2.1.9L19 21l.9-2.1L22 18l-2.1-.9L19 15z"/></svg></span><span class="section-title" id="modesLabel"></span></div></div><div class="grid modes" id="modes"></div></section>
+    <section class="card"><div class="section-heading"><div class="heading-copy"><span class="mini-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M4 9h16"/></svg></span><span class="section-title" id="scenesLabel"></span></div><button class="chip-btn" id="saveScene" onclick="saveScene()"></button></div><div class="scenes" id="scenes"></div></section>
+    <section class="card"><div class="section-heading"><div class="heading-copy"><span class="mini-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span><span class="section-title" id="pcLabel"></span></div></div><div class="grid pc" id="pcModes"></div><div class="pc-active hide" id="pcActive"><span class="pc-active-text" id="pcActiveText"></span><button id="pcStop" onclick="pcMode('off')"></button></div></section>
   </section>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </main>
@@ -193,6 +254,7 @@ let pickerValue = 1;
 let pickerDragging = false;
 
 function text() {
+  $("#pairTitle").textContent = TEXT.pair_title;
   $("#pairPrompt").textContent = TEXT.pair_prompt;
   $("#pairButton").textContent = TEXT.pair_connect;
   $("#btnOn").textContent = TEXT.power_on;
@@ -209,7 +271,11 @@ function text() {
   $("#saveScene").textContent = TEXT.save_scene;
   updatePaletteToggle();
 }
-function show(paired) { $("#pair").classList.toggle("hide", paired); $("#remote").classList.toggle("hide", !paired); }
+function show(paired) {
+  document.body.classList.toggle("pairing", !paired);
+  $("#pair").classList.toggle("hide", paired);
+  $("#remote").classList.toggle("hide", !paired);
+}
 async function api(path, opts) {
   opts = opts || {}; opts.headers = Object.assign({"Authorization":"Bearer " + token}, opts.headers || {});
   const response = await fetch(path, opts);
@@ -253,6 +319,7 @@ function renderRecent() {
 async function power(on) { await post("/power", {on}); setTimeout(refresh, 120); }
 function queueBrightness(value) {
   pendingBrightness = Number(value); $("#brightnessValue").textContent = pendingBrightness + "%";
+  $("#bri").style.setProperty("--range", pendingBrightness + "%");
   clearTimeout(brightnessTimer); brightnessTimer = setTimeout(flushBrightness, 120);
 }
 async function flushBrightness() { if (pendingBrightness === null) return; const value=pendingBrightness; pendingBrightness=null; await post("/brightness", {value}); }
@@ -364,8 +431,10 @@ function applyState(state) {
   const sub=$("#deviceName"); sub.textContent=state.name || ""; sub.classList.toggle("hide", !state.name);
   $("#conn").className="dot " + (connected ? "on" : "off");
   $("#status").textContent = connected ? `${TEXT.connected} · ${power ? TEXT.power_on : TEXT.power_off} · ${brightness}%` : TEXT.disconnected;
-  if (pendingBrightness === null) $("#bri").value=brightness;
-  if (pendingBrightness === null) $("#brightnessValue").textContent=brightness + "%";
+  if (pendingBrightness === null) {
+    $("#bri").value=brightness; $("#bri").style.setProperty("--range", brightness + "%");
+    $("#brightnessValue").textContent=brightness + "%";
+  }
   $("#btnOn").classList.toggle("sel", power); $("#btnOff").classList.toggle("sel", !power);
   const color=state.color || {r:255,g:255,b:255}; if (!pendingColour) paintColour(color.r,color.g,color.b,true);
   const current=[color.r,color.g,color.b].join(",");

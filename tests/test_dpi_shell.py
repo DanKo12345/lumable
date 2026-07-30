@@ -13,6 +13,7 @@ from app.widgets.logs_overlay import LogsOverlay
 
 _LICENSE_LABELS = {
     "title": "LumaBLE Pro",
+    "hero_title": "Разблокируйте все возможности",
     "subtitle": "Разблокируйте все возможности",
     "active_title": "Pro активен",
     "active_license": "Лицензия активна на этом ПК.",
@@ -521,6 +522,9 @@ def test_license_free_overlay_fits_and_scrolls_at_minimum_window() -> None:
         assert _inside_panel(overlay.buy_button, overlay._panel)
         assert _inside_panel(overlay._close_button, overlay._panel)
         assert overlay._scroll.verticalScrollBar().maximum() > 0
+        assert overlay._hero_title is not None
+        assert overlay.buy_button.width() == 400
+        assert overlay.buy_button.height() == 52
     finally:
         overlay.close_overlay()
         parent.deleteLater()
@@ -562,6 +566,38 @@ def test_license_revealed_key_fits_and_field_is_reachable() -> None:
         assert _inside_panel(overlay._activate_button, overlay._panel)
         # ...and the key field was scrolled into the visible panel area.
         assert _inside_panel(overlay.key_input, overlay._panel)
+    finally:
+        overlay.close_overlay()
+        parent.deleteLater()
+        app.processEvents()
+
+
+def test_license_key_field_is_centred_in_the_available_space() -> None:
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    parent.resize(1280, 860)
+    parent.show()
+    overlay = _open_license(parent, app, buy_callback=lambda: False)
+    try:
+        overlay._reveal_key()
+        QTest.qWait(320)
+        viewport = overlay._scroll.viewport()
+        assert overlay._features_grid is not None
+        features_bottom = overlay._features_grid.mapTo(
+            viewport,
+            QPoint(0, overlay._features_grid.height()),
+        ).y()
+        field_top = overlay._field_box.mapTo(viewport, QPoint()).y()
+        field_bottom = overlay._field_box.mapTo(
+            viewport,
+            QPoint(0, overlay._field_box.height()),
+        ).y()
+        gap_above = field_top - features_bottom
+        gap_below = viewport.height() - field_bottom
+        assert abs(gap_above - gap_below) < 20
     finally:
         overlay.close_overlay()
         parent.deleteLater()
@@ -756,6 +792,43 @@ def test_confirm_overlay_scrolls_overlong_message_and_recomputes_on_resize() -> 
         overlay.setGeometry(parent.rect())
         app.processEvents()
         assert scrollbar.maximum() == 0
+    finally:
+        overlay.close_overlay()
+        parent.deleteLater()
+        app.processEvents()
+
+
+def test_short_confirm_message_is_centred_between_title_and_actions() -> None:
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from app.widgets.profile_action_overlay import ProfileConfirmOverlay
+
+    labels = {
+        "title": "Удалить сцену",
+        "message": "Сцена «hhh» будет удалена.",
+        "cancel": "Отмена",
+        "confirm": "Удалить",
+    }
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    parent.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+    parent.show()
+    overlay = ProfileConfirmOverlay(labels, parent, confirm_role="danger")
+    overlay.open()
+    _settle_open_animation(overlay)
+    try:
+        title_bottom = overlay._title_label.mapTo(
+            overlay._panel,
+            QPoint(0, overlay._title_label.height()),
+        ).y()
+        message_top = overlay._message_scroll.mapTo(overlay._panel, QPoint()).y()
+        message_bottom = overlay._message_scroll.mapTo(
+            overlay._panel,
+            QPoint(0, overlay._message_scroll.height()),
+        ).y()
+        actions_top = overlay._cancel_button.mapTo(overlay._panel, QPoint()).y()
+        assert abs((message_top - title_bottom) - (actions_top - message_bottom)) < 6
     finally:
         overlay.close_overlay()
         parent.deleteLater()

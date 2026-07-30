@@ -27,7 +27,12 @@ from PySide6.QtWidgets import (
 )
 
 from app.motion_policy import motion_policy
-from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
+from app.theme import (
+    overlay_panel_colors,
+    pro_badge_tokens,
+    qcolor_from_token,
+    theme_manager,
+)
 from app.widgets.animation_helpers import play_or_complete
 from app.widgets.celebration_overlay import CelebrationOverlay
 from app.widgets.clickable_label import ClickableLabel
@@ -37,8 +42,8 @@ from app.widgets.themed_line_edit import ThemedLineEdit
 
 # Panel heights: value-first (all benefits shown) collapses to the buy CTA; the
 # key field is revealed on request, growing the panel.
-_FREE_COLLAPSED_H = 520
-_FREE_EXPANDED_H = 588
+_FREE_COLLAPSED_H = 620
+_FREE_EXPANDED_H = 688
 
 # The six headline Pro benefits, in display order. Icon + tint live in code (a
 # visual concern); the name/description come from i18n via these label keys, so
@@ -81,12 +86,12 @@ class _ActivateWorker(QThread):
 class _LicensePanel(QFrame):
     RADIUS = 24.0
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, width: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
         # Fixed width; the owner controls height (min/max) so the panel can fit a
         # short window with its centre scrolling.
-        self.setFixedWidth(560)
+        self.setFixedWidth(width)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -283,15 +288,15 @@ class LicenseOverlay(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addStretch(1)
-        self._panel = _LicensePanel(self)
+        self._panel = _LicensePanel(560 if active else 640, self)
         self._panel.setMinimumHeight(300)
         self._panel.setMaximumHeight(self._preferred_height())
         layout.addWidget(self._panel, 0, Qt.AlignCenter)
         layout.addStretch(1)
 
         panel_layout = QVBoxLayout(self._panel)
-        panel_layout.setContentsMargins(30, 16, 30, 20)
-        panel_layout.setSpacing(10)
+        panel_layout.setContentsMargins(34, 20, 34, 24)
+        panel_layout.setSpacing(12)
 
         # --- Pinned header: a compact title + the × close. Nothing tall lives
         # here, so on a short window (860×420) the title and close stay visible
@@ -299,10 +304,32 @@ class LicenseOverlay(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
-        title = QLabel(labels["active_title"] if active else labels["title"], self._panel)
-        title.setObjectName("licenseTitle")
-        title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        header.addWidget(title, 1, Qt.AlignVCenter)
+        if active:
+            title = QLabel(labels["active_title"], self._panel)
+            title.setObjectName("licenseTitle")
+            title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            header.addWidget(title, 1, Qt.AlignVCenter)
+            self._title_label = title
+            self._title_pro_label = None
+        else:
+            title_row = QWidget(self._panel)
+            title_layout = QHBoxLayout(title_row)
+            title_layout.setContentsMargins(0, 0, 0, 0)
+            title_layout.setSpacing(6)
+            title_text = str(labels["title"]).strip()
+            brand_text = title_text[:-4].rstrip() if title_text.lower().endswith(" pro") else title_text
+            title = QLabel(brand_text, title_row)
+            title.setObjectName("licenseTitle")
+            title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            title_layout.addWidget(title, 0, Qt.AlignVCenter)
+            pro_title = QLabel("Pro", title_row)
+            pro_title.setObjectName("licenseTitlePro")
+            pro_title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            title_layout.addWidget(pro_title, 0, Qt.AlignVCenter)
+            title_layout.addStretch(1)
+            header.addWidget(title_row, 1, Qt.AlignVCenter)
+            self._title_label = title
+            self._title_pro_label = pro_title
         self._close_button = ClickableLabel("✕", self._panel)
         self._close_button.setObjectName("licenseClose")
         self._close_button.setFixedSize(32, 32)
@@ -332,6 +359,16 @@ class LicenseOverlay(QWidget):
         badge = _ProStatusBadge(centre) if active else _ProEmblem(centre)
         centre_layout.addWidget(badge, 0, Qt.AlignHCenter)
 
+        self._hero_title: QLabel | None = None
+        self._features_grid: QWidget | None = None
+        if not active and labels.get("hero_title"):
+            hero_title = QLabel(labels["hero_title"], centre)
+            hero_title.setObjectName("licenseHeroTitle")
+            hero_title.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+            hero_title.setWordWrap(True)
+            centre_layout.addWidget(hero_title)
+            self._hero_title = hero_title
+
         subtitle = QLabel(self._active_message() if active else labels["subtitle"], centre)
         subtitle.setObjectName("licenseSubtitle")
         subtitle.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
@@ -353,10 +390,16 @@ class LicenseOverlay(QWidget):
             centre_layout.addWidget(status_card)
         else:
             centre_layout.addWidget(subtitle)
-            centre_layout.addSpacing(4)
+            centre_layout.addSpacing(10)
             features_grid = self._build_features_grid()
             if features_grid is not None:
                 centre_layout.addWidget(features_grid)
+                self._features_grid = features_grid
+
+        # The key field belongs with the footer actions, not with the benefits.
+        # This flexible gap pushes it down on a tall window and collapses to zero
+        # when the centre has to scroll at the minimum window height.
+        centre_layout.addStretch(1)
 
         # The key field: always built, but hidden until the user asks for it in
         # free mode (and always hidden in the active/licensed state).
@@ -382,6 +425,7 @@ class LicenseOverlay(QWidget):
         self.message_label.setObjectName("licenseMessage")
         self.message_label.setWordWrap(True)
         self.message_label.setMinimumHeight(24)
+        self.message_label.hide()
         centre_layout.addWidget(self.message_label)
         centre_layout.addStretch(1)
 
@@ -391,7 +435,8 @@ class LicenseOverlay(QWidget):
         # --- Pinned footer: the primary CTA / OK, Back, and deactivate stay put.
         # Active: a single OK. Free default: one primary "Buy Pro" plus a quiet
         # "I already have a key" link. Revealing the key swaps in Back + Activate.
-        self.buy_button = LiquidButton(labels.get("buy", ""), "accent", self._panel)
+        self.buy_button = LiquidButton(labels.get("buy", ""), "premium", self._panel)
+        self.buy_button.set_icon_kind("crown")
         self.buy_button.clicked.connect(self._show_buy_message)
         self._activate_button = LiquidButton(labels.get("activate", ""), "accent", self._panel)
         self._activate_button.clicked.connect(self._activate)
@@ -409,21 +454,29 @@ class LicenseOverlay(QWidget):
             ok_row.addStretch(1)
             panel_layout.addLayout(ok_row)
         else:
+            divider = QFrame(self._panel)
+            divider.setObjectName("licenseFooterDivider")
+            divider.setFrameShape(QFrame.HLine)
+            divider.setFixedHeight(1)
+            panel_layout.addWidget(divider)
+
             # Default: buy hero + quiet "have key" link.
             self._buy_row = QWidget(self._panel)
             buy_layout = QVBoxLayout(self._buy_row)
             buy_layout.setContentsMargins(0, 0, 0, 0)
             buy_layout.setSpacing(8)
-            self.buy_button.setMinimumSize(300, 46)
+            self.buy_button.setFixedSize(400, 52)
             buy_inner = QHBoxLayout()
             buy_inner.addStretch(1)
             buy_inner.addWidget(self.buy_button)
             buy_inner.addStretch(1)
             buy_layout.addLayout(buy_inner)
-            self._have_key_link = ClickableLabel(labels.get("have_key", ""), self._buy_row)
+            have_key_text = labels.get("have_key", "")
+            self._have_key_link = ClickableLabel(f"{have_key_text}  →", self._buy_row)
             self._have_key_link.setObjectName("licenseHaveKey")
             self._have_key_link.setAlignment(Qt.AlignHCenter)
             self._have_key_link.setCursor(Qt.PointingHandCursor)
+            self._have_key_link.setAccessibleName(have_key_text)
             self._have_key_link.clicked.connect(self._reveal_key)
             buy_layout.addWidget(self._have_key_link, 0, Qt.AlignHCenter)
             panel_layout.addWidget(self._buy_row)
@@ -521,9 +574,9 @@ class LicenseOverlay(QWidget):
 
         container = QWidget(self._panel)
         grid = QGridLayout(container)
-        grid.setContentsMargins(4, 0, 4, 0)
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(13)
+        grid.setContentsMargins(8, 0, 8, 0)
+        grid.setHorizontalSpacing(26)
+        grid.setVerticalSpacing(18)
         for index, (icon, tint, name, desc) in enumerate(tiles):
             grid.addWidget(self._feature_tile(icon, tint, name, desc), index // 2, index % 2)
         grid.setColumnStretch(0, 1)
@@ -534,17 +587,19 @@ class LicenseOverlay(QWidget):
         cell = QWidget(self._panel)
         row = QHBoxLayout(cell)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(10)
-        row.addWidget(IconTile(icon, tint), 0, Qt.AlignTop)
+        row.setSpacing(12)
+        row.addWidget(IconTile(icon, tint, tile_size=42, glyph_size=24), 0, Qt.AlignTop)
         text = QVBoxLayout()
         text.setContentsMargins(0, 1, 0, 0)
         text.setSpacing(1)
+        text.setAlignment(Qt.AlignTop)
         name_label = QLabel(name, cell)
         name_label.setObjectName("licenseFeatureName")
         text.addWidget(name_label)
         if desc:
             desc_label = QLabel(desc, cell)
             desc_label.setObjectName("licenseFeatureDesc")
+            desc_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
             # Two lines max, never elided: a purchase screen must not truncate
             # the meaning it is selling.
             desc_label.setWordWrap(True)
@@ -560,7 +615,7 @@ class LicenseOverlay(QWidget):
         self._buy_row.setVisible(False)
         self._field_box.setVisible(True)
         self._reveal_row.setVisible(True)
-        self.message_label.setText("")
+        self._set_message("")
         self._animate_panel_height(self._fitted_height())
         self.key_input.setFocus(Qt.OtherFocusReason)
         # Defer to the next tick so the field has its final geometry before we
@@ -575,7 +630,7 @@ class LicenseOverlay(QWidget):
         self._field_box.setVisible(False)
         self._reveal_row.setVisible(False)
         self._buy_row.setVisible(True)
-        self.message_label.setText("")
+        self._set_message("")
         self._animate_panel_height(self._fitted_height())
 
     def _animate_panel_height(self, end: int) -> None:
@@ -590,11 +645,19 @@ class LicenseOverlay(QWidget):
             self._height_anims.append(anim)
             anim.start()
 
+    def _set_message(self, text: str, state: str = "") -> None:
+        text = str(text)
+        self.message_label.setText(text)
+        self.message_label.setVisible(bool(text))
+        self.message_label.setProperty("state", state)
+        self.message_label.style().unpolish(self.message_label)
+        self.message_label.style().polish(self.message_label)
+
     def _activate(self) -> None:
         if self._activate_worker is not None:
             return  # an activation is already in flight
         self._set_activating(True)
-        self.message_label.setText("")
+        self._set_message("")
         worker = _ActivateWorker(self._activate_callback, self.key_input.text(), self)
         self._activate_worker = worker
         worker.done.connect(self._on_activate_done)
@@ -655,10 +718,7 @@ class LicenseOverlay(QWidget):
         # thread's ``finished`` signal), not here — ``done`` runs before the
         # thread has actually stopped.
         self._set_activating(False)
-        self.message_label.setText("" if ok else message)
-        self.message_label.setProperty("state", "success" if ok else "error")
-        self.message_label.style().unpolish(self.message_label)
-        self.message_label.style().polish(self.message_label)
+        self._set_message("" if ok else message, "success" if ok else "error")
         if ok:
             self.activated.emit()
             self._play_success(message)
@@ -688,10 +748,7 @@ class LicenseOverlay(QWidget):
     def _show_buy_message(self) -> None:
         if self._buy_callback is not None and self._buy_callback():
             return
-        self.message_label.setText(self._labels["buy_unavailable"])
-        self.message_label.setProperty("state", "info")
-        self.message_label.style().unpolish(self.message_label)
-        self.message_label.style().polish(self.message_label)
+        self._set_message(self._labels["buy_unavailable"], "info")
 
     def _on_deactivate_link(self) -> None:
         if self._deactivate_callback is None or self.deactivate_link is None:
@@ -722,10 +779,7 @@ class LicenseOverlay(QWidget):
         if self._deactivate_callback is None:
             return
         ok, message = self._deactivate_callback()
-        self.message_label.setText(message)
-        self.message_label.setProperty("state", "success" if ok else "error")
-        self.message_label.style().unpolish(self.message_label)
-        self.message_label.style().polish(self.message_label)
+        self._set_message(message, "success" if ok else "error")
         if ok:
             self.deactivated.emit()
             self.close_overlay()
@@ -798,6 +852,7 @@ class LicenseOverlay(QWidget):
 
     def _apply_style(self) -> None:
         palette = theme_manager.palette
+        pro = pro_badge_tokens(theme_manager.is_dark)
         self.setStyleSheet(
             f"""
             #licenseScroll, #licenseScroll > QWidget, #licenseScrollContent {{
@@ -806,12 +861,22 @@ class LicenseOverlay(QWidget):
             }}
             #licenseTitle {{
                 color: {palette["text"]};
-                font-size: 22px;
+                font-size: 24px;
+                font-weight: 800;
+            }}
+            #licenseTitlePro {{
+                color: {pro["text"]};
+                font-size: 24px;
+                font-weight: 800;
+            }}
+            #licenseHeroTitle {{
+                color: {palette["text"]};
+                font-size: 18px;
                 font-weight: 800;
             }}
             #licenseSubtitle {{
-                color: {palette["text_soft"]};
-                font-size: 12px;
+                color: {palette["muted"]};
+                font-size: 13px;
                 font-weight: 500;
                 line-height: 1.35em;
             }}
@@ -822,22 +887,28 @@ class LicenseOverlay(QWidget):
             }}
             #licenseFeatureName {{
                 color: {palette["text"]};
-                font-size: 13px;
-                font-weight: 700;
+                font-size: 14px;
+                font-weight: 800;
             }}
             #licenseFeatureDesc {{
                 color: {palette["muted"]};
-                font-size: 11.5px;
+                font-size: 12px;
                 font-weight: 500;
             }}
             #licenseHaveKey {{
-                color: {palette["text_soft"]};
-                font-size: 12px;
-                font-weight: 700;
+                color: {palette["accent_start"]};
+                font-size: 13px;
+                font-weight: 800;
                 padding: 4px 8px;
             }}
             #licenseHaveKey:hover {{
                 color: {palette["text"]};
+            }}
+            #licenseFooterDivider {{
+                background: {palette["surface_line"]};
+                border: none;
+                min-height: 1px;
+                max-height: 1px;
             }}
             #licenseClose {{
                 color: {palette["muted"]};

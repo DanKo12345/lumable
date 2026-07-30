@@ -57,6 +57,23 @@ LIGHT = {
 }
 
 
+def pro_badge_tokens(is_dark: bool) -> dict[str, str]:
+    """Return the shared compact Pro-status colours for the active theme."""
+    if is_dark:
+        return {
+            "text": "#f0c060",
+            "background": "rgba(240, 192, 96, 0.12)",
+            "border": "rgba(240, 192, 96, 0.28)",
+            "hover": "rgba(240, 192, 96, 0.18)",
+        }
+    return {
+        "text": "#8a5200",
+        "background": "rgba(185, 112, 16, 0.10)",
+        "border": "rgba(185, 112, 16, 0.30)",
+        "hover": "rgba(185, 112, 16, 0.17)",
+    }
+
+
 def qcolor_from_token(value: str) -> QColor:
     value = value.strip()
     if value.startswith("#"):

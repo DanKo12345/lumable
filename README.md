@@ -9,7 +9,7 @@ license flow for advanced features.
 
 Author: `dollza`
 
-Version: `0.3.5 beta`
+Version: `0.3.6 beta`
 
 Download the latest Windows build from the [Releases page](https://github.com/DanKo12345/lumable/releases).
 
@@ -28,7 +28,8 @@ Translations:
 - Built-in BLE effects with speed support where the controller protocol allows it.
 - Reusable lighting profiles and quick modes.
 - Screen sync / Ambient mode for matching the strip to the average screen color.
-- Local schedules while the app is open or running in the tray.
+- Automation rules for schedules, foreground apps, idle time, startup and strip connections,
+  including scheduled power changes while LumaBLE is closed.
 - Single-instance startup protection, so a second launch brings the existing window forward instead
   of fighting over the Bluetooth connection.
 - Diagnostics export for unsupported controllers and BLE troubleshooting.

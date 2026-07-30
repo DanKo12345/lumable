@@ -175,17 +175,54 @@ def _apply_rule_new_demo(window) -> None:
 
 def _apply_rule_edit_demo(window) -> None:
     """The editor on an existing rule: named, with a scene, and deletable."""
+    from PySide6.QtTest import QTest
+
     _apply_automations_demo(window)
     window._automation_ui._edit_rule("coding")
     editor = window._automation_ui._editor
     if editor is not None:
         editor.advanced_button.setChecked(True)
         editor._toggle_advanced()
+        QTest.qWait(240)
+
+
+def _apply_license_demo(window) -> None:
+    """Open the Free purchase view without touching a real licence."""
+    window._show_license_overlay()
+
+
+def _apply_license_key_demo(window) -> None:
+    """Open the purchase view with the existing-key form revealed."""
+    window._show_license_overlay()
+    overlay = window._overlay_controller._license_overlay
+    if overlay is not None:
+        overlay._reveal_key()
+
+
+def _apply_confirm_demo(window) -> None:
+    """Open the compact destructive confirmation used by scene deletion."""
+    from app.widgets.profile_action_overlay import ProfileConfirmOverlay
+
+    overlay = ProfileConfirmOverlay(
+        {
+            "title": "Удалить сцену",
+            "message": "Сцена «hhh» будет удалена.",
+            "cancel": "Отмена",
+            "confirm": "Удалить",
+        },
+        window,
+        confirm_role="danger",
+    )
+    window._screenshot_overlay = overlay
+    overlay.open()
 
 
 DEMOS = {
     "automations": _apply_automations_demo,
     "journal": _apply_journal_demo,
+    "license": _apply_license_demo,
+    "license-key": _apply_license_key_demo,
+    "confirm": _apply_confirm_demo,
     "rule-new": _apply_rule_new_demo,
     "rule-edit": _apply_rule_edit_demo,
 }

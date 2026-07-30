@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QAbstractButton, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
+from app.widgets.accent_color import subdued_led_accent
 from app.widgets.animation_helpers import play_or_complete
 
 
@@ -83,6 +84,11 @@ class DayToggle(QAbstractButton):
         self._animate(self._hover_anim, self._hover, 0.0)
         super().leaveEvent(event)
 
+    def hideEvent(self, event) -> None:
+        self._select_anim.stop()
+        self._hover_anim.stop()
+        super().hideEvent(event)
+
     def focusInEvent(self, event) -> None:
         super().focusInEvent(event)
         self.update()  # the ring is painted by paintEvent, so ask for a repaint
@@ -134,16 +140,14 @@ class DayToggle(QAbstractButton):
             painter.save()
             painter.setOpacity(progress)
             fill = QLinearGradient(0, rect.top(), 0, rect.bottom())
-            if is_dark:
-                fill.setColorAt(0.0, QColor(255, 255, 255, alpha(46 + 8 * hover)))
-                fill.setColorAt(0.45, QColor(236, 242, 250, alpha(32)))
-                fill.setColorAt(1.0, QColor(210, 222, 240, alpha(24)))
-                sel_border = QColor(255, 255, 255, alpha(82))
-            else:
-                accent = qcolor_from_token(tokens["accent_end"])
-                fill.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), alpha(235)))
-                fill.setColorAt(1.0, accent.darker(112))
-                sel_border = QColor(accent.red(), accent.green(), accent.blue(), alpha(255))
+            accent = subdued_led_accent()
+            fill.setColorAt(
+                0.0,
+                QColor(accent.red(), accent.green(), accent.blue(), alpha(244 + 6 * hover)),
+            )
+            fill.setColorAt(1.0, accent.darker(116))
+            sel_border = accent.lighter(118)
+            sel_border.setAlpha(alpha(255))
             painter.fillPath(path, fill)
             gloss = QLinearGradient(0, rect.top(), 0, rect.top() + rect.height() * 0.55)
             gloss.setColorAt(0.0, QColor(255, 255, 255, alpha(48 if is_dark else 62)))
@@ -155,7 +159,8 @@ class DayToggle(QAbstractButton):
 
         # ── label: muted -> bright as it becomes selected ──
         muted = qcolor_from_token(tokens["muted"])
-        bright = QColor(255, 255, 255)
+        accent = subdued_led_accent()
+        bright = QColor(28, 31, 38) if accent.lightness() > 170 else QColor(255, 255, 255)
         text_color = QColor(
             round(_lerp(muted.red(), bright.red(), progress)),
             round(_lerp(muted.green(), bright.green(), progress)),

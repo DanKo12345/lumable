@@ -453,6 +453,16 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
                 bot.setAlpha(244)
                 top, bot = self._ensure_label_contrast(top, bot)
             return top, bot
+        if role == "premium":
+            start = qcolor_from_token(palette["accent_start"])
+            end = qcolor_from_token(palette["accent_end"])
+            fill = QColor(
+                round(start.red() * 0.58 + end.red() * 0.42),
+                round(start.green() * 0.58 + end.green() * 0.42),
+                round(start.blue() * 0.58 + end.blue() * 0.42),
+            )
+            fill.setAlpha(248 if theme_manager.is_dark else 252)
+            return self._ensure_label_contrast(fill, QColor(fill))
         if role == "danger":
             top = qcolor_from_token(palette["danger_start"])
             bot = qcolor_from_token(palette["danger_end"])
@@ -629,6 +639,12 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             top.setAlpha(round(top.alpha() * 0.45))
             bottom = QColor(bottom)
             bottom.setAlpha(round(bottom.alpha() * 0.45))
+        if role == "premium":
+            fill = QColor(top)
+            if enabled and self._hover > 0.01:
+                fill = fill.lighter(round(100 + self._hover * 5))
+            painter.fillPath(path, fill)
+            return
         fill = QLinearGradient(0, 0, 0, self.height())
         if role == "mode":
             fill.setColorAt(0.0, top)
@@ -719,7 +735,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
                 g.setColorAt(1.0, QColor(bb.red(), bb.green(), bb.blue(), bb.alpha()))
             painter.setPen(QPen(g, 1.0))
             painter.drawRoundedRect(rect, radius, radius)
-        elif role == "accent":
+        elif role in {"accent", "premium"}:
             c = QColor(255, 255, 255, 54 if theme_manager.is_dark else bt.alpha())
             painter.setPen(QPen(c, 1.0))
             painter.drawRoundedRect(rect, radius, radius)
@@ -732,7 +748,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
     def _paint_label(self, painter: QPainter, rect: QRectF, lc: dict) -> None:
         role = self._role
         enabled = self.isEnabled()
-        if role in {"accent", "primary", "danger"}:
+        if role in {"accent", "primary", "premium", "danger"}:
             # Filled action button: white label like macOS/iOS by default, but a
             # quick-mode accent override can dye the fill with a light pastel —
             # then a white label drops below ~3:1 and must flip to dark.

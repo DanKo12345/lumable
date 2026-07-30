@@ -15,6 +15,14 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLay
 
 from app.panels.types import PanelHost
 from app.theme import qcolor_from_token, theme_manager
+from app.ui_metrics import (
+    ACTION_HEIGHT,
+    ACTION_WIDTH,
+    ROW_INSET,
+    SPACE_MD,
+    SPACE_SM,
+    SPACE_XS,
+)
 from app.widgets import IconTile
 
 
@@ -40,11 +48,11 @@ class Hairline(QWidget):
         painter.fillRect(self.rect(), color)
 
 
-ROW_PAD = 14
-TILE_GAP = 12
-CHIP_H = 34       # every chip in a row shares one height
-BTN_W = 128       # right-most action column
-BTN_H = 38
+ROW_PAD = ROW_INSET
+TILE_GAP = SPACE_MD
+CHIP_H = 32       # every chip in a row shares one height
+BTN_W = ACTION_WIDTH       # right-most action column
+BTN_H = ACTION_HEIGHT
 
 
 def list_container(host: PanelHost) -> tuple[QFrame, QVBoxLayout]:
@@ -71,8 +79,10 @@ def list_row(
     row.setAttribute(Qt.WA_StyledBackground, True)
     row.setProperty("active", False)
     controls = QHBoxLayout(row)
-    controls.setContentsMargins(host._sz(ROW_PAD), host._sz(9), host._sz(ROW_PAD), host._sz(9))
-    controls.setSpacing(host._sz(10))
+    controls.setContentsMargins(
+        host._sz(ROW_PAD), host._sz(SPACE_SM), host._sz(ROW_PAD), host._sz(SPACE_SM)
+    )
+    controls.setSpacing(host._sz(SPACE_MD))
 
     tile = IconTile(kind, tint)
     controls.addWidget(tile, 0, Qt.AlignVCenter)
@@ -109,11 +119,11 @@ def plain_row(host: PanelHost, title: str) -> tuple[QWidget, QHBoxLayout, QLabel
     layout = QHBoxLayout(row)
     layout.setContentsMargins(
         host._sz(ROW_PAD + IconTile.TILE + TILE_GAP),
-        host._sz(8),
+        host._sz(SPACE_SM),
         host._sz(ROW_PAD),
-        host._sz(8),
+        host._sz(SPACE_SM),
     )
-    layout.setSpacing(host._sz(12))
+    layout.setSpacing(host._sz(SPACE_MD))
     label = QLabel(title)
     label.setObjectName("settingsRowTitle")
     layout.addWidget(label, 0, Qt.AlignVCenter)
@@ -141,11 +151,11 @@ def control_group(host: PanelHost, width: int, lead: QLabel | None = None) -> tu
     box.setFixedWidth(host._sz(width))
     layout = QHBoxLayout(box)
     layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(host._sz(6))
+    layout.setSpacing(host._sz(SPACE_SM))
     layout.addStretch(1)
     if lead is not None:
         layout.addWidget(lead, 0, Qt.AlignVCenter)
-        layout.addSpacing(host._sz(4))
+        layout.addSpacing(host._sz(SPACE_XS))
     return box, layout
 
 
@@ -159,8 +169,10 @@ def half_cell(host: PanelHost, kind: str, tint: str, title: str) -> tuple[QWidge
     cell = QWidget()
     cell.setObjectName("settingsHalfCell")
     layout = QHBoxLayout(cell)
-    layout.setContentsMargins(host._sz(ROW_PAD), host._sz(9), host._sz(ROW_PAD), host._sz(9))
-    layout.setSpacing(host._sz(10))
+    layout.setContentsMargins(
+        host._sz(ROW_PAD), host._sz(SPACE_SM), host._sz(ROW_PAD), host._sz(SPACE_SM)
+    )
+    layout.setSpacing(host._sz(SPACE_MD))
     tile = IconTile(kind, tint)
     layout.addWidget(tile, 0, Qt.AlignVCenter)
     layout.addSpacing(host._sz(TILE_GAP - 10))

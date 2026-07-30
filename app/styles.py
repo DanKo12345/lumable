@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 
-from app.theme import qcolor_from_token
+from app.theme import pro_badge_tokens, qcolor_from_token
+from app.ui_metrics import CARD_RADIUS, FIELD_RADIUS
 
 _PX_RE = re.compile(r"(\d+)px")
 
@@ -87,6 +88,7 @@ def build_tooltip_stylesheet(tokens: dict[str, str]) -> str:
 
 
 def _base_styles(T: dict, is_dark: bool) -> str:
+    pro = pro_badge_tokens(is_dark)
     return f"""
         QMainWindow, #rootWidget, #bodyCanvas, #bodyScroll, QScrollArea {{
             background: transparent;
@@ -179,15 +181,16 @@ def _base_styles(T: dict, is_dark: bool) -> str:
             padding: 2px 2px 0 2px;
         }}
         #proBadge {{
-            background: {"rgba(143, 191, 255, 0.16)" if is_dark else "rgba(77, 130, 245, 0.16)"};
-            color: {"#9fc0ff" if is_dark else "#2f5fc0"};
-            font-size: 11px;
-            font-weight: 700;
-            padding: 4px 10px 2px 10px;
-            border-radius: 9px;
+            color: {pro["text"]};
+            background: {pro["background"]};
+            border: 1px solid {pro["border"]};
+            border-radius: 7px;
+            padding: 1px 6px;
+            font-size: 10px;
+            font-weight: 800;
         }}
         #proBadge:hover {{
-            background: {"rgba(143, 191, 255, 0.26)" if is_dark else "rgba(77, 130, 245, 0.26)"};
+            background: {pro["hover"]};
         }}
         #scheduleNote {{
             color: {T["muted"]};
@@ -243,13 +246,13 @@ def _hero_styles(T: dict, is_dark: bool) -> str:
             color: {T["text"]};
             font-size: 21px;
             font-weight: 700;
-            qproperty-alignment: 'AlignHCenter | AlignVCenter';
+            qproperty-alignment: 'AlignLeft | AlignBottom';
         }}
         #heroSubtitle {{
             color: {T["text_soft"]};
             font-size: 11px;
             font-weight: 500;
-            qproperty-alignment: 'AlignHCenter | AlignVCenter';
+            qproperty-alignment: 'AlignLeft | AlignTop';
         }}
         #heroVersionText {{
             color: {T["muted"]};
@@ -263,7 +266,7 @@ def _hero_styles(T: dict, is_dark: bool) -> str:
             color: {T["muted"]};
             font-size: 11px;
             font-weight: 700;
-            padding: 2px 0 0 0;
+            padding: 0;
         }}
         #languageCombo {{
             background: {lang_bg};
@@ -297,7 +300,7 @@ def _card_styles(T: dict, is_dark: bool) -> str:
         #glassCard {{
             background: transparent;
             border: none;
-            border-radius: 26px;
+            border-radius: {CARD_RADIUS}px;
         }}
         #cardTitle {{
             color: {T["text"]};
@@ -322,12 +325,12 @@ def _card_styles(T: dict, is_dark: bool) -> str:
                as a group at all. */
             background: {T["field"] if is_dark else "rgba(255, 255, 255, 0.78)"};
             border: 1px solid {T["field_border"]};
-            border-radius: 14px;
+            border-radius: {FIELD_RADIUS}px;
         }}
         #settingsRow {{
             background: transparent;
             border: 0;
-            border-radius: 12px;
+            border-radius: {FIELD_RADIUS}px;
         }}
         /* A running timer keeps a soft highlight so the active row reads at a
            glance without shouting. */

@@ -235,7 +235,7 @@ def _on_status_clicked(host) -> None:
     if getattr(host, "_is_connected", False):
         select_section(host, "settings")
     else:
-        host._ble_events.start_scan()
+        host._ble_events.connect_or_scan()
 
 
 def _build_sections(host) -> None:

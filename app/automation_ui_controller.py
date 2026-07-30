@@ -58,6 +58,7 @@ from app.automation_rule_form import (
     new_rule_id,
     rule_to_form,
 )
+from app.feature_gate import can_use
 from app.panels.list_rows import BTN_H, BTN_W, divider, list_row
 from app.widgets.profile_action_overlay import ProfileConfirmOverlay
 from app.widgets.rule_editor_overlay import RuleEditorOverlay
@@ -360,6 +361,8 @@ class AutomationUiController:
     def stop(self) -> None:
         """Stop polling. Called when the window is going away."""
         self._timer.stop()
+        if self._editor is not None:
+            self._editor.close_overlay()
 
     def sync_controls(self) -> None:
         self._sync_master()
@@ -605,6 +608,7 @@ class AutomationUiController:
             form,
             scene_options=self._scene_options(),
             can_delete=rule is not None,
+            background_unlocked=can_use("schedule"),
             parent=host,
         )
         self._editor = editor
@@ -708,6 +712,8 @@ class AutomationUiController:
             "scene_none": tr("automations.scene_none"),
             "background": tr("automations.field_background"),
             "background_hint": tr("automations.background_hint"),
+            "background_pro_hint": tr("automations.background_pro_hint"),
+            "pro": tr("common.pro_badge"),
             "advanced": tr("automations.advanced"),
             "priority": tr("automations.field_priority"),
             "cooldown": tr("automations.field_cooldown"),

@@ -21,10 +21,19 @@ class SectionIcon(QWidget):
 
     def __init__(self, kind: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.kind = kind
-        self._renderer = QSvgRenderer(str(LUCIDE_ICON_DIR / f"{kind}.svg"), self)
+        self.kind = ""
+        self._renderer = QSvgRenderer(self)
         self.setFixedSize(self.ICON_BOX, self.ICON_BOX)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.set_kind(kind)
+
+    def set_kind(self, kind: str) -> None:
+        kind = str(kind)
+        if kind == self.kind:
+            return
+        self.kind = kind
+        self._renderer.load(str(LUCIDE_ICON_DIR / f"{kind}.svg"))
+        self.update()
 
     def sizeHint(self) -> QSize:
         return QSize(self.ICON_BOX, self.ICON_BOX)

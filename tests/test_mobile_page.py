@@ -64,6 +64,36 @@ def test_mobile_page_has_quiet_status_and_recent_colours() -> None:
     assert 'id="deviceName"' in page     # active strip name in the header
 
 
+def test_mobile_page_gives_pairing_its_own_clear_state() -> None:
+    page = build_mobile_page({"pair_title": "Connect this phone"})
+
+    assert '"pair_title": "Connect this phone"' in page
+    assert 'id="pairTitle"' in page
+    assert 'class="pair-mark"' in page
+    assert 'classList.toggle("pairing", !paired)' in page
+    assert ".pairing .device-line, .pairing header > .dot" in page
+
+
+def test_mobile_page_prioritises_the_everyday_remote_controls() -> None:
+    page = build_mobile_page()
+
+    assert page.index('id="btnOn"') < page.index('id="brightnessLabel"')
+    assert page.index('id="brightnessLabel"') < page.index('id="swatches"')
+    assert page.index('id="swatches"') < page.index('id="modes"')
+    assert page.index('id="modes"') < page.index('id="scenes"')
+    assert page.index('id="scenes"') < page.index('id="pcModes"')
+
+
+def test_mobile_page_leaves_room_for_mobile_browser_chrome() -> None:
+    page = build_mobile_page()
+
+    assert "min-height:100dvh" in page
+    assert "112px + env(safe-area-inset-bottom)" in page
+    assert "position:sticky; top:0" in page
+    assert 'grid-template-columns:repeat(4,52px)' in page
+    assert 'setProperty("--range", pendingBrightness + "%")' in page
+
+
 def test_mobile_page_has_pc_modes_with_active_state() -> None:
     page = build_mobile_page(
         {

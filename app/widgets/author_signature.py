@@ -14,24 +14,24 @@ class AuthorSignatureMark(QWidget):
         self._theme_provider = theme_provider
         self.setObjectName("heroSignature")
         self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumWidth(64)
-        self.setMinimumHeight(40)
+        self.setMinimumWidth(40)
+        self.setMinimumHeight(28)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 0, 0, 0)
+        layout.setContentsMargins(0, 3, 0, 0)
         layout.setSpacing(0)
 
         self.edition_label = QLabel()
         self.edition_label.setObjectName("authorEditionText")
         self.edition_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.edition_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.edition_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
-        layout.addWidget(self.edition_label, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addWidget(self.edition_label, 0, Qt.AlignLeft | Qt.AlignTop)
         layout.addStretch(1)
         self.refresh_text()
 
     def sizeHint(self) -> QSize:
-        return QSize(64, 40)
+        return QSize(40, 28)
 
     def refresh_text(self) -> None:
         self.refresh_theme()

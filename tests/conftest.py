@@ -146,6 +146,17 @@ def screen(request):
         # against a torn-down host for the rest of the suite.
         controller.stop()
         host.close()
+        # RuleEditorOverlay closes with deleteLater(), as it should in the running
+        # app. Tests do not naturally return to exec(), so drain deferred deletes
+        # here instead of leaving dozens of SVG renderers and animations for
+        # QApplication's process-exit teardown.
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+            QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+            app.processEvents()
 
     request.addfinalizer(teardown)
     return host, controller

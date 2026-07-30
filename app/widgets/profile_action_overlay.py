@@ -265,6 +265,7 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         title = QLabel(labels["title"], self._panel)
         title.setObjectName("profileActionTitle")
         title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._title_label = title
         title_row.addWidget(warning_icon, 0, Qt.AlignVCenter)
         title_row.addWidget(title, 0, Qt.AlignVCenter)
         title_row.addStretch(1)
@@ -293,6 +294,7 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         msg_scroll.setWidget(message)
 
         panel_layout.addLayout(title_row)
+        panel_layout.addStretch(1)
         panel_layout.addWidget(msg_scroll, 0, Qt.AlignHCenter)
 
         # Optional choice attached to the confirmation (e.g. whether the strip
@@ -320,6 +322,7 @@ class ProfileConfirmOverlay(ProfileRenameOverlay):
         cancel_button = LiquidButton(labels["cancel"], "ghost", self._panel)
         cancel_button.setFixedSize(144, 42)
         cancel_button.clicked.connect(self.close_overlay)
+        self._cancel_button = cancel_button
         # The same dialog confirms both constructive actions ("make primary",
         # "try driver") and destructive ones (delete) — the caller picks the
         # role so a destructive confirm reads as red, not as the default action.

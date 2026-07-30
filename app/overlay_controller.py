@@ -91,6 +91,7 @@ class OverlayController:
             return
         labels = {
             "title": host._tr("license.title"),
+            "hero_title": host._tr("license.hero_title"),
             "subtitle": host._tr("license.subtitle"),
             "have_key": host._tr("license.have_key"),
             "back": host._tr("dialog.back"),

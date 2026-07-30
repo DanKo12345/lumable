@@ -26,14 +26,14 @@ def build_brand(host) -> QWidget:
 
     top = QHBoxLayout()
     top.setContentsMargins(0, 0, 0, 0)
-    top.setSpacing(8)
+    top.setSpacing(5)
     host.hero_title = QLabel(host._tr("hero.title"))
     host.hero_title.setObjectName("heroTitle")
     host.hero_title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     host.hero_signature = AuthorSignatureMark(lambda: host._theme_tokens)
     host.hero_signature.clicked.connect(host._show_license_overlay)
-    top.addWidget(host.hero_title, 0, Qt.AlignVCenter)
-    top.addWidget(host.hero_signature, 0, Qt.AlignVCenter)
+    top.addWidget(host.hero_title, 0, Qt.AlignBottom)
+    top.addWidget(host.hero_signature, 0, Qt.AlignTop)
     top.addStretch(1)
     column.addLayout(top)
 

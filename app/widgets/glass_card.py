@@ -5,6 +5,7 @@ from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPat
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
+from app.ui_metrics import CARD_RADIUS, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS
 from app.widgets.section_icon import SectionIcon
 
 
@@ -17,8 +18,8 @@ class GlassCard(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 16, 20, 18)
-        outer.setSpacing(4)
+        outer.setContentsMargins(SPACE_XL, SPACE_LG, SPACE_XL, SPACE_XL)
+        outer.setSpacing(SPACE_XS)
         self.icon_widget = SectionIcon(icon, self) if icon else None
         self.header_widget = QWidget(self)
         self.header_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
@@ -34,7 +35,7 @@ class GlassCard(QFrame):
         header.setSpacing(0)
         if self.icon_widget is not None:
             header.addWidget(self.icon_widget, 0, Qt.AlignVCenter)
-            header.addSpacing(10)
+            header.addSpacing(SPACE_MD)
         header.addWidget(self.title_label, 0, Qt.AlignVCenter)
         header.addStretch(1)
         outer.addWidget(self.header_widget)
@@ -44,14 +45,14 @@ class GlassCard(QFrame):
             self.subtitle_label.setObjectName("cardSubtitle")
             self.subtitle_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
             self.subtitle_label.setMinimumHeight(26)
-            self.subtitle_label.setContentsMargins(0, 1, 0, 6)
+            self.subtitle_label.setContentsMargins(0, 0, 0, SPACE_SM)
             self.subtitle_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
             outer.addWidget(self.subtitle_label)
         else:
             self.subtitle_label = None
         self.content_layout = QVBoxLayout()
-        self.content_layout.setContentsMargins(0, 10, 0, 0)
-        self.content_layout.setSpacing(13)
+        self.content_layout.setContentsMargins(0, SPACE_MD, 0, 0)
+        self.content_layout.setSpacing(SPACE_MD)
         outer.addLayout(self.content_layout)
 
     def paintEvent(self, event):
@@ -65,7 +66,7 @@ class GlassCard(QFrame):
             rect = QRectF(self.rect()).adjusted(2.0, 2.0, -2.0, -2.0)
         else:
             rect = QRectF(self.rect()).adjusted(3.0, 2.0, -3.0, -5.0)
-        radius = 18.0
+        radius = float(CARD_RADIUS)
         path_bg = QPainterPath()
         path_bg.addRoundedRect(rect, radius, radius)
 

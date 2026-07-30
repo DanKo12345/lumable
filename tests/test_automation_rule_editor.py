@@ -19,7 +19,7 @@ pytest.importorskip("PySide6")
 # stand-in that screen's own tests use — see tests/automation_screen.py. The
 # ``screen`` fixture itself comes from conftest.
 from automation_screen import make_rule
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QAbstractAnimation, Qt
 from PySide6.QtGui import QAccessible
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -99,6 +99,19 @@ def test_only_one_editor_opens_at_a_time(screen) -> None:
     _pump()
 
     assert _editor(host) is first
+
+
+def test_stopping_the_automation_ui_closes_its_editor(screen) -> None:
+    host, controller = screen
+    host.automations_add_button.click()
+    _pump()
+    editor = _editor(host)
+
+    controller.stop()
+    _pump()
+
+    assert editor.isHidden()
+    assert host._automation_ui._editor is None
 
 
 def test_editing_a_rule_loads_it(screen) -> None:
@@ -188,10 +201,11 @@ def test_a_time_rule_with_no_days_cannot_be_saved(screen) -> None:
     assert editor.save_button.isEnabled() is True
 
 
-def test_background_is_offered_only_where_it_can_work(screen) -> None:
+def test_background_is_offered_only_where_it_can_work(screen, monkeypatch) -> None:
     """A background rule becomes a Windows task that starts the app headless, and
     that path can only switch power at a time of day. Switching the action away takes
     the capability with it — and the flag, which the schema would drop anyway."""
+    monkeypatch.setattr("app.automation_ui_controller.can_use", lambda _feature: True)
     host, _controller = screen
     host.automations_add_button.click()
     _pump()
@@ -200,6 +214,7 @@ def test_background_is_offered_only_where_it_can_work(screen) -> None:
     editor.background_button.setChecked(True)
     editor._on_changed()
     assert editor.form()["execution"] == EXECUTION_BACKGROUND
+    assert editor.background_pro_badge.isHidden() is True
     assert editor.background_hint.isHidden() is True
 
     editor.action_combo.setCurrentIndex(editor.action_combo.findData(CHOICE_SCENE))
@@ -208,6 +223,41 @@ def test_background_is_offered_only_where_it_can_work(screen) -> None:
     assert editor.background_button.isEnabled() is False
     assert editor.background_button.isChecked() is False
     assert editor.background_hint.isHidden() is False
+
+
+def test_background_execution_is_labelled_and_locked_in_free(screen) -> None:
+    host, _controller = screen
+    host.automations_add_button.click()
+    _pump()
+    editor = _editor(host)
+
+    assert editor.background_button.isEnabled() is False
+    assert editor.background_button.isChecked() is False
+    assert editor.background_pro_badge.isHidden() is False
+    assert editor.background_pro_badge.text() == _tr("common.pro_badge")
+    assert editor.background_hint.text() == _tr("automations.background_pro_hint")
+    assert (
+        editor.background_button.accessibleDescription()
+        == _tr("automations.background_pro_hint")
+    )
+
+
+def test_opening_a_background_rule_in_free_does_not_silently_downgrade_it(
+    screen,
+) -> None:
+    host, controller = screen
+    host._automations.stored_rules = [
+        make_rule(id="rule-background", name="Evening", execution="background")
+    ]
+    controller.sync_controls()
+
+    _edit_button(controller, 0).click()
+    _pump()
+    editor = _editor(host)
+
+    assert editor.background_button.isEnabled() is False
+    assert editor.background_button.isChecked() is True
+    assert editor.form()["execution"] == EXECUTION_BACKGROUND
 
 
 def test_a_rule_whose_scene_is_gone_says_so_and_can_be_pointed_at_another(screen) -> None:
@@ -249,6 +299,139 @@ def test_priority_and_cooldown_are_folded_away(screen) -> None:
     assert editor.advanced_box.isHidden() is False
     assert editor.priority_combo.isVisibleTo(editor.advanced_box)
     assert editor.cooldown_combo.isVisibleTo(editor.advanced_box)
+
+
+def test_editor_combos_are_tall_enough_for_their_own_style(screen) -> None:
+    """The global combo style includes vertical padding. Constraining the widget
+    below its minimum size hint cuts the rounded bottom edge off every field."""
+    host, _controller = screen
+    host.show()
+    host.automations_add_button.click()
+    _pump()
+    editor = _editor(host)
+
+    for combo in (
+        editor.trigger_combo,
+        editor.idle_combo,
+        editor.action_combo,
+        editor.scene_combo,
+        editor.priority_combo,
+        editor.cooldown_combo,
+    ):
+        assert combo.maximumHeight() >= combo.minimumSizeHint().height()
+
+
+def test_time_and_weekdays_share_one_control_height(screen) -> None:
+    host, _controller = screen
+    host.automations_add_button.click()
+    _pump()
+    editor = _editor(host)
+
+    assert {chip.height() for chip in editor.day_buttons} == {
+        editor.time_button.height()
+    }
+
+
+def test_advanced_fields_open_with_a_real_transition(
+    screen, preserve_motion_policy
+) -> None:
+    """The extra fields move the form rather than appearing in one hard jump."""
+    preserve_motion_policy.set_mode("full")
+    host, _controller = screen
+    host.show()
+    host.automations_add_button.click()
+    _pump()
+    editor = _editor(host)
+
+    editor.advanced_button.click()
+
+    assert editor._advanced_height_anim.state() == QAbstractAnimation.Running
+    QTest.qWait(70)
+    middle = editor.advanced_box.maximumHeight()
+    target = editor.advanced_box.sizeHint().height()
+    assert 0 < middle < target
+
+    QTest.qWait(180)
+    assert editor._advanced_height_anim.state() == QAbstractAnimation.Stopped
+    assert editor.advanced_box.maximumHeight() == target
+
+
+def test_edit_footer_is_one_group_and_save_uses_the_strip_accent(screen) -> None:
+    host, controller = screen
+    host._automations.stored_rules = [make_rule(id="rule-1", name="Evening")]
+    controller.sync_controls()
+    host.show()
+    _edit_button(controller, 0).click()
+    _pump()
+    editor = _editor(host)
+    assert editor.delete_button is not None
+
+    delete_gap = editor.cancel_button.x() - (
+        editor.delete_button.x() + editor.delete_button.width()
+    )
+    save_gap = editor.save_button.x() - (
+        editor.cancel_button.x() + editor.cancel_button.width()
+    )
+    assert abs(delete_gap - save_gap) <= 2
+    assert editor.save_button._role == "led"
+
+
+def test_trigger_and_action_icons_follow_the_selected_choices(screen) -> None:
+    host, _controller = screen
+    host.automations_add_button.click()
+    _pump()
+    editor = _editor(host)
+
+    assert editor.trigger_icon.kind == "clock-3"
+    assert editor.action_icon.kind == "lightbulb"
+
+    editor.trigger_combo.setCurrentIndex(editor.trigger_combo.findData("no_input"))
+    editor.action_combo.setCurrentIndex(editor.action_combo.findData(CHOICE_SCENE))
+    _pump()
+
+    assert editor.trigger_icon.kind == "moon"
+    assert editor.action_icon.kind == "layers-3"
+
+
+def test_background_uses_a_real_accessible_switch(screen) -> None:
+    host, _controller = screen
+    host.automations_add_button.click()
+    _pump()
+    switch = _editor(host).background_button
+
+    interface = QAccessible.queryAccessibleInterface(switch)
+    assert interface is not None
+    assert interface.state().checkable
+    assert not interface.state().checked
+
+    switch.setChecked(True)
+    _pump()
+    assert interface.state().checked
+
+
+def test_background_switch_moves_smoothly_and_respects_reduced_motion(
+    screen, preserve_motion_policy, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.automation_ui_controller.can_use", lambda _feature: True)
+    preserve_motion_policy.set_mode("full")
+    host, _controller = screen
+    host.show()
+    host.automations_add_button.click()
+    _pump()
+    switch = _editor(host).background_button
+
+    switch.click()
+    assert switch._animation.state() == QAbstractAnimation.Running
+    QTest.qWait(60)
+    assert 0.0 < switch._progress < 1.0
+    QTest.qWait(160)
+    assert switch._animation.state() == QAbstractAnimation.Stopped
+    assert switch._progress == 1.0
+
+    preserve_motion_policy.set_mode("reduced")
+    switch.click()
+    assert switch._animation.state() == QAbstractAnimation.Stopped
+    assert switch._progress == 0.0
 
 
 # ── saving ────────────────────────────────────────────────────────────

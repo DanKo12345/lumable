@@ -448,6 +448,7 @@ class LocalApiController:
     def _mobile_labels(self) -> dict[str, str]:
         host = self._host
         keys = (
+            "pair_title",
             "pair_prompt",
             "pair_connect",
             "pair_invalid",

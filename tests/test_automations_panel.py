@@ -602,6 +602,7 @@ def test_every_string_this_screen_shows_exists_in_every_language() -> None:
         "automations.scene_none",
         "automations.field_background",
         "automations.background_hint",
+        "automations.background_pro_hint",
         "automations.advanced",
         "automations.field_priority",
         "automations.field_cooldown",

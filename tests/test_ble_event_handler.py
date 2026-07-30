@@ -323,7 +323,7 @@ def test_populate_devices_autoconnects_single_device() -> None:
     assert host._ble.connected_to == ["AA:BB:CC:DD:EE:FF"]
 
 
-def test_populate_devices_uses_preferred_device_without_autoconnecting_many() -> None:
+def test_populate_devices_autoconnects_the_preferred_device_among_many() -> None:
     host = FakeHost(_settings={"last_device_address": "BB:CC:DD:EE:FF:00"})
     handler = BleEventHandler(host)
     devices = [
@@ -334,8 +334,27 @@ def test_populate_devices_uses_preferred_device_without_autoconnecting_many() ->
     handler.populate_devices(devices)
 
     assert host.device_combo.currentIndex() == 1
+    assert host.device_status.text == "device.status.connecting"
+    assert host._connect_in_progress is True
+    assert host._ble.connected_to == ["BB:CC:DD:EE:FF:00"]
+
+
+def test_status_click_connects_the_selected_scan_result_instead_of_rescanning() -> None:
+    host = FakeHost()
+    handler = BleEventHandler(host)
+    devices = [
+        {"name": "First", "address": "AA:BB:CC:DD:EE:FF", "rssi": -40},
+        {"name": "Second", "address": "BB:CC:DD:EE:FF:00", "rssi": -60},
+    ]
+    handler.populate_devices(devices)
     assert host.device_status.text == "device.status.found_many:count=2"
-    assert host._ble.connected_to == []
+
+    handler.connect_or_scan()
+
+    assert host._ble.scan_called is False
+    assert host._connect_in_progress is True
+    assert host.device_status.text == "device.status.connecting"
+    assert host._ble.connected_to == ["AA:BB:CC:DD:EE:FF"]
 
 
 def test_populate_devices_autoconnects_single_supported_among_unknowns() -> None:
