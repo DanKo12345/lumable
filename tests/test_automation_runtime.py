@@ -369,8 +369,8 @@ def test_the_window_moves_onto_the_migrated_engine(monkeypatch) -> None:
         assert [rule["id"] for rule in automations["rules"]], "no rules reached the window"
         assert window._settings["app_triggers"]["enabled"] is False, "the old watcher still runs"
         # What the engine and the task compiler will each be handed.
-        assert window._automation_runtime._settings() is window._settings
-        assert window._automation_tasks._rules() is not None
+        assert window._automations._settings() is window._settings
+        assert window._automations.rules(), "the controller sees no migrated rules"
 
         # And the copy the window saves on the way out keeps the migration.
         window._save_window_settings()
@@ -469,9 +469,6 @@ def test_the_runtime_starts_from_the_app(monkeypatch) -> None:
     try:
         names = [callback.__name__ for _delay, callback in scheduled]
         assert "_start_automations" in names, "the engine is never started"
-        # And before the tasks are reconciled, which is planned against its rules.
-        engine_at = names.index("_start_automations")
-        assert engine_at < names.index("sync")
     finally:
         window._ble.shutdown()
         window.close()
@@ -676,34 +673,28 @@ def test_idle_rule_executes_once_after_the_threshold() -> None:
     assert len(host._ble.writes) == writes
 
 
-def test_the_power_button_moves_with_the_automation() -> None:
-    """Syncing without moving the button only re-describes the state it was already
-    in, so the window would go on showing the light as it was."""
-
-    class Button:
-        def __init__(self) -> None:
-            self.checked = True
-
-        def setChecked(self, value: bool) -> None:
-            self.checked = bool(value)
-
-        def isChecked(self) -> bool:
-            return self.checked
-
+def test_a_power_rule_announces_what_the_strip_now_shows() -> None:
+    """The engine says what happened; moving controls is the window's business. The
+    persistence stays here, though: without it the next reconnect restores the state
+    the app believes in and undoes the automation."""
     host = FakeHost(_settings())
-    host.power_button = Button()
-    host.synced: list[bool] = []
-    host._sync_power_button = lambda: host.synced.append(host.power_button.isChecked())
     runtime = _runtime(host)
+    announced: list = []
+    runtime.applied.connect(announced.append)
     decision = type(
-        "Decision", (), {"action": type("Action", (), {"type": "set_power", "power": False})()}
+        "Decision",
+        (),
+        {
+            "rule": type("Rule", (), {"id": "evening-off"})(),
+            "action": type("Action", (), {"type": "set_power", "power": False})(),
+        },
     )()
 
     runtime._reflect(decision)
 
-    assert host.power_button.isChecked() is False, "the button kept its old state"
-    assert host.synced == [False], "the window was synced before the button moved"
-    assert host.power_calls == [False]
+    assert [state.power for state in announced] == [False]
+    assert announced[0].rule_id == "evening-off"
+    assert host.power_calls == [False], "the power state was not persisted"
 
 
 # ── background rules while the app is open ────────────────────────────
@@ -1004,15 +995,14 @@ def test_closing_the_window_releases_a_held_lock(monkeypatch) -> None:
     try:
         lock = ProcessLock(headless_module.execution_lock_path())
         assert lock.acquire()
-        window._automation_runtime = _StubRuntime(lock)
+        stub = _StubRuntime(lock)
+        window._automations = stub
 
-        stub = window._automation_runtime
         window.close()
         for _ in range(5):
             app.processEvents()
 
         assert stub.stopped is True, "closing never stopped the engine"
-        assert window._automation_runtime is None
         # Not released by hand: the only thing that can have freed it is the stop()
         # the close triggered.
         with file_lock(headless_module.execution_lock_path(), timeout=0.0) as free:
@@ -1430,3 +1420,91 @@ def test_a_lost_control_file_cannot_make_a_new_pause_look_already_settled() -> N
 
     assert host._ble.writes == [], "the pause was ignored as already settled"
     assert headless_module.load_state()["pause_generation"] == 8
+
+
+# ── describing what happened must not be able to break it ─────────────
+def test_a_broken_reflection_still_lets_the_decision_finish(monkeypatch) -> None:
+    """The dispatcher is owed exactly one answer and is stuck until it gets one. A
+    fault while saying what the light now shows must cost a stale set of controls
+    and a crash log, never an automation that never completes."""
+    from app.automation import runtime as runtime_module
+
+    host = FakeHost(_settings())
+    runtime = _runtime(host)
+    reported: list[str] = []
+    monkeypatch.setattr(
+        runtime_module, "write_current_exception", lambda context="": reported.append(context)
+    )
+    monkeypatch.setattr(
+        runtime, "_reflect", lambda decision: (_ for _ in ()).throw(RuntimeError("no window"))
+    )
+    answered: list = []
+    decision = type(
+        "Decision",
+        (),
+        {
+            "rule": type("Rule", (), {"id": "evening-off"})(),
+            "action": type("Action", (), {"type": "set_power", "power": False})(),
+        },
+    )()
+
+    runtime.execute(decision, answered.append)
+    host._ble.confirm_all()
+
+    assert [result.ok for result in answered] == [True], "the decision was left in flight"
+    assert reported == ["automation_reflect"], "the fault was not reported"
+
+
+def test_a_broken_reflection_still_records_and_releases_the_lock(monkeypatch) -> None:
+    """The background path holds a machine-wide lock. One bad announcement must not
+    stop every automation on the machine."""
+    from app.automation import runtime as runtime_module
+
+    host = FakeHost(_background_settings())
+    _watching()
+    runtime = _runtime(host)
+    monkeypatch.setattr(runtime_module, "write_current_exception", lambda context="": None)
+    monkeypatch.setattr(
+        runtime, "_reflect", lambda decision: (_ for _ in ()).throw(RuntimeError("no window"))
+    )
+
+    _tick_at(runtime, host, JUST_AFTER)
+
+    assert headless_module.load_state()["handled"], "the occurrence was not recorded"
+    with file_lock(headless_module.execution_lock_path(), timeout=0.0) as free:
+        assert free is True, "a failed announcement kept the machine-wide lock"
+
+
+def test_a_colour_scene_puts_the_effect_control_back_to_static() -> None:
+    """A colour and no effect means the strip is showing that colour and nothing
+    else; a control still showing a rainbow would be the half-truth this signal
+    exists to avoid."""
+    from app.automation.runtime import STATIC_EFFECT_CODE
+
+    host = FakeHost(_settings())
+    host._settings["scenes"] = []
+    host._settings["scenes"].append(
+        wrap_scene(
+            {
+                "scene_id": "scene-colour",
+                "name": "Colour",
+                "state": {"rgb": [10, 20, 30], "brightness": 40},
+            }
+        )
+    )
+    runtime = _runtime(host)
+    decision = type(
+        "Decision",
+        (),
+        {
+            "rule": type("Rule", (), {"id": "colour"})(),
+            "action": type(
+                "Action", (), {"type": "apply_scene", "scene_id": "scene-colour"}
+            )(),
+        },
+    )()
+
+    state = runtime._applied_state(decision)
+
+    assert state.rgb == (10, 20, 30)
+    assert state.effect == {"kind": "firmware", "ref": STATIC_EFFECT_CODE, "speed": None}

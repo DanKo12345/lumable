@@ -39,7 +39,7 @@ from datetime import datetime
 from time import monotonic
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from app import scene_store
 from app.automation.ble_executor import BleActionExecutor
@@ -74,7 +74,14 @@ from app.automation.resolver import (
     Snapshot,
     rank,
 )
-from app.automation.rules import ORIGIN_LEGACY_SCHEDULE, Rule, validate_rules
+from app.automation.rules import (
+    ACTION_APPLY_SCENE,
+    ACTION_SET_POWER,
+    ORIGIN_LEGACY_SCHEDULE,
+    Rule,
+    validate_rules,
+)
+from app.crash_logging import write_current_exception
 from app.foreground import foreground_process_name
 from app.idle_time import idle_seconds
 from app.storage import automation_journal_path, validate_automations
@@ -96,10 +103,42 @@ PAUSE_ACTIVE = "active"
 PAUSE_PENDING = "pending"
 PAUSE_ENDING = "ending"
 
+# The effect code every driver uses for "just show this colour".
+STATIC_EFFECT_CODE = 0
+
 # Marks a journal entry as having been carried out by the open app. The headless
 # path marks its own as background, and telling them apart is what makes "why did
 # this run twice" answerable.
 _IN_APP_CONTEXT = {"in_app": True}
+
+
+@dataclass(frozen=True)
+class AppliedState:
+    """What the main strip shows after an automation confirmed every step.
+
+    Only fields the rule actually applied are set; ``None`` means "this rule said
+    nothing about it", which is what lets a scene carrying only a brightness leave
+    the colour where the user put it.
+
+    Emitted solely on a *confirmed full success*. A partial or failed run has left
+    the strip somewhere nobody can describe, and moving the window's controls to a
+    state that may not exist would be worse than leaving them where they were.
+    """
+
+    rule_id: str
+    scene_id: str = ""
+    power: bool | None = None
+    rgb: tuple[int, int, int] | None = None
+    brightness: int | None = None
+    # Firmware effects only: a software or DIY effect is not something the strip
+    # itself is running, so the effect control has nothing true to show for it.
+    #
+    # No ``cct`` field on purpose. A scene carrying a white point either finds a
+    # controller without the channel — reported as skipped — or reaches the one
+    # branch that answers "not wired". Both are skipped steps, so a scene with a cct
+    # can never be a confirmed full success, and a field for it here would be a
+    # promise nothing could keep.
+    effect: dict[str, Any] | None = None
 
 
 @dataclass
@@ -115,6 +154,10 @@ class _BackgroundRun:
 
 class AutomationRuntime(QObject):
     """Ticks the automation engine against the world the app can see."""
+
+    # What the main strip shows after a rule confirmed every one of its steps.
+    # Nothing here writes to the strip: it is an announcement, not a command.
+    applied = Signal(object)
 
     def __init__(
         self,
@@ -455,30 +498,36 @@ class AutomationRuntime(QObject):
         rule = run.decision.rule
         now = datetime.now()
         context = decision_context(run.decision) | steps_context(result) | dict(_IN_APP_CONTEXT)
+        # Everything that must happen, before anything that merely should. The lock
+        # is machine-wide: a failure while describing what happened must not be able
+        # to keep it, or one bad announcement stops every automation on the machine.
+        try:
+            if result.ok:
+                self._journal.record_success(
+                    rule.id,
+                    message_code=result.code or success_code_for(run.decision),
+                    now=now,
+                    occurred_at=run.occurred_at,
+                    decided_at=run.decision.decided_at,
+                    context=context,
+                )
+                # Recorded only on success, exactly as the headless path does: a run
+                # that failed leaves the occurrence for whoever tries next.
+                remember_handled(load_state(), {rule.id: run.occurred_at}, fired={rule.id: now})
+            else:
+                self._journal.record_error(
+                    rule.id,
+                    message_code=failure_code_for(result),
+                    now=now,
+                    occurred_at=run.occurred_at,
+                    decided_at=run.decision.decided_at,
+                    context=context,
+                )
+            self._journal.flush(monotonic(), force=True)
+        finally:
+            run.lock.release()
         if result.ok:
-            self._journal.record_success(
-                rule.id,
-                message_code=result.code or success_code_for(run.decision),
-                now=now,
-                occurred_at=run.occurred_at,
-                decided_at=run.decision.decided_at,
-                context=context,
-            )
-            # Recorded only on success, exactly as the headless path does: a run that
-            # failed leaves the occurrence for whoever tries next.
-            remember_handled(load_state(), {rule.id: run.occurred_at}, fired={rule.id: now})
-            self._reflect(run.decision)
-        else:
-            self._journal.record_error(
-                rule.id,
-                message_code=failure_code_for(result),
-                now=now,
-                occurred_at=run.occurred_at,
-                decided_at=run.decision.decided_at,
-                context=context,
-            )
-        self._journal.flush(monotonic(), force=True)
-        run.lock.release()
+            self._safe_reflect(run.decision)
 
     def _background_timed_out(self, run: _BackgroundRun) -> None:
         """Give up on a write that never answered, rather than hold the lock for ever.
@@ -574,34 +623,91 @@ class AutomationRuntime(QObject):
     # automation just did to the strip.
     def execute(self, decision: Any, done: Any) -> Any:
         def finished(result: Any) -> None:
-            if result.ok:
-                self._reflect(decision)
+            # The dispatcher is owed exactly one answer and is stuck until it gets
+            # one, so it is answered first. Saying what the light now shows is worth
+            # doing and worth reporting when it fails, but it is not worth holding a
+            # decision in flight for.
             done(result)
+            if result.ok:
+                self._safe_reflect(decision)
 
         return self._executor.execute(decision, finished)
 
-    def _reflect(self, decision: Any) -> None:
-        """Tell the app what just happened to the light.
+    def _safe_reflect(self, decision: Any) -> None:
+        """Describe what happened, and never let the describing break the run.
 
-        Without this the strip is switched off at 23:00 and the window still shows it
-        on — and worse, the next reconnect restores the power state the app believes
-        in, undoing the automation.
+        Called only after the run's own bookkeeping is finished — the ack given, the
+        occurrence recorded, the lock released — so that a fault in building the
+        state, or in a slot listening for it, costs a stale set of controls and a
+        crash log rather than an automation that never completes.
         """
-        action = getattr(decision, "action", None)
-        power = getattr(action, "power", None)
-        if getattr(action, "type", "") != "set_power" or not isinstance(power, bool):
-            return
         try:
-            # The button first: everything else in the window reads its state, so
-            # syncing before moving it would only re-describe the old one.
-            button = getattr(self._host, "power_button", None)
-            if button is not None:
-                button.setChecked(power)
+            self._reflect(decision)
+        except Exception:
+            write_current_exception(context="automation_reflect")
+
+    def _reflect(self, decision: Any) -> None:
+        """Say what the light now shows, and remember the part that must persist.
+
+        Two different needs. Persisting the power state is correctness: reconnecting
+        restores what the app believes in, so without it the next reconnect would
+        undo the automation. Announcing the state is presentation, and belongs to
+        whoever is showing controls — so it goes out as a signal rather than by
+        reaching into the window from here.
+        """
+        state = self._applied_state(decision)
+        if state is None:
+            return
+        if state.power is not None:
             remember = getattr(self._host, "_remember_power_setting", None)
-            if callable(remember):
-                remember(power)
-            sync = getattr(self._host, "_sync_power_button", None)
-            if callable(sync):
-                sync()
+            try:
+                if callable(remember):
+                    remember(state.power)
+            except Exception:  # pragma: no cover - the run itself already succeeded
+                pass
+        self.applied.emit(state)
+
+    def _applied_state(self, decision: Any) -> AppliedState | None:
+        """What the *main strip* is showing now, as far as this rule decided it."""
+        action = getattr(decision, "action", None)
+        rule_id = getattr(getattr(decision, "rule", None), "id", "")
+        kind = getattr(action, "type", "")
+        if kind == ACTION_SET_POWER:
+            power = getattr(action, "power", None)
+            return AppliedState(rule_id=rule_id, power=power) if isinstance(power, bool) else None
+        if kind != ACTION_APPLY_SCENE:
+            return None
+        scene = self._scene_for(getattr(action, "scene_id", ""))
+        if not isinstance(scene, dict) or not self._targets_primary(scene):
+            # A scene aimed at a group the main strip is not in changed some other
+            # light. Moving these controls for it would be a plain untruth.
+            return None
+        state = scene.get("state") or {}
+        rgb = state.get("rgb")
+        effect = state.get("effect")
+        firmware = effect if isinstance(effect, dict) and effect.get("kind") == "firmware" else None
+        if firmware is None and rgb is not None:
+            # A colour and no effect means the strip is showing that colour and
+            # nothing else. The app has always taken that view — applying a colour
+            # preset puts the effect control back to static — and leaving the control
+            # showing a rainbow the strip is no longer running would be the same
+            # half-truth this whole signal exists to avoid.
+            firmware = {"kind": "firmware", "ref": STATIC_EFFECT_CODE, "speed": None}
+        return AppliedState(
+            rule_id=rule_id,
+            scene_id=str(scene.get("scene_id", "")),
+            power=state.get("power") if isinstance(state.get("power"), bool) else None,
+            rgb=tuple(int(part) for part in rgb) if isinstance(rgb, (list, tuple)) else None,
+            brightness=state.get("brightness"),
+            effect=firmware,
+        )
+
+    def _targets_primary(self, scene: dict[str, Any]) -> bool:
+        try:
+            targets = self._backend.resolve_scene_targets(scene.get("target"))
         except Exception:  # pragma: no cover - the run itself already succeeded
-            pass
+            return False
+        if targets is None:
+            return True  # every connected strip, which is where these controls point
+        primary = str(self._host._ble.primary_address() or "").strip()
+        return bool(primary) and primary in {str(address).strip() for address in targets}

@@ -93,12 +93,15 @@ def test_automations_switched_off_take_every_task_with_them(monkeypatch) -> None
     assert seen == [[]]
 
 
-def test_a_second_call_while_one_is_running_is_ignored(monkeypatch) -> None:
-    started: list[int] = []
+def test_two_reconciliations_never_overlap(monkeypatch) -> None:
+    """A request made during a run is answered *after* it, not alongside it: two at
+    once would each decide against a task list the other was changing."""
+    order: list[str] = []
 
     def slow_sync(rules, **kwargs):
-        started.append(1)
-        sleep(0.2)
+        order.append("enter")
+        sleep(0.1)
+        order.append("exit")
         return TaskSyncResult()
 
     monkeypatch.setattr(task_sync_module, "sync_tasks", slow_sync)
@@ -109,8 +112,13 @@ def test_a_second_call_while_one_is_running_is_ignored(monkeypatch) -> None:
     controller.sync()
     controller.sync()
     _wait_for(finished)
+    app = QApplication.instance() or QApplication([])
+    deadline = monotonic() + 5.0
+    while len(order) < 4 and monotonic() < deadline:
+        app.processEvents()
+        sleep(0.01)
 
-    assert started == [1], "two reconciliations ran at once"
+    assert order == ["enter", "exit", "enter", "exit"], "the two runs overlapped"
 
 
 def test_settings_that_cannot_be_read_stop_the_run_instead_of_emptying_it(monkeypatch) -> None:
@@ -172,18 +180,24 @@ def test_a_successful_run_writes_nothing_to_the_journal(monkeypatch) -> None:
 
 
 def test_the_app_reconciles_tasks_at_startup(monkeypatch) -> None:
-    """Without this call site the orphan cleanup only ever runs in tests."""
+    """Without this call site the orphan cleanup only ever runs in tests. The window
+    asks the controller, which owns the reconciliation."""
     app = QApplication.instance() or QApplication([])
-    scheduled: list = []
-    monkeypatch.setattr(
-        MainWindow,
-        "_start_deferred",
-        lambda self, delay_ms, callback: scheduled.append(callback),
-    )
+    monkeypatch.setattr(MainWindow, "_start_deferred", lambda self, delay_ms, callback: None)
+    synced: list = []
     window = MainWindow()
     try:
-        assert isinstance(window._automation_tasks, AutomationTaskSync)
-        assert window._automation_tasks.sync in scheduled, "startup never reconciles the tasks"
+        monkeypatch.setattr(window._automations, "start", lambda: None)
+        monkeypatch.setattr(window._automations, "sync_tasks", lambda: synced.append(True))
+
+        window._start_automations()
+        for _ in range(20):
+            app.processEvents()
+            sleep(0.02)
+            if synced:
+                break
+
+        assert synced == [True], "startup never reconciles the tasks"
     finally:
         window._ble.shutdown()
         window.close()
@@ -194,3 +208,54 @@ def test_the_app_reconciles_tasks_at_startup(monkeypatch) -> None:
         # stop.
         for _ in range(5):
             app.processEvents()
+
+
+def test_a_change_during_a_run_gets_its_own_reconciliation(monkeypatch) -> None:
+    """Create a rule, and while that reconciliation is out at schtasks, change its
+    time. Dropping the second request is how Windows ends up holding yesterday's
+    task until the next launch of the app."""
+    import threading
+
+    settings = _settings()
+    release = threading.Event()
+    seen: list[list[str]] = []
+
+    def blocking_sync(rules, **kwargs):
+        seen.append([f"{rule.id}@{rule.trigger.time_at}" for rule in rules])
+        if len(seen) == 1:
+            release.wait(timeout=5.0)
+        return TaskSyncResult()
+
+    monkeypatch.setattr(task_sync_module, "sync_tasks", blocking_sync)
+    controller = AutomationTaskSync(lambda: settings)
+    finished: list = []
+    controller.finished.connect(finished.append)
+
+    controller.sync()
+    while not seen:  # the first run is inside sync_tasks, holding the door
+        sleep(0.01)
+
+    # The user changes the rule while that is still out.
+    settings["automations"]["rules"] = [{**RULE, "trigger": {**RULE["trigger"], "time_at": "07:30"}}]
+    controller.sync()
+    release.set()
+
+    deadline = monotonic() + 5.0
+    app = QApplication.instance() or QApplication([])
+    while len(seen) < 2 and monotonic() < deadline:
+        app.processEvents()
+        sleep(0.01)
+
+    assert len(seen) == 2, "the change made during a run never reached Windows"
+    assert seen[0] == ["evening-off@23:00"]
+    assert seen[1] == ["evening-off@07:30"], "the second run used a stale snapshot"
+
+
+def test_nothing_is_repeated_when_no_one_asked_twice(monkeypatch) -> None:
+    seen, _controller = _synced(monkeypatch, _settings())
+    app = QApplication.instance() or QApplication([])
+    for _ in range(5):
+        app.processEvents()
+        sleep(0.02)
+
+    assert len(seen) == 1, "a reconciliation repeated itself for no reason"

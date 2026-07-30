@@ -58,7 +58,12 @@ class AutomationTaskSync(QObject):
         super().__init__(parent)
         self._settings_provider = settings_provider
         self._running = False
+        # Something changed while a reconciliation was out. Answered when it returns.
+        self._again = False
         self._last_result: TaskSyncResult | None = None
+        # Queued back onto this object's thread: the run reports from a worker, and
+        # the rules must be read where they are owned, not from that thread.
+        self.finished.connect(self._sync_again_if_asked)
 
     @property
     def last_result(self) -> TaskSyncResult | None:
@@ -66,10 +71,20 @@ class AutomationTaskSync(QObject):
         return self._last_result
 
     def sync(self) -> None:
-        """Reconcile once. Does nothing while a previous run is still going."""
+        """Reconcile once, and once more if anything changed while it was running.
+
+        Dropping the second request is how Windows ends up holding yesterday's task:
+        create a rule, and while that reconciliation is out at ``schtasks``, change
+        its time — the change would find the door shut and wait for the next launch
+        of the app. So a request that arrives mid-run is remembered and answered
+        afterwards, from a fresh reading of the rules rather than the one being
+        worked on now.
+        """
         if self._running:
+            self._again = True
             return
         rules = self._rules()
+        self._again = False
         if rules is None:
             # The settings could not be read. Handing on an empty list here would
             # read as "the user has no rules" and take every task off the machine,
@@ -82,6 +97,12 @@ class AutomationTaskSync(QObject):
         self._running = True
         thread = threading.Thread(target=self._run, args=(rules,), daemon=True)
         thread.start()
+
+    def _sync_again_if_asked(self, _result: Any) -> None:
+        if not self._again:
+            return
+        self._again = False
+        self.sync()
 
     def _rules(self) -> list[Rule] | None:
         """The background rules to compile, or None when settings cannot be read.

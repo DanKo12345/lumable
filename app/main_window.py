@@ -11,6 +11,7 @@ from PySide6.QtCore import (
     QCoreApplication,
     QEasingCurve,
     QPropertyAnimation,
+    QSignalBlocker,
     Qt,
     QTimer,
 )
@@ -29,7 +30,7 @@ from app.ambient_ui_controller import AmbientUiController
 from app.app_info import APP_ORGANIZATION, APP_RELEASES_URL, APP_UPDATE_URL, APP_VERSION
 from app.app_trigger_controller import AppTriggerController
 from app.app_trigger_ui_controller import AppTriggerUiController
-from app.automation.task_sync import AutomationTaskSync
+from app.automation.controller import AutomationController, schedule_first_sync
 from app.ble import BleController
 from app.ble_event_handler import BleEventHandler
 from app.color_controller import ColorController
@@ -151,7 +152,6 @@ class MainWindow(QMainWindow):
         # before that happens — and the Windows tasks are reconciled last, against
         # the rules the migration has by then written.
         self._start_deferred(2000, self._start_automations)
-        self._start_deferred(2200, self._automation_tasks.sync)
 
     def _sz(self, value: float) -> int:
         """Scale a base pixel size by the current UI-density factor."""
@@ -234,11 +234,11 @@ class MainWindow(QMainWindow):
         self._color_ctrl = ColorController(self)
         self._license_refresher = LicenseRefresher(self)
         self._license_refresher.finished.connect(self._on_license_refreshed)
-        # Windows tasks for background automation rules. Reconciled on startup so a
-        # task left behind by a rule deleted while the app was closed — or by a
-        # build that stopped part way — is cleaned up rather than waking the machine
-        # for a rule that no longer exists.
-        self._automation_tasks = AutomationTaskSync(lambda: self._settings, self)
+        # Everything about automations behind one object: the engine, the migration,
+        # the Windows tasks and the journal. The window asks it for what it needs and
+        # is told when something has been applied.
+        self._automations = AutomationController(self, lambda: self._local_api.backend(), parent=self)
+        self._automations.applied.connect(self._reflect_automation_state)
         self._aurora = AuroraBackground(self)
 
     def _init_timers(self) -> None:
@@ -1276,90 +1276,78 @@ class MainWindow(QMainWindow):
         self.close()
 
     def _start_automations(self) -> None:
-        """Bring the automation engine up, migrating the old settings if needed.
+        """Hand the automations to their controller.
 
-        The order here is the whole point of the method:
-
-        1. build the engine, but do not start it — a migration stands the old App
-           Trigger watcher down, and doing that with nothing able to take over would
-           leave the user with no triggers at all;
-        2. migrate;
-        3. take the migrated keys into this window's settings. It has held its own
-           copy since startup, and without this the engine would read the state from
-           before, the old watcher would go on running, and closing the window would
-           save that stale copy straight over the migration;
-        4. only now start ticking.
+        Everything about migrating, the engine, the Windows tasks and the journal
+        lives behind that one object, so this window — and the automations screen
+        after it — has one thing to talk to rather than five.
         """
-        from app.automation.migration import MIGRATED_KEYS, finish_pending_cleanup, migrate
-        from app.automation.runtime import AutomationRuntime
-        from app.crash_logging import write_current_exception
-
-        try:
-            runtime = AutomationRuntime(self, self._local_api.backend(), parent=self)
-        except Exception:
-            # No engine, so nothing may be stood down in favour of it.
-            write_current_exception(context="automation_runtime")
-            return
-
-        try:
-            report = migrate()
-            if not report.ok:
-                self._log(f"Automations: migration failed ({report.errors[0][1]})")
-            else:
-                # Even a migration with no legacy rules records migrated_version.
-                # The window must adopt that marker or its full save on close would
-                # put version 0 back and repeat the migration on every launch.
-                self._adopt_migrated_settings(MIGRATED_KEYS)
-            # A handoff whose last step did not finish gets another chance here.
-            cleanup = finish_pending_cleanup()
-            if cleanup.done:
-                # Cleanup clears legacy_cleanup_pending on disk after this window
-                # loaded its settings. Adopt the committed value before close can
-                # save the stale True back over it.
-                self._adopt_migrated_settings(MIGRATED_KEYS)
-        except Exception:
-            write_current_exception(context="automation_migration")
-
-        self._automation_runtime = runtime
-        self._automation_runtime.start()
+        self._automations.start()
         # The strip usually connects during the autoconnect that runs well before
         # this, so the engine asks about that itself on start; from here on the edge
         # is delivered as it happens.
-        # Bound to the runtime itself rather than to the attribute: closing clears
-        # the attribute, and a connection edge arriving after that must not reach
-        # through a None.
         self._ble.connected_changed.connect(
-            lambda connected, _address: runtime.note_connected(connected)
+            lambda connected, _address: self._automations.note_connected(connected)
         )
+        schedule_first_sync(self._automations)
 
     def _stop_automations(self) -> None:
         """Stop the engine, once, however many times a close is attempted."""
-        runtime, self._automation_runtime = getattr(self, "_automation_runtime", None), None
-        if runtime is None:
-            return
         try:
-            runtime.stop()
+            self._automations.stop()
         except Exception:
             from app.crash_logging import write_current_exception
 
             write_current_exception(context="automation_runtime_stop")
 
-    def _adopt_migrated_settings(self, keys) -> None:
-        """Take what the migration committed into this window's settings copy.
+    def _reflect_automation_state(self, state) -> None:
+        """Show what an automation just did, without doing it again.
 
-        Only those keys. The window has been running since before the migration and
-        owns everything else in its dict — window size, the colour on the sliders —
-        which the file does not know about yet.
+        Only ever called for a run that confirmed every step. The controls are moved
+        with their signals blocked: they are describing the strip, not driving it,
+        and letting them emit would send the same colour straight back to the light.
         """
-        fresh = load_settings()
-        for key in keys:
-            if key in fresh:
-                self._settings[key] = fresh[key]
-        # The old watcher reads this dict on every poll, so it has now stood down;
-        # its switch in the window is told to say so too.
-        sync = getattr(self._app_trigger_ui, "sync_controls", None)
-        if callable(sync):
-            sync()
+        try:
+            blockers = [
+                QSignalBlocker(widget)
+                for widget in (
+                    self.red_slider,
+                    self.green_slider,
+                    self.blue_slider,
+                    self.brightness_slider,
+                    self.effect_combo,
+                    self.power_button,
+                    getattr(self, "speed_slider", None),
+                )
+                if widget is not None
+            ]
+            if state.rgb is not None:
+                red, green, blue = state.rgb
+                self.red_slider.setValue(int(red))
+                self.green_slider.setValue(int(green))
+                self.blue_slider.setValue(int(blue))
+            if state.brightness is not None:
+                self.brightness_slider.setValue(int(state.brightness))
+            if state.effect is not None:
+                index = self.effect_combo.findData(int(state.effect.get("ref", 0)))
+                if index >= 0:
+                    self.effect_combo.setCurrentIndex(index)
+                speed = state.effect.get("speed")
+                slider = getattr(self, "speed_slider", None)
+                if speed is not None and slider is not None:
+                    slider.setValue(int(speed))
+            if state.power is not None:
+                self.power_button.setChecked(bool(state.power))
+            del blockers
+            # The handlers that would normally do these never ran.
+            self._update_preview()
+            self._sync_power_button()
+            self._sync_quick_mode_from_state()
+        except Exception:
+            # A run that already succeeded must not be undone by a display problem.
+            from app.crash_logging import write_current_exception
+
+            write_current_exception(context="automation_reflect")
 
     def _start_deferred(self, delay_ms: int, callback) -> None:
         """Schedule a startup task on a window-owned timer.
