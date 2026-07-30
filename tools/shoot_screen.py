@@ -114,7 +114,27 @@ def _apply_automations_demo(window) -> None:
     window._automation_ui.sync_controls()
 
 
-DEMOS = {"automations": _apply_automations_demo}
+def _apply_rule_new_demo(window) -> None:
+    """The editor as it opens for a rule that does not exist yet."""
+    _apply_automations_demo(window)
+    window.automations_add_button.click()
+
+
+def _apply_rule_edit_demo(window) -> None:
+    """The editor on an existing rule: named, with a scene, and deletable."""
+    _apply_automations_demo(window)
+    window._automation_ui._edit_rule("coding")
+    editor = window._automation_ui._editor
+    if editor is not None:
+        editor.advanced_button.setChecked(True)
+        editor._toggle_advanced()
+
+
+DEMOS = {
+    "automations": _apply_automations_demo,
+    "rule-new": _apply_rule_new_demo,
+    "rule-edit": _apply_rule_edit_demo,
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -150,8 +170,11 @@ def main(argv: list[str] | None = None) -> int:
         for _ in range(8):
             app.processEvents()
 
+        # Named after the demo when there is one, so an overlay's snapshot does not
+        # overwrite the screen's underneath it.
+        stem = args.demo or args.section
         out = Path(args.out) if args.out else ROOT / "docs" / "screenshots" / (
-            f"{args.section}-{args.theme}-{width}x{height}.png"
+            f"{stem}-{args.theme}-{width}x{height}.png"
         )
         out.parent.mkdir(parents=True, exist_ok=True)
         window.grab().save(str(out))

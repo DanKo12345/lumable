@@ -105,3 +105,44 @@ if not _qt_widgets_available():
 
     for _mod in ("PySide6.QtWidgets", "PySide6.QtGui", "PySide6.QtSvg"):
         sys.modules[_mod] = _widget_stub
+
+
+@pytest.fixture
+def screen(request):
+    """A built and wired automations screen, and the host it lives on.
+
+    Shared by the screen's tests and the rule editor's. It lives here rather than in
+    either of them because a fixture imported from another test module reads to every
+    linter as a redefinition — and because both files must be looking at the same
+    screen. See tests/automation_screen.py for the fake facade behind it.
+    """
+    from automation_screen import Host
+    from PySide6.QtWidgets import QApplication
+
+    from app.automation_ui_controller import AutomationUiController
+    from app.panels.automations_panel import (
+        build_automation_bridge_section,
+        build_automation_rules_section,
+        build_automations_section,
+    )
+
+    QApplication.instance() or QApplication([])
+    host = Host()
+    for builder in (
+        build_automations_section,
+        build_automation_rules_section,
+        build_automation_bridge_section,
+    ):
+        host._column.addWidget(builder(host))
+    controller = AutomationUiController(host)
+    host._automation_ui = controller
+    controller.wire()
+
+    def teardown() -> None:
+        # The refresh poll outlives the fixture otherwise, and would go on ticking
+        # against a torn-down host for the rest of the suite.
+        controller.stop()
+        host.close()
+
+    request.addfinalizer(teardown)
+    return host, controller

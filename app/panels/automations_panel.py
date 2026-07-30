@@ -92,6 +92,15 @@ def build_automation_rules_section(host: PanelHost) -> GlassCard:
 
     host.automations_rules_list, host.automations_rules_layout = list_container(host)
     host.automations_rules_card.content_layout.addWidget(host.automations_rules_list)
+
+    host.automations_add_button = host._button(host._tr("automations.add_rule"), "accent_soft")
+    host.automations_add_button.setFixedHeight(host._sz(BTN_H))
+    host.automations_add_button.setMinimumWidth(host._sz(BTN_W))
+    add_row = QHBoxLayout()
+    add_row.setContentsMargins(0, host._sz(10), 0, 0)
+    add_row.addStretch(1)
+    add_row.addWidget(host.automations_add_button)
+    host.automations_rules_card.content_layout.addLayout(add_row)
     return host.automations_rules_card
 
 

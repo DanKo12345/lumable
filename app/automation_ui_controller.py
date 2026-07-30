@@ -47,13 +47,41 @@ from app.automation.controller import (
     TRIGGER_TIME,
     Rule,
 )
+from app.automation_rule_form import (
+    CHOICE_POWER_OFF,
+    CHOICE_POWER_ON,
+    CHOICE_SCENE,
+    PROBLEM_CODES,
+    blank_form,
+    form_to_rule,
+    new_rule_id,
+    rule_to_form,
+)
 from app.panels.list_rows import BTN_H, BTN_W, divider, list_row
+from app.widgets.profile_action_overlay import ProfileConfirmOverlay
+from app.widgets.rule_editor_overlay import RuleEditorOverlay
 
 # How often the pause row re-reads the shared state while the page is on screen. A
 # pause runs out on its own and a pending one lands on a later tick of the engine,
 # neither of which announces itself — but both are read off disk, so this only runs
 # while there is somebody looking at it.
 REFRESH_MS = 5000
+
+# The per-row edit button. Narrower than the on/off column: it carries one short
+# word, and the row still has to fit the smallest window the app supports.
+EDIT_W = 88
+
+# Trigger kinds and the short label each is offered under in the editor. The full
+# sentences (``automations.trigger_*``) describe a rule that exists; a combo item
+# has to read as a choice.
+_TRIGGER_CHOICE_KEYS = (
+    (TRIGGER_TIME, "time"),
+    (TRIGGER_APP_FOREGROUND, "app"),
+    (TRIGGER_NO_INPUT, "idle"),
+    (TRIGGER_LUMABLE_START, "start"),
+    (TRIGGER_STRIP_CONNECTED, "connected"),
+    (TRIGGER_ALWAYS, "always"),
+)
 
 # One tile per trigger kind: the row reads before the text does. Any kind added to
 # the schema later falls back rather than crashing on a missing glyph.
@@ -221,6 +249,9 @@ class AutomationUiController:
         self._timer.setInterval(REFRESH_MS)
         self._timer.timeout.connect(self._tick)
         self._handoff_message = ""
+        # One editor at a time, and the rule it is editing ("" for a new one).
+        self._editor: RuleEditorOverlay | None = None
+        self._editing_id = ""
 
     def wire(self) -> None:
         host = self._host
@@ -228,6 +259,7 @@ class AutomationUiController:
         host.automations_toggle_button.clicked.connect(self._toggle_enabled)
         host.automations_pause_button.clicked.connect(self._toggle_pause)
         host.automations_bridge_button.clicked.connect(self._start_handoff)
+        host.automations_add_button.clicked.connect(self._add_rule)
         automations.changed.connect(self.sync_controls)
         automations.tasks_synced.connect(self._on_tasks_synced)
         # Both edges. Without the start, a rule edit would leave the previous result
@@ -389,6 +421,16 @@ class AutomationUiController:
         toggle.clicked.connect(
             lambda _checked=False, rule_id=rule.id, button=toggle: self._toggle_rule(rule_id, button)
         )
+
+        # A button rather than a clickable row: a row is not a control, and a screen
+        # reader has no way to be told otherwise without turning it into one.
+        edit = host._button(host._tr("automations.edit_rule"), "ghost")
+        edit.setFixedHeight(host._sz(BTN_H))
+        edit.setMinimumWidth(host._sz(EDIT_W))
+        edit.setAccessibleName(f"{host._tr('automations.edit_rule')}: {headline}")
+        edit.clicked.connect(lambda _checked=False, rule_id=rule.id: self._edit_rule(rule_id))
+
+        controls.addWidget(edit, 0, Qt.AlignVCenter)
         controls.addWidget(toggle, 0, Qt.AlignVCenter)
         self._rows.append(row)
         return row
@@ -396,6 +438,161 @@ class AutomationUiController:
     def _toggle_rule(self, rule_id: str, button: Any) -> None:
         if not self._host._automations.set_rule_enabled(rule_id, button.isChecked()):
             self.sync_controls()
+
+    # ── the editor ────────────────────────────────────────────────────
+    def _add_rule(self) -> None:
+        self._open_editor(None)
+
+    def _edit_rule(self, rule_id: str) -> None:
+        rule = self._host._automations.rule(str(rule_id))
+        if rule is None:
+            # Deleted from under us — by another window, or by an edit that landed
+            # while this row was on screen. Redrawing says so better than an editor
+            # for something that is not there.
+            self.sync_controls()
+            return
+        self._open_editor(rule)
+
+    def _open_editor(self, rule: Rule | None) -> None:
+        host = self._host
+        if self._editor is not None:
+            return  # one at a time: two editors would each save over the other
+        form = blank_form() if rule is None else rule_to_form(rule)
+        if rule is None:
+            form["name"] = ""
+        editor = RuleEditorOverlay(
+            self._editor_labels(is_new=rule is None),
+            form,
+            scene_options=self._scene_options(),
+            can_delete=rule is not None,
+            parent=host,
+        )
+        self._editor = editor
+        self._editing_id = "" if rule is None else rule.id
+        editor.saved.connect(self._save_form)
+        editor.delete_requested.connect(self._confirm_delete)
+        editor.closed.connect(self._on_editor_closed)
+        editor.open()
+
+    def _on_editor_closed(self) -> None:
+        self._editor = None
+        self._editing_id = ""
+
+    def _save_form(self, form: dict[str, Any]) -> None:
+        """Hand the form to the facade, which is the only thing that may store it."""
+        host = self._host
+        editor = self._editor
+        rule_id = self._editing_id or new_rule_id(rule.id for rule in host._automations.rules())
+        saved = host._automations.save_rule(form_to_rule(form, rule_id=rule_id))
+        if saved is None:
+            # Either the schema refused it or the write failed. Nothing was stored, so
+            # the editor stays open and says so: closing it would leave the user
+            # believing they have a rule they do not.
+            if editor is not None:
+                editor.show_problem(host._tr("automations.save_failed"))
+            return
+        if editor is not None:
+            editor.close_overlay()
+        self.sync_controls()
+
+    def _confirm_delete(self) -> None:
+        """Ask before deleting. A rule is a thing the user built, not a selection."""
+        host = self._host
+        rule = host._automations.rule(self._editing_id)
+        if rule is None:
+            return
+        name = rule_headline(rule, host._tr, self._scene_name(rule))
+        confirm = ProfileConfirmOverlay(
+            {
+                "title": host._tr("automations.delete_title"),
+                "message": host._tr("automations.delete_message", name=name),
+                "cancel": host._tr("dialog.cancel"),
+                "confirm": host._tr("automations.delete_confirm"),
+            },
+            host,
+            confirm_role="danger",
+        )
+        confirm.confirmed.connect(lambda rule_id=rule.id: self._delete_rule(rule_id))
+        confirm.open()
+
+    def _delete_rule(self, rule_id: str) -> None:
+        editor, self._editor = self._editor, None
+        if editor is not None:
+            editor.close_overlay()
+        if not self._host._automations.delete_rule(str(rule_id)):
+            self.sync_controls()
+
+    def _scene_options(self) -> list[tuple[str, str]]:
+        settings = getattr(self._host, "_settings", None)
+        if not isinstance(settings, dict):
+            return []
+        return [
+            (str(scene.get("scene_id", "")), str(scene.get("name", "")))
+            for scene in scene_store.list_scenes(settings)
+        ]
+
+    def _editor_labels(self, *, is_new: bool) -> dict[str, str]:
+        """Every string the editor shows, resolved here.
+
+        The overlay takes wording rather than reaching for the localisation manager,
+        the way the other overlays in this app do — which is what lets it be built in
+        a test with a handful of strings and no i18n at all.
+        """
+        tr = self._host._tr
+        labels = {
+            "title": tr("automations.editor_new" if is_new else "automations.editor_edit"),
+            "close": tr("automations.editor_close"),
+            "name": tr("automations.field_name"),
+            "name_placeholder": tr("automations.name_placeholder"),
+            "trigger": tr("automations.field_trigger"),
+            "time": tr("automations.field_time"),
+            "days": tr("automations.field_days"),
+            "app": tr("automations.field_app"),
+            "app_placeholder": tr("automations.app_placeholder"),
+            "idle": tr("automations.field_idle"),
+            "idle_minutes": tr("automations.idle_minutes"),
+            "action": tr("automations.field_action"),
+            "scene": tr("automations.field_scene"),
+            "scene_none": tr("automations.scene_none"),
+            "background": tr("automations.field_background"),
+            "background_hint": tr("automations.background_hint"),
+            "advanced": tr("automations.advanced"),
+            "priority": tr("automations.field_priority"),
+            "cooldown": tr("automations.field_cooldown"),
+            "on": tr("automations.toggle_on"),
+            "off": tr("automations.toggle_off"),
+            "save": tr("automations.save"),
+            "cancel": tr("dialog.cancel"),
+            "delete": tr("automations.delete"),
+            "picker_hours": tr("time_picker.hours"),
+            "picker_minutes": tr("time_picker.minutes"),
+            "picker_ok": tr("dialog.ok"),
+        }
+        labels.update({f"day_{index}": tr(f"schedule.day_{index}") for index in range(7)})
+        labels.update({f"trigger_{kind}": tr(f"automations.choice_{name}") for kind, name in _TRIGGER_CHOICE_KEYS})
+        labels.update(
+            {
+                f"action_{CHOICE_SCENE}": tr("automations.choice_scene"),
+                f"action_{CHOICE_POWER_ON}": tr("automations.action_power_on"),
+                f"action_{CHOICE_POWER_OFF}": tr("automations.action_power_off"),
+            }
+        )
+        labels.update({f"problem_{code}": tr(f"automations.problem_{code}") for code in PROBLEM_CODES})
+        labels.update(
+            {
+                key: tr(key)
+                for key in (
+                    "automations.priority_low",
+                    "automations.priority_normal",
+                    "automations.priority_high",
+                    "automations.priority_custom",
+                    "automations.cooldown_none",
+                    "automations.cooldown_minutes",
+                    "automations.cooldown_seconds",
+                )
+            }
+        )
+        return labels
 
     def _scene_name(self, rule: Rule) -> str:
         if rule.action.type != ACTION_APPLY_SCENE:

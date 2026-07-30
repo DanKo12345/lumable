@@ -513,7 +513,12 @@ def _automation_imports(source: str) -> list[str]:
             else:
                 # ``from app.automation.runtime import X``: the aliases are symbols.
                 found.append(node.module)
-    return [name for name in found if name.startswith("app.automation")]
+    # The package, not everything whose name starts the same way: ``app.automation``
+    # is a prefix of ``app.automation_ui_controller`` and ``app.automation_rule_form``,
+    # which are UI modules on this side of the boundary.
+    return [
+        name for name in found if name == "app.automation" or name.startswith("app.automation.")
+    ]
 
 
 def test_the_interface_reaches_automations_only_through_the_controller() -> None:
@@ -561,3 +566,7 @@ def test_the_boundary_test_would_notice_a_screen_reaching_past_it() -> None:
     assert _automation_imports("from app.automation.controller import AutomationController") == [
         ALLOWED_AUTOMATION_IMPORT
     ]
+    # A UI module whose name merely starts like the package is not inside it. Matched
+    # on the prefix alone, the screen's own helpers would read as a breach.
+    assert _automation_imports("from app.automation_rule_form import form_problems") == []
+    assert _automation_imports("import app.automation_ui_controller") == []

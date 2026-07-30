@@ -15,8 +15,8 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+from automation_screen import make_rule
+from PySide6.QtWidgets import QApplication, QLabel
 
 from app.automation.controller import (
     PAUSE_ACTIVE,
@@ -24,10 +24,9 @@ from app.automation.controller import (
     PAUSE_OFF,
     PAUSE_PENDING,
 )
-from app.automation.rules import ALL_DAYS, validate_rule, with_enabled
+from app.automation.rules import ALL_DAYS
 from app.automation.windows_tasks import TaskSyncResult
 from app.automation_ui_controller import (
-    AutomationUiController,
     action_text,
     days_text,
     pause_text,
@@ -37,12 +36,7 @@ from app.automation_ui_controller import (
     trigger_text,
 )
 from app.localization import localization_manager
-from app.panels.automations_panel import (
-    build_automation_bridge_section,
-    build_automation_rules_section,
-    build_automations_section,
-)
-from app.widgets import GlassCard, LiquidButton
+from app.widgets import LiquidButton
 
 
 def _tr(key: str, **kwargs: object) -> str:
@@ -58,22 +52,9 @@ def _english():
     localization_manager.set_language(previous)
 
 
-def _rule(**overrides: object):
-    data = {
-        "id": "rule-1",
-        "name": "",
-        "trigger": {"kind": "time", "time_at": "21:00", "days": list(ALL_DAYS)},
-        "action": {"type": "set_power", "power": True, "target": "primary"},
-    }
-    data.update(overrides)
-    rule = validate_rule(data)
-    assert rule is not None
-    return rule
-
-
 # ── describers ────────────────────────────────────────────────────────
 def test_a_time_trigger_reads_as_a_time_and_its_days() -> None:
-    rule = _rule(trigger={"kind": "time", "time_at": "21:05", "days": [0, 2]})
+    rule = make_rule(trigger={"kind": "time", "time_at": "21:05", "days": [0, 2]})
 
     text = trigger_text(rule, _tr)
 
@@ -103,7 +84,7 @@ def test_every_trigger_kind_has_something_to_say() -> None:
         {"kind": "strip_connected"},
         {"kind": "always"},
     )
-    texts = [trigger_text(_rule(trigger=kind), _tr) for kind in kinds]
+    texts = [trigger_text(make_rule(trigger=kind), _tr) for kind in kinds]
 
     assert all(text and not text.startswith("automations.") for text in texts)
     assert len(set(texts)) == len(texts), "two triggers read the same"
@@ -112,7 +93,7 @@ def test_every_trigger_kind_has_something_to_say() -> None:
 
 
 def test_a_scene_action_names_the_scene_and_says_when_it_is_gone() -> None:
-    rule = _rule(action={"type": "apply_scene", "scene_id": "s1"})
+    rule = make_rule(action={"type": "apply_scene", "scene_id": "s1"})
 
     assert "Evening" in action_text(rule, _tr, "Evening")
     # A rule pointing at a deleted scene must say so rather than render a blank
@@ -121,8 +102,8 @@ def test_a_scene_action_names_the_scene_and_says_when_it_is_gone() -> None:
 
 
 def test_a_power_action_says_which_way() -> None:
-    on = action_text(_rule(action={"type": "set_power", "power": True}), _tr)
-    off = action_text(_rule(action={"type": "set_power", "power": False}), _tr)
+    on = action_text(make_rule(action={"type": "set_power", "power": True}), _tr)
+    off = action_text(make_rule(action={"type": "set_power", "power": False}), _tr)
 
     assert on == _tr("automations.action_power_on")
     assert off == _tr("automations.action_power_off")
@@ -130,7 +111,7 @@ def test_a_power_action_says_which_way() -> None:
 
 
 def test_an_unnamed_rule_is_titled_by_what_it_does_and_not_repeated_below() -> None:
-    rule = _rule(name="")
+    rule = make_rule(name="")
 
     headline = rule_headline(rule, _tr)
     detail = rule_detail(rule, _tr)
@@ -144,8 +125,8 @@ def test_two_unnamed_rules_with_the_same_command_are_told_apart_by_their_titles(
     """Migrated rules have no name — 0.3.5 never asked for one — and the schedule it
     came from is a pair of rules carrying the same command at two different times. A
     title of just the action would put "Switch the light off" in the list twice."""
-    evening = _rule(id="a", action={"type": "set_power", "power": False}, trigger={"kind": "time", "time_at": "23:30"})
-    morning = _rule(id="b", action={"type": "set_power", "power": False}, trigger={"kind": "time", "time_at": "07:15"})
+    evening = make_rule(id="a", action={"type": "set_power", "power": False}, trigger={"kind": "time", "time_at": "23:30"})
+    morning = make_rule(id="b", action={"type": "set_power", "power": False}, trigger={"kind": "time", "time_at": "07:15"})
 
     first, second = rule_headline(evening, _tr), rule_headline(morning, _tr)
 
@@ -157,17 +138,17 @@ def test_two_unnamed_rules_with_the_same_command_are_told_apart_by_their_titles(
 def test_a_rule_the_user_named_keeps_only_that_name() -> None:
     """They have already said what it is; a qualifier would be the app second-guessing
     the label its own user chose."""
-    named = _rule(name="Bedtime", trigger={"kind": "time", "time_at": "23:30"})
+    named = make_rule(name="Bedtime", trigger={"kind": "time", "time_at": "23:30"})
 
     assert rule_headline(named, _tr) == "Bedtime"
 
 
 def test_an_app_or_idle_rule_is_qualified_by_what_makes_it_different() -> None:
-    on_app = _rule(trigger={"kind": "app_foreground", "app": "code.exe"})
-    on_idle = _rule(trigger={"kind": "no_input", "minutes": 20})
+    on_app = make_rule(trigger={"kind": "app_foreground", "app": "code.exe"})
+    on_idle = make_rule(trigger={"kind": "no_input", "minutes": 20})
     # A trigger with nothing shorter than its own sentence is left alone: two rules
     # with the same action and this trigger are the same rule twice, not two.
-    on_start = _rule(trigger={"kind": "lumable_start"})
+    on_start = make_rule(trigger={"kind": "lumable_start"})
 
     assert "code.exe" in rule_headline(on_app, _tr)
     assert "20" in rule_headline(on_idle, _tr)
@@ -175,7 +156,7 @@ def test_an_app_or_idle_rule_is_qualified_by_what_makes_it_different() -> None:
 
 
 def test_a_named_rule_keeps_its_name_and_the_action_moves_below() -> None:
-    rule = _rule(name="Evening", action={"type": "apply_scene", "scene_id": "s1"})
+    rule = make_rule(name="Evening", action={"type": "apply_scene", "scene_id": "s1"})
 
     assert rule_headline(rule, _tr, "Warm") == "Evening"
     assert "Warm" in rule_detail(rule, _tr, "Warm")
@@ -184,8 +165,8 @@ def test_a_named_rule_keeps_its_name_and_the_action_moves_below() -> None:
 def test_the_detail_line_says_whether_the_rule_needs_the_app_open() -> None:
     """The one thing about a rule that is not visible from its trigger, and the one
     users ask about: does this still happen when LumaBLE is closed?"""
-    background = _rule(execution="background")
-    runtime = _rule(execution="runtime")
+    background = make_rule(execution="background")
+    runtime = make_rule(execution="runtime")
 
     assert _tr("automations.runs_background") in rule_detail(background, _tr)
     assert _tr("automations.runs_runtime") in rule_detail(runtime, _tr)
@@ -252,153 +233,7 @@ def test_a_result_that_is_being_replaced_is_never_shown_as_the_final_state() -> 
 
 
 # ── the wiring ────────────────────────────────────────────────────────
-class _FakeAutomations(QObject):
-    """The facade as a screen sees it. Every call is recorded."""
-
-    changed = Signal()
-    tasks_synced = Signal(object)
-    tasks_sync_started = Signal()
-    handoff_started = Signal()
-    handoff_finished = Signal(object)
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.enabled = True
-        self.running = True
-        self.status = PAUSE_OFF
-        self.ends_at: datetime | None = None
-        self.stored_rules: list = []
-        self.task_result: TaskSyncResult | None = None
-        self.syncing = False
-        self.bridge = False
-        self.handoff_running = False
-        self.writes_land = True
-        self.calls: list[tuple] = []
-
-    # ── what the screen reads ──
-    def is_enabled(self) -> bool:
-        return self.enabled
-
-    def is_running(self) -> bool:
-        return self.running
-
-    def rules(self) -> list:
-        return list(self.stored_rules)
-
-    def pause_status(self) -> str:
-        return self.status
-
-    def paused_until(self) -> datetime | None:
-        return self.ends_at
-
-    def last_task_result(self):
-        return self.task_result
-
-    def tasks_syncing(self) -> bool:
-        return self.syncing
-
-    def bridge_active(self) -> bool:
-        return self.bridge
-
-    def handoff_in_progress(self) -> bool:
-        return self.handoff_running
-
-    # ── what the screen asks for ──
-    def set_enabled(self, enabled: bool) -> bool:
-        self.calls.append(("set_enabled", enabled))
-        if not self.writes_land:
-            return False
-        self.enabled = enabled
-        self.changed.emit()
-        return True
-
-    def set_rule_enabled(self, rule_id: str, enabled: bool) -> bool:
-        self.calls.append(("set_rule_enabled", rule_id, enabled))
-        if not self.writes_land:
-            return False
-        self.stored_rules = [
-            with_enabled(rule, enabled) if rule.id == rule_id else rule
-            for rule in self.stored_rules
-        ]
-        self.changed.emit()
-        return True
-
-    def pause(self, seconds: int = 3600) -> bool:
-        self.calls.append(("pause", seconds))
-        self.status = PAUSE_ACTIVE
-        self.ends_at = datetime.now() + timedelta(seconds=seconds)
-        return True
-
-    def resume(self) -> bool:
-        self.calls.append(("resume",))
-        self.status = PAUSE_OFF
-        self.ends_at = None
-        return True
-
-    def complete_handoff(self) -> bool:
-        self.calls.append(("complete_handoff",))
-        self.handoff_running = True
-        self.handoff_started.emit()
-        return True
-
-
-class _Host(QWidget):
-    """The least a window has to be for this screen to build."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._ui_scale = 1.0
-        self._control_height = 38
-        self._chip_height = 34
-        self._theme_tokens: dict[str, str] = {}
-        self._is_dark = True
-        self._settings: dict = {}
-        self._nav_buttons: dict = {}
-        self._automations = _FakeAutomations()
-        self.logged: list[str] = []
-        self._column = QVBoxLayout(self)
-
-    def _sz(self, value: float) -> int:
-        return max(1, round(value))
-
-    def _tr(self, key: str, **kwargs: object) -> str:
-        return localization_manager.t(key, **kwargs)
-
-    def _card(self, title: str, subtitle: str | None = None, icon: str | None = None) -> GlassCard:
-        return GlassCard(title, subtitle, icon=icon)
-
-    def _button(self, text: str, role: str) -> LiquidButton:
-        return LiquidButton(text, role)
-
-    def _log(self, message: str) -> None:
-        self.logged.append(message)
-
-
-@pytest.fixture
-def screen(request):
-    """A built and wired automations screen, and the host it lives on."""
-    QApplication.instance() or QApplication([])
-    host = _Host()
-    for builder in (
-        build_automations_section,
-        build_automation_rules_section,
-        build_automation_bridge_section,
-    ):
-        host._column.addWidget(builder(host))
-    controller = AutomationUiController(host)
-    host._automation_ui = controller
-    controller.wire()
-
-    def teardown() -> None:
-        # The refresh poll outlives the fixture otherwise, and would go on ticking
-        # against a torn-down host for the rest of the suite.
-        controller.stop()
-        host.close()
-
-    request.addfinalizer(teardown)
-    return host, controller
-
-
+# ── the wiring ────────────────────────────────────────────────────────
 def test_the_master_switch_shows_and_stores_the_stored_state(screen) -> None:
     host, _controller = screen
     assert host.automations_toggle_button.isChecked() is True
@@ -529,8 +364,8 @@ def test_a_pause_that_only_reached_this_app_is_not_reported_as_paused(screen) ->
 def test_the_rule_list_draws_a_row_per_rule(screen) -> None:
     host, controller = screen
     host._automations.stored_rules = [
-        _rule(id="rule-1", name="Evening"),
-        _rule(id="rule-2", trigger={"kind": "app_foreground", "app": "code.exe"}),
+        make_rule(id="rule-1", name="Evening"),
+        make_rule(id="rule-2", trigger={"kind": "app_foreground", "app": "code.exe"}),
     ]
 
     controller.sync_controls()
@@ -552,30 +387,38 @@ def test_an_empty_rule_list_explains_itself(screen) -> None:
     assert host.automations_rules_list.isHidden() is True
 
 
+def _row_toggle(controller, index: int) -> LiquidButton:
+    """The on/off switch in a row — the checkable one; Edit sits beside it."""
+    buttons = [
+        button for button in controller._rows[index].findChildren(LiquidButton) if button.isCheckable()
+    ]
+    assert len(buttons) == 1
+    return buttons[0]
+
+
 def test_a_row_toggle_switches_that_rule(screen) -> None:
     host, controller = screen
-    host._automations.stored_rules = [_rule(id="rule-1"), _rule(id="rule-2")]
+    host._automations.stored_rules = [make_rule(id="rule-1"), make_rule(id="rule-2")]
     controller.sync_controls()
 
-    second = controller._rows[1].findChildren(LiquidButton)[0]
-    second.click()
+    _row_toggle(controller, 1).click()
 
     assert ("set_rule_enabled", "rule-2", False) in host._automations.calls
     # The write landed, so the list was rebuilt from it: the row now shows Off.
-    rebuilt = controller._rows[1].findChildren(LiquidButton)[0]
+    rebuilt = _row_toggle(controller, 1)
     assert rebuilt.isChecked() is False
     assert rebuilt.text() == _tr("automations.toggle_off")
 
 
 def test_a_row_toggle_that_could_not_be_saved_goes_back(screen) -> None:
     host, controller = screen
-    host._automations.stored_rules = [_rule(id="rule-1")]
+    host._automations.stored_rules = [make_rule(id="rule-1")]
     controller.sync_controls()
     host._automations.writes_land = False
 
-    controller._rows[0].findChildren(LiquidButton)[0].click()
+    _row_toggle(controller, 0).click()
 
-    assert controller._rows[0].findChildren(LiquidButton)[0].isChecked() is True
+    assert _row_toggle(controller, 0).isChecked() is True
 
 
 def test_the_task_note_follows_the_last_synchronisation(screen) -> None:
@@ -739,6 +582,54 @@ def test_every_string_this_screen_shows_exists_in_every_language() -> None:
         "automations.bridge_working",
         "automations.bridge_failed",
         "automations.bridge_done",
+        # The editor.
+        "automations.add_rule",
+        "automations.edit_rule",
+        "automations.editor_new",
+        "automations.editor_edit",
+        "automations.editor_close",
+        "automations.field_name",
+        "automations.name_placeholder",
+        "automations.field_trigger",
+        "automations.field_time",
+        "automations.field_days",
+        "automations.field_app",
+        "automations.app_placeholder",
+        "automations.field_idle",
+        "automations.idle_minutes",
+        "automations.field_action",
+        "automations.field_scene",
+        "automations.scene_none",
+        "automations.field_background",
+        "automations.background_hint",
+        "automations.advanced",
+        "automations.field_priority",
+        "automations.field_cooldown",
+        "automations.save",
+        "automations.save_failed",
+        "automations.delete",
+        "automations.delete_title",
+        "automations.delete_message",
+        "automations.delete_confirm",
+        "automations.choice_time",
+        "automations.choice_app",
+        "automations.choice_idle",
+        "automations.choice_start",
+        "automations.choice_connected",
+        "automations.choice_always",
+        "automations.choice_scene",
+        "automations.problem_name",
+        "automations.problem_time",
+        "automations.problem_days",
+        "automations.problem_app",
+        "automations.problem_scene",
+        "automations.problem_scene_missing",
+        "automations.priority_low",
+        "automations.priority_normal",
+        "automations.priority_high",
+        "automations.cooldown_none",
+        "automations.cooldown_minutes",
+        "automations.cooldown_seconds",
     ]
     for language in ("ru", "en", "es", "zh"):
         localization_manager.set_language(language)
@@ -748,7 +639,7 @@ def test_every_string_this_screen_shows_exists_in_every_language() -> None:
 
 def test_switching_language_redraws_the_rows(screen) -> None:
     host, controller = screen
-    host._automations.stored_rules = [_rule(id="rule-1")]
+    host._automations.stored_rules = [make_rule(id="rule-1")]
     controller.sync_controls()
     english = host.automations_pause_status.text()
 

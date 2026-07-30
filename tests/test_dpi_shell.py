@@ -235,6 +235,57 @@ def test_the_automations_page_scrolls_instead_of_clipping_at_the_minimum_window(
         app.processEvents()
 
 
+def test_the_rule_editor_fits_and_scrolls_at_the_minimum_window() -> None:
+    """The form is taller than a 860×420 window. Header and footer stay put while the
+    fields scroll: the two things that may never be off-screen are the reason a rule
+    cannot be saved and the button that saves it."""
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window.show()
+        window.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        select_section(window, "automations")
+        _fill_automations(window)
+        app.processEvents()
+
+        window.automations_add_button.click()
+        editor = window._automation_ui._editor
+        assert editor is not None
+        _settle_open_animation(editor)
+        app.processEvents()
+
+        panel = editor._panel
+        assert panel.mapTo(window, panel.rect().topLeft()).y() >= 0
+        assert panel.mapTo(window, panel.rect().bottomLeft()).y() <= window.height()
+        # Pinned: the title, the problem line, and every footer button.
+        for widget in (
+            editor._close_button,
+            editor.problem_label,
+            editor.cancel_button,
+            editor.save_button,
+        ):
+            assert _inside_panel(widget, panel), f"{widget.objectName()} fell outside the panel"
+        # And the fields give up the height instead, by scrolling.
+        assert editor._scroll.verticalScrollBar().maximum() > 0
+        # Seven day chips plus the label column have to fit the content width with
+        # that scrollbar showing — otherwise Sunday sits underneath it.
+        viewport = editor._scroll.viewport()
+        for chip in editor.day_buttons:
+            assert _fits_horizontally(chip, viewport), "a day chip is under the scrollbar"
+
+        # Growing the window gives the panel its full height back.
+        window.resize(1280, 860)
+        editor._fit_to_parent()
+        app.processEvents()
+        from app.widgets.rule_editor_overlay import PANEL_MAX_H
+
+        assert panel.maximumHeight() == PANEL_MAX_H
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def test_the_current_nav_item_is_scrolled_into_view() -> None:
     """On a short window the rail scrolls, and a section can be opened from something
     other than its own button — restoring the last section on start-up, or the status
