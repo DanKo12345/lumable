@@ -490,9 +490,17 @@ def test_the_interface_reaches_automations_only_through_the_controller() -> None
     root = Path(__file__).resolve().parent.parent / "app"
     ui_files = [
         path
-        for path in list(root.glob("panels/*.py")) + list(root.glob("widgets/*.py"))
+        for path in (
+            list(root.glob("panels/*.py"))
+            + list(root.glob("widgets/*.py"))
+            # The panel builders are only half of a screen; the controller that fills
+            # them in is where the temptation to reach past the facade actually is.
+            + list(root.glob("*_ui_controller.py"))
+            + [root / "main_layout.py"]
+        )
         if path.name != "__init__.py"
     ]
+    assert any(path.name == "automation_ui_controller.py" for path in ui_files)
     offenders = [
         f"{path.name} -> {module}"
         for path in ui_files

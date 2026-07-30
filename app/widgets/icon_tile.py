@@ -37,6 +37,21 @@ class IconTile(QWidget):
         self._tint = QColor(tint)
         self.update()
 
+    def set_kind(self, kind: str) -> None:
+        """Swap the glyph. For a row whose meaning changes with its state.
+
+        A new renderer rather than a reloaded one: QSvgRenderer keeps the old
+        document if the load fails, so a mistyped name would leave the tile showing
+        the previous glyph as though nothing had happened. The old one is dropped
+        with it — parented here, it would otherwise pile up one per state change.
+        """
+        if kind == self.kind:
+            return
+        self.kind = kind
+        previous, self._renderer = self._renderer, QSvgRenderer(str(LUCIDE_ICON_DIR / f"{kind}.svg"), self)
+        previous.deleteLater()
+        self.update()
+
     def _glyph_color(self) -> QColor:
         color = QColor(self._tint)
         if not theme_manager.is_dark:

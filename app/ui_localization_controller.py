@@ -39,6 +39,7 @@ class UiLocalizationController:
         self._apply_effect_texts()
         self._apply_config_texts()
         self._apply_schedule_texts()
+        self._apply_automations_texts()
         self._apply_ambient_texts()
         self._apply_music_texts()
         self._apply_software_fx_texts()
@@ -221,6 +222,24 @@ class UiLocalizationController:
             if host.hotkeys_card.subtitle_label is not None:
                 host.hotkeys_card.subtitle_label.setText(host._tr("hotkeys.subtitle"))
             host._hotkey_ui.relocalize()
+
+    def _apply_automations_texts(self) -> None:
+        host = self._host
+        if getattr(host, "automations_card", None) is None:
+            return
+        host.automations_card.title_label.setText(host._tr("automations.title"))
+        if host.automations_card.subtitle_label is not None:
+            host.automations_card.subtitle_label.setText(host._tr("automations.subtitle"))
+        host.automations_master_label.setText(host._tr("automations.row_master"))
+        host.automations_pause_label.setText(host._tr("automations.row_pause"))
+        host.automations_rules_card.title_label.setText(host._tr("automations.rules_title"))
+        if host.automations_rules_card.subtitle_label is not None:
+            host.automations_rules_card.subtitle_label.setText(host._tr("automations.rules_subtitle"))
+        host.automations_empty_hint.setText(host._tr("automations.empty_hint"))
+        host.automations_bridge_card.title_label.setText(host._tr("automations.bridge_title"))
+        # Every row's text is generated from its rule, and the pause row's from the
+        # pause state, so the controller regenerates them rather than being patched.
+        host._automation_ui.relocalize()
 
     def _apply_performance_texts(self) -> None:
         host = self._host

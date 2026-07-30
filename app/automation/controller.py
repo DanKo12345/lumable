@@ -40,7 +40,21 @@ from app.automation.migration import (
     migrate,
 )
 from app.automation.resolver import DEFAULT_PAUSE_SECONDS
-from app.automation.rules import Rule, rule_to_dict, validate_rule, validate_rules
+from app.automation.rules import (
+    ACTION_APPLY_SCENE,
+    ACTION_SET_POWER,
+    ALL_DAYS,
+    TRIGGER_ALWAYS,
+    TRIGGER_APP_FOREGROUND,
+    TRIGGER_LUMABLE_START,
+    TRIGGER_NO_INPUT,
+    TRIGGER_STRIP_CONNECTED,
+    TRIGGER_TIME,
+    Rule,
+    rule_to_dict,
+    validate_rule,
+    validate_rules,
+)
 from app.automation.runtime import (
     PAUSE_ACTIVE,
     PAUSE_ENDING,
@@ -59,11 +73,24 @@ from app.storage import (
     validate_automations,
 )
 
+# The rule vocabulary is re-exported rather than left to be imported from
+# ``app.automation.rules``: a screen has to name a trigger kind to draw one, and
+# that is the one thing about the engine's insides the interface legitimately knows.
+# Going to the source module for it would put the boundary back where it was.
 __all__ = [
+    "ACTION_APPLY_SCENE",
+    "ACTION_SET_POWER",
+    "ALL_DAYS",
     "PAUSE_ACTIVE",
     "PAUSE_ENDING",
     "PAUSE_OFF",
     "PAUSE_PENDING",
+    "TRIGGER_ALWAYS",
+    "TRIGGER_APP_FOREGROUND",
+    "TRIGGER_LUMABLE_START",
+    "TRIGGER_NO_INPUT",
+    "TRIGGER_STRIP_CONNECTED",
+    "TRIGGER_TIME",
     "AppliedState",
     "AutomationController",
     "HandoffResult",

@@ -31,6 +31,7 @@ from app.app_info import APP_ORGANIZATION, APP_RELEASES_URL, APP_UPDATE_URL, APP
 from app.app_trigger_controller import AppTriggerController
 from app.app_trigger_ui_controller import AppTriggerUiController
 from app.automation.controller import AutomationController, schedule_first_sync
+from app.automation_ui_controller import AutomationUiController
 from app.ble import BleController
 from app.ble_event_handler import BleEventHandler
 from app.color_controller import ColorController
@@ -239,6 +240,7 @@ class MainWindow(QMainWindow):
         # is told when something has been applied.
         self._automations = AutomationController(self, lambda: self._local_api.backend(), parent=self)
         self._automations.applied.connect(self._reflect_automation_state)
+        self._automation_ui = AutomationUiController(self)
         self._aurora = AuroraBackground(self)
 
     def _init_timers(self) -> None:
@@ -529,6 +531,7 @@ class MainWindow(QMainWindow):
         self._diy_ui.wire()
         self._scene_ui.wire()
         self._app_trigger_ui.wire()
+        self._automation_ui.wire()
         self._hotkey_ui.wire()
         self._local_api.wire()
         # Manual power and PC-mode starts (screen sync, music, software FX, DIY)
@@ -1293,6 +1296,7 @@ class MainWindow(QMainWindow):
 
     def _stop_automations(self) -> None:
         """Stop the engine, once, however many times a close is attempted."""
+        self._automation_ui.stop()
         try:
             self._automations.stop()
         except Exception:

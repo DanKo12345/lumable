@@ -19,6 +19,9 @@ from app.hero_header import build_brand, build_chrome_controls, build_mode_row
 from app.panels import (
     build_ambient_section,
     build_app_triggers_section,
+    build_automation_bridge_section,
+    build_automation_rules_section,
+    build_automations_section,
     build_color_section,
     build_configs_section,
     build_device_section,
@@ -87,6 +90,11 @@ _NAV_SECTIONS = (
     ("profiles", "nav.profiles", (build_configs_section,)),
     ("schedule", "nav.schedule", (build_schedule_section, build_timers_section, build_app_triggers_section)),
     (
+        "automations",
+        "nav.automations",
+        (build_automations_section, build_automation_rules_section, build_automation_bridge_section),
+    ),
+    (
         "settings",
         "nav.settings",
         (
@@ -109,6 +117,7 @@ _NAV_ICONS = {
     "music": "audio-lines",
     "profiles": "configs",
     "schedule": "calendar",
+    "automations": "orbit",
     "settings": "settings",
 }
 
@@ -241,7 +250,7 @@ def _build_sidebar(host) -> QWidget:
     column.addWidget(build_brand(host))
     column.addSpacing(host._sz(14))
 
-    # The eight nav items live in their own scroll area so a short window (e.g.
+    # The nav items live in their own scroll area so a short window (e.g.
     # 1366×768 at 150%) never clips the lower items or pushes the status card off
     # the bottom. Brand stays pinned above, status pinned below; only the nav
     # list scrolls, and only when it doesn't fit. Nothing is ever hidden.
