@@ -144,6 +144,24 @@ def test_silent_update_check_skips_recent_attempt(monkeypatch) -> None:
     assert controller._silent_check is False
 
 
+def test_silent_update_check_retries_after_half_an_hour(monkeypatch) -> None:
+    monkeypatch.setattr("app.update_controller.time", lambda: 4_000.0)
+    host = FakeHost()
+    host._settings.update(
+        {
+            "updates_last_auto_check_at": 4_000 - UpdateController.AUTO_CHECK_INTERVAL_SECONDS - 1,
+            "updates_last_auto_check_version": "0.1.1",
+        }
+    )
+    controller = UpdateController(host, "0.1.1", "", "")
+    checker = ConfiguredChecker()
+    controller._checker = checker
+
+    controller.check_silent()
+
+    assert checker.check_calls == 1
+
+
 def test_silent_update_check_records_attempt(monkeypatch) -> None:
     saved_settings: list[dict[str, object]] = []
     monkeypatch.setattr("app.update_controller.time", lambda: 90_000.0)
@@ -243,7 +261,7 @@ def test_newer_build_after_skip_still_notifies(monkeypatch) -> None:
     assert len(host.update_overlays) == 2
 
 
-def test_manual_check_still_reports_a_skipped_version() -> None:
+def test_manual_check_opens_the_update_window_even_for_a_skipped_version() -> None:
     host = FakeHost()
     host._settings["updates_skipped_version"] = "0.3.5-beta0"
     controller = UpdateController(host, "0.3.4", "", "")
@@ -256,8 +274,8 @@ def test_manual_check_still_reports_a_skipped_version() -> None:
         )
     )
 
-    # The manual result is always surfaced: button points to the download and
-    # availability is logged. Only the background overlay is suppressed.
+    # A deliberate check should show the full release, even when this exact
+    # version was previously skipped in the background.
     assert host.check_update_button.text == "updates.open"
     assert any("updates.available" in log for log in host.logs)
-    assert host.update_overlays == []
+    assert len(host.update_overlays) == 1

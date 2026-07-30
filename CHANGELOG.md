@@ -21,6 +21,7 @@ Automations: schedules and App Triggers become one rule system that can explain 
 - Background execution is clearly marked as Pro and unavailable in Free instead of silently accepting a setting that cannot run.
 
 ### Fixed
+- Update checks repeat while the app stays open, retry after 30 minutes instead of six hours, and a manual check opens the full update window immediately.
 - Partial scene writes no longer confirm a rule or start its cooldown; failed targets remain eligible for retry.
 - Manual pause and resume survive restarts and are honoured by both the open app and scheduled background process.
 - Overdue time rules choose one winner and settle older losing occurrences instead of switching the light back on the next tick.

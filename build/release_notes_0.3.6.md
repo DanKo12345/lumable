@@ -15,6 +15,7 @@ Automations arrive as one understandable rule system: schedule the light, react 
 - **A better phone remote.** Local API pairing and controls now use a compact mobile-first layout with sticky status, denser colour controls and room for the browser toolbar.
 
 ## Fixed
+- Update checks retry while LumaBLE remains open, and a manual check opens the full update window immediately.
 - Partial or failed scene writes can no longer be recorded as a successful automation.
 - Overdue rules no longer fight each other or run twice when the app and a Windows task overlap.
 - Pause, resume, cancellation and shutdown no longer leave stale work that can return later.

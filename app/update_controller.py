@@ -16,7 +16,7 @@ class UpdateController(QObject):
     motion_policy.changed subscription is then torn down by Qt when the window
     dies, instead of outliving it and reaching into a deleted widget."""
 
-    AUTO_CHECK_INTERVAL_SECONDS = 6 * 60 * 60
+    AUTO_CHECK_INTERVAL_SECONDS = 30 * 60
     UPDATE_REMINDER_INTERVAL_SECONDS = 24 * 60 * 60
     RATE_LIMIT_COOLDOWN_SECONDS = 600
 
@@ -35,6 +35,10 @@ class UpdateController(QObject):
         if self._checking_timer is not None:
             self._checking_timer.setInterval(450)
             self._checking_timer.timeout.connect(self._tick_check_animation)
+        self._auto_timer = QTimer(host) if isinstance(host, QObject) else None
+        if self._auto_timer is not None:
+            self._auto_timer.setInterval(self.AUTO_CHECK_INTERVAL_SECONDS * 1000)
+            self._auto_timer.timeout.connect(self.check_silent)
         motion_policy.changed.connect(self._on_motion_changed)
 
     @property
@@ -44,6 +48,8 @@ class UpdateController(QObject):
     def wire(self) -> None:
         self._host.check_update_button.clicked.connect(self.check)
         self._checker.finished.connect(self.handle_result)
+        if self._auto_timer is not None:
+            self._auto_timer.start()
 
     def check_silent(self) -> None:
         if not self._checker.is_configured or self._checker.is_running:
@@ -112,10 +118,12 @@ class UpdateController(QObject):
         self._host._log(self._host._tr("updates.current", version=result.info.current_version))
 
     def _notify_update(self, info, was_silent: bool) -> None:
-        # Manual checks already surface the result on the button. For background
-        # checks, repeat the reminder at a humane interval while the app is old.
         if not was_silent:
+            show = getattr(self._host, "_show_update_overlay", None)
+            if callable(show):
+                show(info)
             return
+        # Repeat background reminders at a humane interval while the app is old.
         settings = getattr(self._host, "_settings", None)
         if isinstance(settings, dict):
             skipped = str(settings.get("updates_skipped_version", ""))
