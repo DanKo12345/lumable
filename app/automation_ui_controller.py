@@ -25,6 +25,7 @@ row says can be tested without building a window.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -314,8 +315,11 @@ def tasks_text(result: Any, tr: Any, *, syncing: bool = False) -> str:
 class AutomationUiController:
     """Wires the automations screen: master switch, pause, rules, 0.3.5 handoff."""
 
-    def __init__(self, host: Any) -> None:
+    def __init__(self, host: Any, *, clock: Callable[[], datetime] = datetime.now) -> None:
         self._host = host
+        # Injectable so a test can walk the screen past midnight, which is the one
+        # moment the history's own text changes with nothing else having happened.
+        self._clock = clock
         self._rows: list[QWidget] = []
         # Parented to the window so it stops when the window is gone rather than
         # ticking against half-destroyed widgets.
@@ -533,8 +537,16 @@ class AutomationUiController:
         if layout is None:
             return
         entries = host._automations.journal(JOURNAL_LIMIT)
-        signature = tuple(
-            (entry.uid, entry.count, entry.last_seen) for entry in entries
+        now = self._clock()
+        names = {rule.id: rule_headline(rule, host._tr, self._scene_name(rule)) for rule in host._automations.rules()}
+        # Everything a row is drawn from, not just the entries. A rule renamed or
+        # deleted leaves the journal untouched, so a signature made of entries alone
+        # would keep the old name on screen until something else happened to run —
+        # and the date, because at midnight every time in this list has to grow one.
+        signature = (
+            now.date(),
+            tuple((entry.uid, entry.count, entry.last_seen) for entry in entries),
+            tuple(sorted({(entry.rule_id, names.get(entry.rule_id, "")) for entry in entries})),
         )
         if signature == self._journal_signature:
             # Read every few seconds while the page is open: rebuilding an unchanged
@@ -551,19 +563,20 @@ class AutomationUiController:
 
         host.automations_journal_empty.setVisible(not entries)
         host.automations_journal_list.setVisible(bool(entries))
-        names = {rule.id: rule_headline(rule, host._tr, self._scene_name(rule)) for rule in host._automations.rules()}
         for index, entry in enumerate(entries):
             if index:
                 layout.addWidget(divider(host))
-            layout.addWidget(self._build_journal_row(entry, names.get(entry.rule_id, "")))
+            layout.addWidget(
+                self._build_journal_row(entry, names.get(entry.rule_id, ""), now=now)
+            )
 
-    def _build_journal_row(self, entry: Any, rule_name: str) -> QWidget:
+    def _build_journal_row(self, entry: Any, rule_name: str, *, now: datetime) -> QWidget:
         host = self._host
         kind, tint = _JOURNAL_TILES.get(str(entry.kind), _FALLBACK_TILE)
         row, _controls, _title, status, _tile = list_row(
             host, kind, tint, entry_headline(entry, host._tr, rule_name)
         )
-        status.setText(entry_detail(entry, host._tr))
+        status.setText(entry_detail(entry, host._tr, now=now))
         return row
 
     # ── the editor ────────────────────────────────────────────────────

@@ -260,6 +260,65 @@ def test_a_new_occurrence_of_the_same_skip_is_redrawn(screen) -> None:
     assert _tr("automations.journal_repeat", count=4) in detail.text()
 
 
+def _first_row_title(controller) -> str:
+    return controller._host.automations_journal_layout.itemAt(0).widget().findChildren(QLabel)[0].text()
+
+
+def _first_row_detail(controller) -> str:
+    return controller._host.automations_journal_layout.itemAt(0).widget().findChildren(QLabel)[1].text()
+
+
+def test_renaming_a_rule_renames_it_in_the_history(screen) -> None:
+    """The journal is untouched by a rename, so a guard made of entries alone would
+    keep the old name on screen until something else happened to run."""
+    host, controller = screen
+    host.show()
+    _pump()
+    host._automations.stored_rules = [make_rule(id="rule-1", name="Evening")]
+    host._automations.entries = [_entry(uid="u1", rule_id="rule-1")]
+    controller.sync_controls()
+    assert _first_row_title(controller) == "Evening"
+
+    host._automations.stored_rules = [make_rule(id="rule-1", name="Evening, later")]
+    controller._tick()
+
+    assert _first_row_title(controller) == "Evening, later"
+
+
+def test_deleting_a_rule_shows_in_the_history_straight_away(screen) -> None:
+    """Its entries stay — that is the point of a journal — but they stop claiming to
+    belong to a rule the user can go and look at."""
+    host, controller = screen
+    host.show()
+    _pump()
+    host._automations.stored_rules = [make_rule(id="rule-1", name="Evening")]
+    host._automations.entries = [_entry(uid="u1", rule_id="rule-1")]
+    controller.sync_controls()
+
+    host._automations.stored_rules = []
+    controller._tick()
+
+    assert _first_row_title(controller) == _tr("automations.journal_unknown_rule")
+
+
+def test_a_page_left_open_past_midnight_dates_yesterday_s_entries(screen) -> None:
+    """"16:46" means today. Left open overnight and never redrawn, every line would
+    go on claiming to be from today for as long as the window stayed up."""
+    host, controller = screen
+    host.show()
+    _pump()
+    evening = datetime(2026, 7, 30, 16, 46)
+    controller._clock = lambda: datetime(2026, 7, 30, 23, 59)
+    host._automations.entries = [_entry(uid="u1", rule_id="gone", last_seen=evening)]
+    controller.sync_controls()
+    assert _first_row_detail(controller).startswith("16:46")
+
+    controller._clock = lambda: datetime(2026, 7, 31, 0, 1)
+    controller._tick()
+
+    assert _first_row_detail(controller).startswith("30.07 16:46")
+
+
 def test_the_journal_is_not_re_read_while_the_page_is_hidden(screen) -> None:
     host, controller = screen  # the host was never shown
     host._automations.calls.clear()
