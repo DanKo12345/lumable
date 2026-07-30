@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -199,6 +199,28 @@ def select_section(host, key: str) -> None:
     preview = getattr(host, "preview", None)
     if preview is not None:
         preview.set_compact(key not in _LIVE_LIGHT_SECTIONS)
+    _reveal_nav_item(host, key)
+
+
+def _reveal_nav_item(host, key: str) -> None:
+    """Scroll the rail so the item that is now current can be seen.
+
+    The rail scrolls on a short window, so a section opened from anywhere other than
+    its own button — restoring the last section on start-up, the status card jumping
+    to Settings — can leave the highlight above or below the visible part of the list.
+    The page would then be the right one while the sidebar showed a different item as
+    current.
+
+    Deferred by a zero timer because on the first pass the rail has not been laid out
+    yet, and scrolling against geometry that is still all zeroes does nothing. The
+    scroll area is passed as the timer's context object, so a window closed in that
+    one turn of the event loop cancels this instead of reaching a deleted widget.
+    """
+    button = host._nav_buttons.get(key)
+    nav_scroll = getattr(host, "nav_scroll", None)
+    if button is None or nav_scroll is None:
+        return
+    QTimer.singleShot(0, nav_scroll, lambda: nav_scroll.ensureWidgetVisible(button))
 
 
 def _on_status_clicked(host) -> None:

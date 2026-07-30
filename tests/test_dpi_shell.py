@@ -235,12 +235,49 @@ def test_the_automations_page_scrolls_instead_of_clipping_at_the_minimum_window(
         app.processEvents()
 
 
+def test_the_current_nav_item_is_scrolled_into_view() -> None:
+    """On a short window the rail scrolls, and a section can be opened from something
+    other than its own button — restoring the last section on start-up, or the status
+    card jumping to Settings. The highlight would then sit outside the visible part of
+    the list, so the page said one thing and the sidebar showed another."""
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window.show()
+        window.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        window._apply_compact_sidebar()
+        app.processEvents()
+        rail = window.nav_scroll
+        assert rail.verticalScrollBar().maximum() > 0, "this check needs a rail that scrolls"
+
+        # The last item in the list is the one the rail has to move for.
+        last_key = list(window._nav_buttons)[-1]
+        select_section(window, last_key)
+        # The reveal is deferred by a zero timer: on the first pass the rail has not
+        # been laid out, so scrolling immediately would move nothing.
+        app.processEvents()
+        app.processEvents()
+
+        button = window._nav_buttons[last_key]
+        viewport = rail.viewport()
+        top = button.mapTo(viewport, button.rect().topLeft()).y()
+        bottom = button.mapTo(viewport, button.rect().bottomLeft()).y()
+        assert top >= 0, "the current nav item is above the visible part of the rail"
+        assert bottom <= viewport.height(), "the current nav item is below it"
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def test_the_automations_page_stays_intact_at_a_normal_window_size() -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     try:
         window.show()
-        window.resize(1320, 860)
+        # The size the committed snapshot in docs/screenshots was taken at, so the
+        # picture and this check describe the same layout.
+        window.resize(1280, 860)
         select_section(window, "automations")
         _fill_automations(window)
         app.processEvents()

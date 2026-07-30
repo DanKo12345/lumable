@@ -877,6 +877,7 @@
         "automations.bridge_working": "Cambiando…",
         "automations.bridge_failed": "No se pudo cambiar: {detail}",
         "automations.bridge_done": "Cambio hecho: LumaBLE se despierta solo.",
-        "automations.tasks_syncing": "Actualizando las tareas de Windows…"
+        "automations.tasks_syncing": "Actualizando las tareas de Windows…",
+        "automations.short_idle": "{minutes} min inactivo"
     }
 }

@@ -19,4 +19,6 @@ The automations pair deliberately shows the busiest honest state: five rules acr
 four trigger kinds, the two-line "paused in this app only" row, and the 0.3.5 bridge
 card. The same state is asserted structurally in
 `tests/test_dpi_shell.py::test_the_automations_page_scrolls_instead_of_clipping_at_the_minimum_window`,
-so the tests catch a regression and these show what it should look like.
+so the tests catch a regression and these show what it should look like. The larger
+pair is taken at the same size the geometry check uses, so the picture and the
+assertion describe one layout rather than two.

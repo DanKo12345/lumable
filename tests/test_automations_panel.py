@@ -135,9 +135,43 @@ def test_an_unnamed_rule_is_titled_by_what_it_does_and_not_repeated_below() -> N
     headline = rule_headline(rule, _tr)
     detail = rule_detail(rule, _tr)
 
-    assert headline == _tr("automations.action_power_on")
+    assert headline.startswith(_tr("automations.action_power_on"))
     assert headline not in detail, "the row said the same thing twice"
     assert "21:00" in detail
+
+
+def test_two_unnamed_rules_with_the_same_command_are_told_apart_by_their_titles() -> None:
+    """Migrated rules have no name — 0.3.5 never asked for one — and the schedule it
+    came from is a pair of rules carrying the same command at two different times. A
+    title of just the action would put "Switch the light off" in the list twice."""
+    evening = _rule(id="a", action={"type": "set_power", "power": False}, trigger={"kind": "time", "time_at": "23:30"})
+    morning = _rule(id="b", action={"type": "set_power", "power": False}, trigger={"kind": "time", "time_at": "07:15"})
+
+    first, second = rule_headline(evening, _tr), rule_headline(morning, _tr)
+
+    assert first != second
+    assert "23:30" in first and "07:15" in second
+    assert _tr("automations.action_power_off") in first
+
+
+def test_a_rule_the_user_named_keeps_only_that_name() -> None:
+    """They have already said what it is; a qualifier would be the app second-guessing
+    the label its own user chose."""
+    named = _rule(name="Bedtime", trigger={"kind": "time", "time_at": "23:30"})
+
+    assert rule_headline(named, _tr) == "Bedtime"
+
+
+def test_an_app_or_idle_rule_is_qualified_by_what_makes_it_different() -> None:
+    on_app = _rule(trigger={"kind": "app_foreground", "app": "code.exe"})
+    on_idle = _rule(trigger={"kind": "no_input", "minutes": 20})
+    # A trigger with nothing shorter than its own sentence is left alone: two rules
+    # with the same action and this trigger are the same rule twice, not two.
+    on_start = _rule(trigger={"kind": "lumable_start"})
+
+    assert "code.exe" in rule_headline(on_app, _tr)
+    assert "20" in rule_headline(on_idle, _tr)
+    assert rule_headline(on_start, _tr) == _tr("automations.action_power_on")
 
 
 def test_a_named_rule_keeps_its_name_and_the_action_moves_below() -> None:
@@ -503,7 +537,8 @@ def test_the_rule_list_draws_a_row_per_rule(screen) -> None:
 
     assert host.automations_empty_hint.isHidden() is True
     titles = [row.findChildren(QLabel)[0].text() for row in controller._rows]
-    assert titles == ["Evening", _tr("automations.action_power_on")]
+    assert titles == ["Evening", rule_headline(host._automations.rules()[1], _tr)]
+    assert titles[1].startswith(_tr("automations.action_power_on"))
 
 
 def test_an_empty_rule_list_explains_itself(screen) -> None:
@@ -692,6 +727,8 @@ def test_every_string_this_screen_shows_exists_in_every_language() -> None:
         "automations.action_power_off",
         "automations.action_scene",
         "automations.action_scene_missing",
+        "automations.short_idle",
+        "automations.tasks_syncing",
         "automations.tasks_ok",
         "automations.tasks_none",
         "automations.tasks_error",

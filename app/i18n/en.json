@@ -877,6 +877,7 @@
         "automations.bridge_working": "Switching over…",
         "automations.bridge_failed": "Could not switch over: {detail}",
         "automations.bridge_done": "Switched over. LumaBLE now wakes itself.",
-        "automations.tasks_syncing": "Updating the Windows wake-ups…"
+        "automations.tasks_syncing": "Updating the Windows wake-ups…",
+        "automations.short_idle": "{minutes} min idle"
     }
 }

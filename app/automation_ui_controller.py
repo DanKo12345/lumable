@@ -116,9 +116,37 @@ def action_text(rule: Rule, tr: Any, scene_name: str = "") -> str:
     return tr("automations.action_power_on" if rule.action.power else "automations.action_power_off")
 
 
+def trigger_hint(rule: Rule, tr: Any) -> str:
+    """The shortest thing that tells two rules doing the same job apart.
+
+    "" when the trigger has nothing to offer that is shorter than its own sentence —
+    and for those kinds two rules with the same action are genuinely the same rule
+    twice, so there would be nothing to disambiguate with anyway.
+    """
+    trigger = rule.trigger
+    if trigger.kind == TRIGGER_TIME:
+        return trigger.time_at
+    if trigger.kind == TRIGGER_APP_FOREGROUND:
+        return trigger.app
+    if trigger.kind == TRIGGER_NO_INPUT:
+        return tr("automations.short_idle", minutes=trigger.minutes)
+    return ""
+
+
 def rule_headline(rule: Rule, tr: Any, scene_name: str = "") -> str:
-    """The row's title: the user's name for the rule, or what it does."""
-    return rule.name or action_text(rule, tr, scene_name)
+    """The row's title: the user's name for the rule, or what it does and when.
+
+    Migrated rules have no name — the 0.3.5 schedule never asked for one — and two of
+    them can carry the same command at different times. Titled by the action alone,
+    "Switch the light off" would appear twice with nothing to choose between them but
+    the small print. The qualifier is not added to a rule the user named: they have
+    already said what it is.
+    """
+    if rule.name:
+        return rule.name
+    action = action_text(rule, tr, scene_name)
+    hint = trigger_hint(rule, tr)
+    return f"{action} · {hint}" if hint else action
 
 
 def rule_detail(rule: Rule, tr: Any, scene_name: str = "") -> str:
