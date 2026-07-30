@@ -117,7 +117,7 @@ _NAV_ICONS = {
     "music": "audio-lines",
     "profiles": "configs",
     "schedule": "calendar",
-    "automations": "orbit",
+    "automations": "workflow",
     "settings": "settings",
 }
 

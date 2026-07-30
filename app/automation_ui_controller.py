@@ -63,15 +63,15 @@ _TRIGGER_TILES = {
     TRIGGER_NO_INPUT: ("moon", "#8f9bff"),
     TRIGGER_LUMABLE_START: ("power", "#72c7b7"),
     TRIGGER_STRIP_CONNECTED: ("device", "#72c7b7"),
-    TRIGGER_ALWAYS: ("combine", "#a9b0bd"),
+    TRIGGER_ALWAYS: ("circle-dot", "#a9b0bd"),
 }
-_FALLBACK_TILE = ("orbit", "#a9b0bd")
+_FALLBACK_TILE = ("workflow", "#a9b0bd")
 
 # The four pause states, drawn four ways. The two amber ones are the states where
 # this app and the machine disagree; they share the colour of "not settled yet" and
 # differ in glyph and wording.
 _PAUSE_TILES = {
-    PAUSE_OFF: ("orbit", "#72c7b7"),
+    PAUSE_OFF: ("circle-play", "#72c7b7"),
     PAUSE_ACTIVE: ("moon", "#b58fff"),
     PAUSE_PENDING: ("moon", "#ffb066"),
     PAUSE_ENDING: ("sunrise", "#ffb066"),

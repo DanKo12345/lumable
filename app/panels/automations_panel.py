@@ -32,13 +32,13 @@ _RUNNING_TINT = "#72c7b7"
 def build_automations_section(host: PanelHost) -> GlassCard:
     """The overview: the master switch, the pause, and what Windows knows."""
     host.automations_card = host._card(
-        host._tr("automations.title"), host._tr("automations.subtitle"), icon="orbit"
+        host._tr("automations.title"), host._tr("automations.subtitle"), icon="workflow"
     )
 
     overview, layout = list_container(host)
 
     master_row, master_controls, host.automations_master_label, _, _ = list_row(
-        host, "orbit", _MASTER_TINT, host._tr("automations.row_master"), with_status=False
+        host, "workflow", _MASTER_TINT, host._tr("automations.row_master"), with_status=False
     )
     host.automations_toggle_button = host._button(host._tr("automations.toggle_off"), "ghost")
     host.automations_toggle_button.setCheckable(True)
@@ -59,7 +59,7 @@ def build_automations_section(host: PanelHost) -> GlassCard:
         host.automations_pause_label,
         host.automations_pause_status,
         host.automations_pause_tile,
-    ) = list_row(host, "orbit", _RUNNING_TINT, host._tr("automations.row_pause"))
+    ) = list_row(host, "circle-play", _RUNNING_TINT, host._tr("automations.row_pause"))
     host.automations_pause_button = host._button(host._tr("automations.pause_button"), "ghost")
     # Minimum rather than fixed: this button's label is a sentence, and it is a
     # different length in every language.
@@ -82,7 +82,7 @@ def build_automations_section(host: PanelHost) -> GlassCard:
 def build_automation_rules_section(host: PanelHost) -> GlassCard:
     """The list of rules. Rows are built by the controller, from the rules."""
     host.automations_rules_card = host._card(
-        host._tr("automations.rules_title"), host._tr("automations.rules_subtitle"), icon="layers-3"
+        host._tr("automations.rules_title"), host._tr("automations.rules_subtitle"), icon="list-checks"
     )
 
     host.automations_empty_hint = QLabel(host._tr("automations.empty_hint"))
@@ -101,7 +101,9 @@ def build_automation_bridge_section(host: PanelHost) -> GlassCard:
     Hidden from the start: on the vast majority of machines the bridge is not up,
     and a card explaining a migration that already happened would be noise.
     """
-    host.automations_bridge_card = host._card(host._tr("automations.bridge_title"), icon="combine")
+    host.automations_bridge_card = host._card(
+        host._tr("automations.bridge_title"), icon="refresh-cw"
+    )
 
     host.automations_bridge_hint = QLabel(host._tr("automations.bridge_hint"))
     host.automations_bridge_hint.setObjectName("cardSubtitle")

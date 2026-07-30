@@ -83,7 +83,14 @@ def _isolated_data_dir(theme: str, language: str) -> Path:
     storage._migration_done = True
     storage._legacy_migration_pairs = lambda: []
     storage.SETTINGS_PATH.write_text(
-        json.dumps({"theme_mode": theme, "language": language}), encoding="utf-8"
+        json.dumps(
+            {
+                "theme_mode": theme,
+                "language": language,
+                "onboarding_seen": True,
+            }
+        ),
+        encoding="utf-8",
     )
     return data_dir
 
