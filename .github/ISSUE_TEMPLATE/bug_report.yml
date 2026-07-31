@@ -11,8 +11,8 @@ body:
     id: version
     attributes:
       label: LumaBLE version
-      description: You can find it in the app header or release filename.
-      placeholder: "0.1.1 beta"
+      description: You can find it in Settings → Diagnostics or in the release filename.
+      placeholder: "For example: 0.3.6 beta"
     validations:
       required: true
   - type: input

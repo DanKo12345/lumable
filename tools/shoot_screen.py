@@ -217,6 +217,37 @@ def _apply_confirm_demo(window) -> None:
     overlay.open()
 
 
+def _show_showcase_connection(window) -> None:
+    """Present a connected controller without making a real BLE connection."""
+    address = "AA:BB:CC:DD:EE:FF"
+    window._devices = [{"name": "ELK-BLEDOM", "address": address, "rssi": "-48"}]
+    window._settings["last_device_name"] = "ELK-BLEDOM"
+    window._ble_events.on_connected_changed(True, address)
+    window.power_button.setChecked(True)
+    window._sync_power_button()
+
+
+def _apply_readme_color_demo(window) -> None:
+    """The main colour surface in a credible, connected showcase state."""
+    _show_showcase_connection(window)
+
+
+def _apply_readme_automations_demo(window) -> None:
+    """A calm automations overview for the public README."""
+    from app.automation_ui_controller import PAUSE_OFF
+
+    _apply_automations_demo(window)
+    window._settings["automations"]["legacy_bridge"] = False
+    window._automations.pause_status = lambda: PAUSE_OFF
+    window._automation_ui.sync_controls()
+    _show_showcase_connection(window)
+
+
+def _apply_readme_ambient_demo(window) -> None:
+    """The screen-sync controls with the same connected showcase device."""
+    _show_showcase_connection(window)
+
+
 DEMOS = {
     "automations": _apply_automations_demo,
     "journal": _apply_journal_demo,
@@ -225,6 +256,9 @@ DEMOS = {
     "confirm": _apply_confirm_demo,
     "rule-new": _apply_rule_new_demo,
     "rule-edit": _apply_rule_edit_demo,
+    "readme-color": _apply_readme_color_demo,
+    "readme-automations": _apply_readme_automations_demo,
+    "readme-ambient": _apply_readme_ambient_demo,
 }
 
 

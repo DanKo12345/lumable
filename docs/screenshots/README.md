@@ -13,6 +13,15 @@ python tools/shoot_screen.py automations --demo rule-new   --size 860x420  --the
 python tools/shoot_screen.py automations --demo rule-edit  --size 1280x860 --theme light
 ```
 
+The public README images use separate, reproducible showcase states rather than
+real controller data:
+
+```
+python tools/shoot_screen.py color       --demo readme-color       --size 1280x860 --theme dark --language en --out docs/images/lumable-color-dark.png
+python tools/shoot_screen.py automations --demo readme-automations --size 1280x860 --theme dark --language en --out docs/images/lumable-automations-dark.png
+python tools/shoot_screen.py ambient     --demo readme-ambient     --size 1280x860 --theme dark --language en --out docs/images/lumable-screen-sync-dark.png
+```
+
 `860x420` is the app's minimum window size (`WINDOW_MIN_WIDTH`/`HEIGHT`), which is
 where clipping shows up first. Both themes are kept because the tinted icon tiles
 and the hairline dividers are the two things that go wrong when only one is checked.

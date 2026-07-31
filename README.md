@@ -1,108 +1,128 @@
-# LumaBLE
+<p align="center">
+  <img src="app/assets/icon.png" width="112" alt="LumaBLE app icon">
+</p>
 
-Windows-first desktop app for controlling BLE RGB LED strip controllers.
+<h1 align="center">LumaBLE</h1>
 
-LumaBLE scans nearby supported Bluetooth LED controllers, connects to a device, changes RGB color,
-brightness and power, applies built-in effects, tunes effect speed, and saves reusable lighting
-profiles. It also includes screen sync, tray controls, schedules, diagnostics, themes, and a Pro
-license flow for advanced features.
+<p align="center">
+  A polished Windows desktop app for controlling Bluetooth LED strips.
+</p>
 
-Author: `dollza`
+<p align="center">
+  <a href="https://github.com/DanKo12345/lumable/releases">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/DanKo12345/lumable?include_prereleases&sort=semver&label=release&color=4f8cff">
+  </a>
+  <img alt="Windows 10 and 11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-2f78d4">
+  <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776ab">
+  <a href="https://github.com/DanKo12345/lumable/issues">
+    <img alt="GitHub issues" src="https://img.shields.io/github/issues/DanKo12345/lumable?color=8b5cf6">
+  </a>
+</p>
 
-Version: `0.3.6 beta`
+<p align="center">
+  <a href="https://github.com/DanKo12345/lumable/releases"><strong>Download for Windows</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="#supported-controllers">Supported controllers</a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/DanKo12345/lumable/issues/new/choose">Report a problem</a>
+</p>
 
-Download the latest Windows build from the [Releases page](https://github.com/DanKo12345/lumable/releases).
+<p align="center">
+  <a href="README.ru.md">Русский</a> &nbsp;|&nbsp;
+  <a href="README.es.md">Español</a> &nbsp;|&nbsp;
+  <a href="README.zh.md">中文</a>
+</p>
 
-If you find a bug or your controller does not work, please open an
-[Issue](https://github.com/DanKo12345/lumable/issues).
+![LumaBLE colour and brightness controls](docs/images/lumable-color-dark.png)
 
-Translations:
+LumaBLE discovers compatible BLE LED controllers nearby and gives them a proper desktop interface:
+colour, brightness, power, effects, scenes, screen and audio sync, profiles, schedules and automation
+rules. It is designed for repeated everyday use rather than one-off controller setup.
 
-- [Русский](README.ru.md)
-- [Español](README.es.md)
-- [中文](README.zh.md)
+> LumaBLE is currently in beta. Controller protocols vary between manufacturers, so please attach a
+> diagnostics report when requesting support for a new model.
 
 ## Highlights
 
-- RGB sliders, HEX/HSV color picker, brightness and power control.
-- Built-in BLE effects with speed support where the controller protocol allows it.
-- Reusable lighting profiles and quick modes.
-- Screen sync / Ambient mode for matching the strip to the average screen color.
-- Automation rules for schedules, foreground apps, idle time, startup and strip connections,
-  including scheduled power changes while LumaBLE is closed.
-- Single-instance startup protection, so a second launch brings the existing window forward instead
-  of fighting over the Bluetooth connection.
-- Diagnostics export for unsupported controllers and BLE troubleshooting.
-- Interface languages: English, Russian, Spanish and Chinese, with first-run language detection.
+- **Direct light control** — RGB, brightness, colour temperature, power and a HEX/HSV picker.
+- **Scenes and effects** — reusable scenes, quick modes, controller effects and app-rendered animations.
+- **Screen and audio sync** — make the strip follow desktop content or music in real time.
+- **Automations** — react to time, foreground apps, idle time, LumaBLE startup or strip connection.
+- **Background schedules** — Pro power rules can run through Windows even while LumaBLE is closed.
+- **Local API** — pair a phone on the same network and control lights from a mobile browser.
+- **Diagnostics** — export controller, protocol and BLE details without digging through log files.
+- **Accessible desktop UI** — keyboard navigation, reduced-motion support, light and dark themes.
+- **Four interface languages** — English, Russian, Spanish and Chinese, detected on first launch.
+
+## Inside The App
+
+| Automation rules | Screen sync |
+| --- | --- |
+| ![Automation rules in LumaBLE](docs/images/lumable-automations-dark.png) | ![Screen sync controls in LumaBLE](docs/images/lumable-screen-sync-dark.png) |
+
+## Download And Start
+
+1. Open the [Releases page](https://github.com/DanKo12345/lumable/releases).
+2. Download `LumaBLE-Setup-<version>.exe` and run the installer.
+3. Power on the LED controller and close any phone app currently connected to it.
+4. Open LumaBLE, click the connection status and scan for the controller.
+
+The current Windows beta is not code-signed, so Microsoft Defender SmartScreen may show an
+"Unknown publisher" warning. Release files are built from this repository and published on GitHub.
+
+## Free And Pro
+
+Core controller discovery and light control are free. Pro unlocks screen sync, music sync, the full
+effect library, DIY effects, import/export, unlimited profiles, custom quick modes and schedules that
+run while LumaBLE is closed. Hardware compatibility is never restricted to Pro.
 
 ## Supported Controllers
 
 - BLEDOM / ELK-BLEDOM compatible controllers.
 - Magic Home / MagicLight BLE controllers.
 - BanlanX SP61x / SP62x BLE controllers.
-- Triones / Happy Lighting compatible BLE LED controllers.
+- Triones / Happy Lighting compatible BLE controllers.
 
-## Windows Install
+Support depends on the protocol advertised by the controller, not only the product name. If a model
+is missing, use the
+[Unsupported controller form](https://github.com/DanKo12345/lumable/issues/new?template=unsupported_controller.yml).
 
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
+## Build From Source
 
-Developer tools for tests and release builds:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-```
-
-## Run
+LumaBLE targets Python 3.11 on Windows.
 
 ```powershell
+py -3.11 -m venv .venv311
+.\.venv311\Scripts\python.exe -m pip install -r requirements.txt
 .\run_app.bat
 ```
 
-## Tests
+Developer tools:
 
 ```powershell
+.\.venv311\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv311\Scripts\python.exe -m pytest
-```
-
-```powershell
 .\.venv311\Scripts\python.exe -m ruff check .
 ```
 
 ## App Data
 
-Application data is stored in the standard per-user app data folder through `platformdirs`.
-On Windows this is usually:
+Application data is stored through `platformdirs`. On Windows this is normally:
 
 ```text
 %APPDATA%\LumaBLE
 ```
 
-Custom translations can be added as JSON files in:
-
-```text
-%APPDATA%\LumaBLE\i18n
-```
-
-The local `data/` folder is only a legacy migration source for old development profiles/settings.
-It should not be committed or included in public archives.
+Custom translation JSON files can be placed in `%APPDATA%\LumaBLE\i18n`.
 
 ## Reporting Issues
 
-When reporting a bug or unsupported controller, please include:
+Use the matching GitHub form for a
+[bug, feature request or unsupported controller](https://github.com/DanKo12345/lumable/issues/new/choose).
+For BLE problems, scan once and then open **Settings → Diagnostics → Export diagnostics**. Attach the
+exported `.txt` report to the issue; it contains the controller details needed to investigate protocol
+support.
 
-- Windows version.
-- LumaBLE version.
-- Controller name shown in the app.
-- What you tried to do.
-- What happened instead.
-- Diagnostics report, if possible.
+Author: `dollza`
 
-To export diagnostics:
-
-1. Open LumaBLE.
-2. Open Device diagnostics.
-3. Click Copy diagnostics or Export diagnostics.
-4. Paste the report into the GitHub issue, or attach the exported `.txt` file.
+Current release: `0.3.6 beta`

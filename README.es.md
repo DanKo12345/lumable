@@ -24,13 +24,17 @@ Otros idiomas:
 - [Русский](README.ru.md)
 - [中文](README.zh.md)
 
+![Controles de color y brillo de LumaBLE](docs/images/lumable-color-dark.png)
+
 ## Funciones principales
 
 - Deslizadores RGB, selector HEX/HSV, brillo y control de encendido.
 - Efectos BLE integrados con control de velocidad cuando el protocolo lo permite.
 - Perfiles de iluminación reutilizables y modos rápidos.
 - Sincronización con pantalla / Ambient para ajustar la tira al color promedio de la pantalla.
-- Horarios locales mientras la aplicación está abierta o en la bandeja.
+- Automatizaciones por hora, aplicación en primer plano, inactividad, inicio y conexión de la tira.
+- Reglas Pro de encendido que pueden ejecutarse mediante Windows con LumaBLE cerrado.
+- API local para controlar las luces desde un teléfono en la misma red.
 - Protección de instancia única: una segunda apertura trae la ventana existente al frente.
 - Exportación de diagnósticos para controladores no compatibles y problemas BLE.
 - Idiomas de interfaz: inglés, ruso, español y chino, con detección automática en el primer inicio.

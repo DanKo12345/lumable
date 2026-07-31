@@ -16,6 +16,14 @@ body:
     validations:
       required: true
   - type: input
+    id: version
+    attributes:
+      label: LumaBLE version
+      description: Please try the newest release before reporting the controller.
+      placeholder: "For example: 0.3.6 beta"
+    validations:
+      required: true
+  - type: input
     id: controller_family
     attributes:
       label: Controller family, if known
@@ -44,7 +52,7 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics report
-      description: In LumaBLE, open Device diagnostics and click Export diagnostics or Copy diagnostics.
+      description: Scan once, then open Settings → Diagnostics and click Export diagnostics or Copy diagnostics. The report also records plausible controllers that were not recognised.
       placeholder: Paste the report here, or attach the exported .txt file.
     validations:
       required: true
