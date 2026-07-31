@@ -1,36 +1,32 @@
 <p align="center">
-  <img src="app/assets/icon.png" width="112" alt="LumaBLE app icon">
+  <img src="app/assets/icon.png" width="96" alt="LumaBLE app icon">
 </p>
 
 <h1 align="center">LumaBLE</h1>
 
 <p align="center">
-  A polished Windows desktop app for controlling Bluetooth LED strips.
+  Control Bluetooth LED strips from Windows — colours, effects, sync and automations.
 </p>
 
 <p align="center">
   <a href="https://github.com/DanKo12345/lumable/releases">
-    <img alt="Latest release" src="https://img.shields.io/github/v/release/DanKo12345/lumable?include_prereleases&sort=semver&label=release&color=4f8cff">
-  </a>
-  <img alt="Windows 10 and 11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-2f78d4">
-  <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776ab">
-  <a href="https://github.com/DanKo12345/lumable/issues">
-    <img alt="GitHub issues" src="https://img.shields.io/github/issues/DanKo12345/lumable?color=8b5cf6">
+    <img alt="Download LumaBLE 0.3.6 beta for Windows" src="https://img.shields.io/badge/Download_for_Windows-0.3.6_beta-2f78d4?style=for-the-badge&logo=windows11&logoColor=white">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/DanKo12345/lumable/releases"><strong>Download for Windows</strong></a>
-  &nbsp;&middot;&nbsp;
   <a href="#supported-controllers">Supported controllers</a>
   &nbsp;&middot;&nbsp;
   <a href="https://github.com/DanKo12345/lumable/issues/new/choose">Report a problem</a>
 </p>
 
 <p align="center">
-  <a href="README.ru.md">Русский</a> &nbsp;|&nbsp;
-  <a href="README.es.md">Español</a> &nbsp;|&nbsp;
-  <a href="README.zh.md">中文</a>
+  <sub>
+    Read in:
+    <a href="README.ru.md">Русский</a> &nbsp;·&nbsp;
+    <a href="README.es.md">Español</a> &nbsp;·&nbsp;
+    <a href="README.zh.md">中文</a>
+  </sub>
 </p>
 
 ![LumaBLE colour and brightness controls](docs/images/lumable-color-dark.png)
