@@ -989,6 +989,7 @@
         "device.fact.no": "否",
         "device.meta.driver": "协议：{driver}",
         "device.meta.signal": "信号：{rssi} dBm",
-        "device.meta.unknown_protocol": "协议未知 — 请检查设备以了解它提供什么"
+        "device.meta.unknown_protocol": "协议未知 — 请检查设备以了解它提供什么",
+        "device.status.known_unsupported": "已识别，暂不支持控制"
     }
 }

@@ -126,10 +126,16 @@ def describe_device(
         return DeviceViewState()
 
     if selected.get("supported", True) is False:
+        # A recognised-but-undriveable controller gets its real name; the state
+        # stays UNKNOWN because nothing about naming it makes it connectable.
+        known_name = str(selected.get("known_name", "")).strip()
         return DeviceViewState(
             state=STATE_UNKNOWN,
-            title_key="device.status.unknown_selected",
-            detail=str(selected.get("name", "")),
+            title_key=(
+                "device.status.known_unsupported" if known_name
+                else "device.status.unknown_selected"
+            ),
+            detail=known_name or str(selected.get("name", "")),
             signal_rssi=_signal_of(selected),
             action_key="device.inspect",
             action_enabled=True,

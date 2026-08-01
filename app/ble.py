@@ -28,6 +28,7 @@ from app.ble_drivers.base import LedBleDriver, clamp
 from app.ble_reliability import WritePacer, classify_disconnect, reconnect_delay
 from app.ble_routing import plan_targets, swap_primary
 from app.color_fade import color_distance, fade_frames
+from app.known_signatures import identify_record
 from app.localization import localization_manager
 from app.scan_snapshot import (
     AdvertisementRecord,
@@ -949,6 +950,11 @@ class BleController(QObject):
                 # has already been given the "Unknown BLE Device" placeholder,
                 # and the old heuristic matched the "ble" in it — which offered
                 # every anonymous device in radio range as a possible strip.
+                # A device we can name but not drive: the signature is known,
+                # the command protocol is not verified. Naming it is far more
+                # useful than "unknown device" and far more honest than
+                # pretending it works.
+                known = identify_record(captured[-1])
                 unknown.append(
                     {
                         "name": name,
@@ -956,6 +962,7 @@ class BleController(QObject):
                         "rssi": str(advertisement.rssi),
                         "services": ", ".join(service_uuids) or "-",
                         "supported": False,
+                        "known_name": known.display_name if known is not None else "",
                     }
                 )
 

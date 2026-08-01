@@ -989,6 +989,7 @@
         "device.fact.no": "no",
         "device.meta.driver": "Protocolo: {driver}",
         "device.meta.signal": "Señal: {rssi} dBm",
-        "device.meta.unknown_protocol": "Protocolo desconocido: comprueba el dispositivo para ver qué ofrece"
+        "device.meta.unknown_protocol": "Protocolo desconocido: comprueba el dispositivo para ver qué ofrece",
+        "device.status.known_unsupported": "Reconocido, control aún no compatible"
     }
 }

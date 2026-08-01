@@ -989,6 +989,7 @@
         "device.fact.no": "нет",
         "device.meta.driver": "Протокол: {driver}",
         "device.meta.signal": "Сигнал: {rssi} дБм",
-        "device.meta.unknown_protocol": "Протокол неизвестен — проверьте устройство, чтобы узнать, что оно предлагает"
+        "device.meta.unknown_protocol": "Протокол неизвестен — проверьте устройство, чтобы узнать, что оно предлагает",
+        "device.status.known_unsupported": "Распознан, управление пока не поддерживается"
     }
 }
