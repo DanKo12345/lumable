@@ -118,6 +118,9 @@ class FakeHost:
     _is_connected: bool = False
     _scan_in_progress: bool = False
     _connect_in_progress: bool = False
+    # A read-only compatibility check, tracked apart from a connection.
+    _inspect_in_progress: bool = False
+    _inspection_token: int = 0
     _settings: dict[str, Any] = field(default_factory=dict)
     _ui_feedback: FakeFeedback = field(default_factory=FakeFeedback)
 

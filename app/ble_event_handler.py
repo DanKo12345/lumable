@@ -309,8 +309,15 @@ class BleEventHandler:
             self.show_error(host._tr("error.disconnect_before_scan"))
             return
         if host._connect_in_progress:
-            self.show_error(host._tr("error.wait_connect"))
+            self.show_error(host._tr("error.wait_inspect") if host._inspect_in_progress
+                            else host._tr("error.wait_connect"))
             return
+        if host._inspect_in_progress:
+            self.show_error(host._tr("error.wait_inspect"))
+            return
+        # A new scan replaces the device list the running check was about, so any
+        # result still on its way is no longer answering a question we have.
+        host._inspection_token += 1
         host._scan_in_progress = True
         host._devices = []
         host.device_combo.clear()
@@ -350,10 +357,24 @@ class BleEventHandler:
         if index < 0 or index >= len(host._devices):
             self.show_error(host._tr("error.select_controller_first"))
             return
+        if host._inspect_in_progress:
+            self.show_error(host._tr("error.wait_inspect"))
+            return
+        device = host._devices[index]
+        if device.get("supported", True) is False:
+            # Never the ordinary connect path for a device no driver claims:
+            # that would mean writing a guessed protocol to unknown hardware.
+            host._inspect_in_progress = True
+            host._inspection_token += 1
+            host._sync_connect_buttons()
+            host._ble.inspect_device(
+                device["address"], device.get("name", ""), token=host._inspection_token
+            )
+            return
         host._connect_in_progress = True
         host.device_status.setText(host._tr("device.status.connecting"))
         host._sync_connect_buttons()
-        host._ble.connect_to_address(host._devices[index]["address"])
+        host._ble.connect_to_address(device["address"])
 
     def start_autoconnect(self) -> None:
         host = self._host

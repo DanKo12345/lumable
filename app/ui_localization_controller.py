@@ -437,6 +437,8 @@ class UiLocalizationController:
         host.show_logs_button.setText(host._tr("device.show_logs"))
         host.export_diagnostics_button.setText(host._tr("diagnostics.export"))
         host.export_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
+        host.export_scan_button.setText(host._tr("scan_snapshot.export"))
+        host.export_scan_button.setToolTip(host._tr("scan_snapshot.export_hint"))
         host.check_update_button.setText(
             host._tr("updates.open")
             if host._update_result is not None and host._update_result.state == "available"

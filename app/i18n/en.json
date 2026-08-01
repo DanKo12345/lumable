@@ -48,7 +48,7 @@
         "device.status.not_found": "Controller not found",
         "device.status.found_one": "Found: {name}",
         "device.status.found_many": "Controllers found: {count}",
-        "device.status.found_unknown": "No supported controllers found. Check “Supported controllers”, or pick an unknown device, click Connect, then use “Report device” to add support.",
+        "device.status.found_unknown": "No supported controllers found. {count} nearby device(s) are not recognised — LumaBLE will not try to control them. Save a scan snapshot in Diagnostics and attach it to an issue so support can be added. Missing a controller? Close its phone app and turn the phone's Bluetooth off, then scan again.",
         "device.unsupported_tag": "unsupported",
         "device.last": "Last controller: {name} / {address}",
         "device.last.autoconnecting": "Connecting to {name} / {address}...",
@@ -959,6 +959,23 @@
         "automations.journal_code_automations_disabled": "Automations were switched off",
         "automations.journal_code_no_background_rules": "Nothing runs in the background",
         "automations.journal_code_nothing_due": "Nothing was due",
-        "automations.journal_code_another_run_in_progress": "Another run was already under way"
+        "automations.journal_code_another_run_in_progress": "Another run was already under way",
+        "scan_snapshot.export": "BLE scan report",
+        "scan_snapshot.export_hint": "Saves what the last scan broadcast, so support for an unrecognised controller can be added.",
+        "scan_snapshot.export_title": "Save BLE scan report",
+        "scan_snapshot.file_filter": "BLE scan report (*.json)",
+        "scan_snapshot.none_yet": "Nothing has been scanned yet. Run a scan first, then save the snapshot.",
+        "scan_snapshot.nothing_found": "The scan found no devices at all. If your controller is connected in its phone app, close that app and turn the phone's Bluetooth off, then scan again.",
+        "scan_snapshot.saved": "Saved: {path}. The file can contain technical device identifiers inside the advertised payloads — have a look before posting it publicly.",
+        "scan_snapshot.save_failed": "The scan snapshot could not be saved. Try another folder.",
+        "scan_snapshot.unknown_hint": "Not recognised yet — LumaBLE will not try to control it. Save a scan snapshot and attach it to an issue so support can be added.",
+        "scan_snapshot.busy_hint": "Missing a controller? Close its phone app and turn the phone's Bluetooth off, then scan again — many controllers stop advertising while a phone is connected.",
+        "device.inspect": "Check device",
+        "device.inspect_running": "Checking…",
+        "device.inspect_done": "Compatibility check finished: {services} service(s), {characteristics} characteristic(s). Save the BLE scan report in Diagnostics and attach it to an issue.",
+        "device.inspect_failed": "The device did not answer. It may be connected in its phone app — close that app, turn the phone's Bluetooth off, and try again.",
+        "error.wait_inspect": "A compatibility check is already running. Wait for it to finish.",
+        "device.inspect_full": "Check compatibility",
+        "device.inspect_hint": "Reads what the device offers — services and characteristics — without sending it anything or changing its lights."
     }
 }

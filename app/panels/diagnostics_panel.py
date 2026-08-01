@@ -39,6 +39,10 @@ def build_diagnostics_section(host: PanelHost) -> GlassCard:
     host.export_diagnostics_button.set_icon_kind("download")
     host.export_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
     _prepare_action_button(host.export_diagnostics_button)
+    host.export_scan_button = host._button(host._tr("scan_snapshot.export"), "ghost")
+    host.export_scan_button.set_icon_kind("diagnostics")
+    host.export_scan_button.setToolTip(host._tr("scan_snapshot.export_hint"))
+    _prepare_action_button(host.export_scan_button)
     host.check_update_button = host._button(host._tr("updates.check"), "ghost")
     _prepare_action_button(host.check_update_button)
 
@@ -55,6 +59,7 @@ def build_diagnostics_section(host: PanelHost) -> GlassCard:
     secondary_row.setSpacing(10)
     secondary_row.addStretch(1)
     secondary_row.addWidget(host.export_diagnostics_button)
+    secondary_row.addWidget(host.export_scan_button)
     secondary_row.addWidget(host.check_update_button)
 
     host.diagnostics_card.content_layout.addLayout(primary_row)
@@ -68,6 +73,7 @@ def resize_diagnostics_action_buttons(host: PanelHost) -> None:
         host.report_device_button,
         host.show_logs_button,
         host.export_diagnostics_button,
+        host.export_scan_button,
         host.check_update_button,
     ):
         button.setMinimumWidth(_action_button_width(button))

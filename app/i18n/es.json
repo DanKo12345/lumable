@@ -48,7 +48,7 @@
         "device.status.not_found": "Controlador no encontrado",
         "device.status.found_one": "Encontrado: {name}",
         "device.status.found_many": "Controladores encontrados: {count}",
-        "device.status.found_unknown": "No se encontraron controladores compatibles. Consulta «Controladores compatibles» o elige un dispositivo desconocido, pulsa Conectar y luego usa «Informar del dispositivo» para añadir soporte.",
+        "device.status.found_unknown": "No se encontraron controladores compatibles. Hay {count} dispositivo(s) cerca sin reconocer: LumaBLE no intentará controlarlos. Guarda una captura de búsqueda en Diagnóstico y adjúntala a una incidencia. ¿Falta un controlador? Cierra su aplicación del teléfono y desactiva el Bluetooth del teléfono; después vuelve a buscar.",
         "device.unsupported_tag": "no compatible",
         "device.last": "Último controlador: {name} / {address}",
         "device.last.autoconnecting": "Conectando con {name} / {address}...",
@@ -959,6 +959,23 @@
         "automations.journal_code_automations_disabled": "Las automatizaciones estaban desactivadas",
         "automations.journal_code_no_background_rules": "No hay reglas en segundo plano",
         "automations.journal_code_nothing_due": "No había nada pendiente",
-        "automations.journal_code_another_run_in_progress": "Ya había otra ejecución en marcha"
+        "automations.journal_code_another_run_in_progress": "Ya había otra ejecución en marcha",
+        "scan_snapshot.export": "Informe de búsqueda BLE",
+        "scan_snapshot.export_hint": "Guarda lo que emitieron los dispositivos en la última búsqueda, para poder añadir compatibilidad.",
+        "scan_snapshot.export_title": "Guardar informe de búsqueda BLE",
+        "scan_snapshot.file_filter": "Informe de búsqueda BLE (*.json)",
+        "scan_snapshot.none_yet": "Aún no se ha buscado nada. Haz una búsqueda primero y luego guarda la captura.",
+        "scan_snapshot.nothing_found": "La búsqueda no encontró ningún dispositivo. Si el controlador está conectado en su aplicación del teléfono, ciérrala y desactiva el Bluetooth del teléfono; después vuelve a buscar.",
+        "scan_snapshot.saved": "Guardado: {path}. El archivo puede contener identificadores técnicos del dispositivo dentro de los datos emitidos: revísalo antes de publicarlo.",
+        "scan_snapshot.save_failed": "No se pudo guardar la captura. Prueba con otra carpeta.",
+        "scan_snapshot.unknown_hint": "Todavía sin reconocer: LumaBLE no intentará controlarlo. Guarda una captura y adjúntala a una incidencia para añadir compatibilidad.",
+        "scan_snapshot.busy_hint": "¿Falta un controlador? Cierra su aplicación del teléfono y desactiva el Bluetooth del teléfono; luego vuelve a buscar: muchos controladores dejan de anunciarse mientras hay un teléfono conectado.",
+        "device.inspect": "Comprobar",
+        "device.inspect_running": "Comprobando…",
+        "device.inspect_done": "Comprobación terminada: {services} servicio(s), {characteristics} característica(s). Guarda el informe de búsqueda BLE en Diagnóstico y adjúntalo a una incidencia.",
+        "device.inspect_failed": "El dispositivo no respondió. Puede estar conectado en su aplicación del teléfono: ciérrala, desactiva el Bluetooth del teléfono e inténtalo de nuevo.",
+        "error.wait_inspect": "Ya hay una comprobación en curso. Espera a que termine.",
+        "device.inspect_full": "Comprobar compatibilidad",
+        "device.inspect_hint": "Lee lo que ofrece el dispositivo — servicios y características — sin enviarle nada ni cambiar su luz."
     }
 }

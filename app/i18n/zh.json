@@ -46,7 +46,7 @@
         "device.status.not_found": "未找到控制器",
         "device.status.found_one": "已找到：{name}",
         "device.status.found_many": "已找到控制器：{count}",
-        "device.status.found_unknown": "未找到受支持的控制器。请查看“支持的控制器”，或选择一个未知设备并点击“连接”，然后使用“反馈设备”以添加支持。",
+        "device.status.found_unknown": "未找到受支持的控制器。附近有 {count} 个未识别的设备 — LumaBLE 不会尝试控制它们。请在诊断中保存扫描快照并附在 issue 中，以便添加支持。找不到控制器？请关闭其手机应用并关闭手机蓝牙，然后重新扫描。",
         "device.unsupported_tag": "不支持",
         "device.choice.scan_placeholder": "正在搜索控制器...",
         "device.choice.not_found": "未找到受支持的控制器",
@@ -959,6 +959,23 @@
         "automations.journal_code_automations_disabled": "自动化已关闭",
         "automations.journal_code_no_background_rules": "没有后台规则",
         "automations.journal_code_nothing_due": "没有到时间的规则",
-        "automations.journal_code_another_run_in_progress": "已有另一次运行在进行"
+        "automations.journal_code_another_run_in_progress": "已有另一次运行在进行",
+        "scan_snapshot.export": "BLE 扫描报告",
+        "scan_snapshot.export_hint": "保存上次扫描中设备广播的内容，以便为尚未识别的控制器添加支持。",
+        "scan_snapshot.export_title": "保存 BLE 扫描报告",
+        "scan_snapshot.file_filter": "BLE 扫描报告 (*.json)",
+        "scan_snapshot.none_yet": "尚未进行扫描。请先扫描，然后再保存快照。",
+        "scan_snapshot.nothing_found": "扫描未发现任何设备。如果控制器已在手机应用中连接，请关闭该应用并关闭手机蓝牙，然后重新扫描。",
+        "scan_snapshot.saved": "已保存：{path}。文件中广播的数据可能包含设备的技术标识符 — 公开发布前请先检查。",
+        "scan_snapshot.save_failed": "无法保存扫描快照。请换一个文件夹。",
+        "scan_snapshot.unknown_hint": "尚未识别 — LumaBLE 不会尝试控制它。请保存扫描快照并附在 issue 中，以便添加支持。",
+        "scan_snapshot.busy_hint": "找不到控制器？请关闭其手机应用并关闭手机蓝牙，然后重新扫描 — 许多控制器在手机连接时会停止广播。",
+        "device.inspect": "检查设备",
+        "device.inspect_running": "正在检查…",
+        "device.inspect_done": "兼容性检查完成：{services} 个服务，{characteristics} 个特征。请在诊断中保存 BLE 扫描报告并附在 issue 中。",
+        "device.inspect_failed": "设备没有响应。它可能已在手机应用中连接 — 请关闭该应用并关闭手机蓝牙，然后重试。",
+        "error.wait_inspect": "兼容性检查正在进行中，请等待其完成。",
+        "device.inspect_full": "检查兼容性",
+        "device.inspect_hint": "读取设备提供的服务和特征，不向其发送任何内容，也不改变灯光。"
     }
 }

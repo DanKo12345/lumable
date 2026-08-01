@@ -6,6 +6,7 @@ import time
 from collections.abc import Iterable
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
+from datetime import datetime
 from itertools import count
 from typing import Any
 
@@ -15,6 +16,7 @@ from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from PySide6.QtCore import QObject, Qt, Signal
 
+from app.app_info import APP_VERSION
 from app.ble_drivers import (
     EFFECTS,
     detect_connected_driver,
@@ -27,6 +29,12 @@ from app.ble_reliability import WritePacer, classify_disconnect, reconnect_delay
 from app.ble_routing import plan_targets, swap_primary
 from app.color_fade import color_distance, fade_frames
 from app.localization import localization_manager
+from app.scan_snapshot import (
+    AdvertisementRecord,
+    ScanSnapshot,
+    is_possible_controller,
+    record_from_advertisement,
+)
 
 CONNECT_TIMEOUT_SECONDS = 10.0
 FIND_DEVICE_TIMEOUT_SECONDS = 8.0
@@ -69,8 +77,18 @@ _LED_NAME_HINTS = (
 )
 
 
+def _rssi_value(text) -> int:
+    try:
+        return int(str(text))
+    except (TypeError, ValueError):
+        return -999  # unknown signal sorts last
+
+
 def _looks_like_led_controller(name: str, service_uuids: Iterable[str]) -> bool:
-    """Heuristic: does this unrecognised device look like an LED controller?
+    """Name/service heuristic, kept for the supported-controller hints only.
+
+    No longer decides what the scan offers the user: every nameless device
+    arrives here as "Unknown BLE Device", and the "ble" token matched it.
 
     Matches on common name fragments or the 0xFFxx vendor service range these
     clones use, so we surface likely controllers without listing every phone.
@@ -162,6 +180,8 @@ class BleController(QObject):
     # Carries a BleOperationResult. An object rather than positional arguments so
     # fields can be added later without breaking every receiver.
     operation_finished = Signal(object)
+    # Carries a GattInspection: what an unrecognised device exposes.
+    inspection_finished = Signal(object)
     # Internal hop that makes delivery queued regardless of the emitting thread.
     _operation_ready = Signal(object)
     mirrors_changed = Signal(list)
@@ -224,6 +244,9 @@ class BleController(QObject):
         # Unrecognised-but-plausible LED controllers seen in the last scan, kept
         # so the diagnostics report can list them for adding driver support.
         self._unknown_devices: list[dict[str, str]] = []
+        # Everything the last scan saw, filtering included, for a snapshot the
+        # user can attach to an issue.
+        self._scan_snapshot = ScanSnapshot()
         # Extra controllers driven in mirror with the primary (multi-device).
         # The primary write path is untouched; commands fan out to these too.
         self._mirror_connections: list[DeviceConnection] = []
@@ -787,6 +810,64 @@ class BleController(QObject):
                 return dict(item)
         return {}
 
+    # ── read-only compatibility check ──────────────────────────────────
+    def inspect_device(self, address: str, name: str = "", *, token: int = 0) -> None:
+        """Look at what an unrecognised device offers, without touching it.
+
+        Deliberately not the normal connect path. Nothing is written, no driver
+        is chosen, and none of the controller's own state — client, driver,
+        write characteristic, colour caches — is touched, so a device we do not
+        understand can be examined without its lights changing or a wrong
+        protocol being tried on it.
+        """
+        self._submit(self._inspect_device(address, name, token))
+
+    async def _inspect_device(self, address: str, name: str = "", token: int = 0):
+        from app.scan_snapshot import GattCharacteristic, GattInspection, GattService
+
+        services: list[GattService] = []
+        error = ""
+        client = BleakClient(address)
+        try:
+            await client.connect()
+            for service in client.services:
+                characteristics = tuple(
+                    GattCharacteristic(
+                        uuid=str(characteristic.uuid).lower(),
+                        properties=tuple(str(prop) for prop in characteristic.properties),
+                    )
+                    for characteristic in service.characteristics
+                )
+                services.append(
+                    GattService(uuid=str(service.uuid).lower(), characteristics=characteristics)
+                )
+        except Exception as exc:
+            error = self._exception_message(exc)
+        finally:
+            # Always let go: an inspection that held the link would block the
+            # device from being used by anything else, including its own app.
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+        inspection = GattInspection(
+            address=address, name=name, services=tuple(services), error=error, token=token
+        )
+        self._scan_snapshot = ScanSnapshot(
+            records=self._scan_snapshot.records,
+            inspections=(*self._scan_snapshot.inspections, inspection),
+            captured_at=self._scan_snapshot.captured_at,
+            app_version=self._scan_snapshot.app_version,
+            note=self._scan_snapshot.note,
+        )
+        self.inspection_finished.emit(inspection)
+        return None
+
+    def scan_snapshot(self) -> ScanSnapshot:
+        """Everything the last scan saw, for export from diagnostics."""
+        return self._scan_snapshot
+
     def _set_last_ble_error(self, message: str) -> None:
         clean_message = self._exception_message(RuntimeError(message)) if message else ""
         self._last_ble_error = clean_message
@@ -834,8 +915,17 @@ class BleController(QObject):
         devices = await BleakScanner.discover(timeout=5.0, return_adv=True)
         results: list[dict[str, str]] = []
         unknown: list[dict[str, str]] = []
+        captured: list[AdvertisementRecord] = []
         self._scan_driver_hints.clear()
         for _, (device, advertisement) in devices.items():
+            # Recorded before any filtering: a controller nobody recognises is
+            # exactly the one a snapshot exists for, and it is the first thing
+            # dropped from the lists below. Best-effort — a capture that raises
+            # must never cost the user their scan.
+            try:
+                captured.append(record_from_advertisement(device, advertisement))
+            except Exception:
+                pass
             name = device.name or advertisement.local_name or "Unknown BLE Device"
             service_uuids = [uuid.lower() for uuid in (advertisement.service_uuids or [])]
             driver = detect_scan_driver(name, service_uuids)
@@ -850,7 +940,11 @@ class BleController(QObject):
                         "supported": True,
                     }
                 )
-            elif _looks_like_led_controller(name, service_uuids):
+            elif captured and is_possible_controller(captured[-1]):
+                # Judged on the *captured* record, not on `name` above: that one
+                # has already been given the "Unknown BLE Device" placeholder,
+                # and the old heuristic matched the "ble" in it — which offered
+                # every anonymous device in radio range as a possible strip.
                 unknown.append(
                     {
                         "name": name,
@@ -861,7 +955,17 @@ class BleController(QObject):
                     }
                 )
 
+        # Closest first, so a strip in the room outranks one through a wall.
+        unknown.sort(key=lambda item: -_rssi_value(item.get("rssi")))
         self._unknown_devices = unknown[:12]
+        # Replaces the previous capture rather than accumulating: a snapshot
+        # describes one scan, and a stale device from ten minutes ago in the
+        # file would send a driver author chasing hardware that has left.
+        self._scan_snapshot = ScanSnapshot(
+            records=tuple(captured),
+            captured_at=datetime.now().isoformat(timespec="seconds"),
+            app_version=APP_VERSION,
+        )
         # Surface unknown-but-plausible controllers in the same list so the user
         # can pick one and try to connect; a failed connect yields a full GATT
         # diagnostic that makes adding a driver possible.

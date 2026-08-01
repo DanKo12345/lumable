@@ -12,6 +12,12 @@ from PySide6.QtWidgets import QApplication, QFileDialog
 from app.app_info import APP_VERSION
 from app.device_names import device_display_name, validate_extra_addresses
 from app.diagnostics import build_diagnostics_report
+from app.scan_snapshot import (
+    STATE_EMPTY,
+    STATE_NO_SNAPSHOT,
+    save_snapshot,
+    snapshot_state,
+)
 from app.support import build_unsupported_report_url
 
 
@@ -119,6 +125,41 @@ class DiagnosticsController:
             return
         host._log(host._tr("diagnostics.exported", path=Path(path).name))
         # Reveal the saved file so it's ready to drag into an email or chat.
+        self._reveal_in_explorer(Path(path))
+
+    def export_scan_snapshot(self) -> None:
+        """Save what the last scan actually broadcast.
+
+        This is the file that makes a driver possible for a controller nobody
+        here owns: it carries manufacturer data and service UUIDs for every
+        device seen, including the ones filtered out of the visible list —
+        which is precisely where an unrecognised controller ends up.
+        """
+        host = self._host
+        snapshot = host._ble.scan_snapshot()
+        state = snapshot_state(snapshot, len(getattr(host._ble, "_unknown_devices", [])))
+        if state == STATE_NO_SNAPSHOT:
+            host._show_error(host._tr("scan_snapshot.none_yet"))
+            return
+        if state == STATE_EMPTY:
+            host._show_error(host._tr("scan_snapshot.nothing_found"))
+            return
+
+        default_name = f"lumable-scan-{APP_VERSION}.json"
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            host,
+            host._tr("scan_snapshot.export_title"),
+            str(Path.home() / "Desktop" / default_name),
+            host._tr("scan_snapshot.file_filter"),
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        if not save_snapshot(Path(path), snapshot):
+            host._show_error(host._tr("scan_snapshot.save_failed"))
+            return
+        host._log(host._tr("scan_snapshot.saved", path=Path(path).name))
         self._reveal_in_explorer(Path(path))
 
     @staticmethod

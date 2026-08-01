@@ -1,0 +1,71 @@
+{
+  "version": "scan.v1",
+  "captured_at": "2026-08-01T12:00:00",
+  "app_version": "0.3.7",
+  "note": "Synthetic capture. Same shapes as a real scan in a block of flats: two supported strips, one named-but-unknown device, one unknown device that advertises a service, and anonymous noise. No real addresses or neighbours.",
+  "records": [
+    {
+      "name": "ELK-BLEDOM",
+      "address": "…:00:01",
+      "rssi": -48,
+      "service_uuids": ["0000fff0-0000-1000-8000-00805f9b34fb"],
+      "manufacturer_data": {},
+      "service_data": {},
+      "tx_power": null
+    },
+    {
+      "name": "ELK-BLEDOM CE",
+      "address": "…:00:02",
+      "rssi": -83,
+      "service_uuids": [],
+      "manufacturer_data": {},
+      "service_data": {},
+      "tx_power": null
+    },
+    {
+      "name": "SP630E",
+      "address": "…:00:03",
+      "rssi": -55,
+      "service_uuids": [],
+      "manufacturer_data": {"23124": "0102030405"},
+      "service_data": {},
+      "tx_power": 4
+    },
+    {
+      "name": "",
+      "address": "…:00:04",
+      "rssi": -61,
+      "service_uuids": ["3e1d50cd-7e3e-427d-8e1c-b78aa87fe624"],
+      "manufacturer_data": {},
+      "service_data": {},
+      "tx_power": null
+    },
+    {
+      "name": "",
+      "address": "…:00:05",
+      "rssi": -74,
+      "service_uuids": [],
+      "manufacturer_data": {"76": "0215"},
+      "service_data": {},
+      "tx_power": null
+    },
+    {
+      "name": "",
+      "address": "…:00:06",
+      "rssi": -86,
+      "service_uuids": [],
+      "manufacturer_data": {"76": "1006"},
+      "service_data": {},
+      "tx_power": null
+    },
+    {
+      "name": "",
+      "address": "…:00:07",
+      "rssi": -90,
+      "service_uuids": [],
+      "manufacturer_data": {},
+      "service_data": {},
+      "tx_power": null
+    }
+  ]
+}

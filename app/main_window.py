@@ -181,6 +181,13 @@ class MainWindow(QMainWindow):
         self._force_quit_requested = False
         self._scan_in_progress = False
         self._connect_in_progress = False
+        # A read-only compatibility check is running. Kept apart from
+        # _connect_in_progress: it is not a connection, and confusing the two
+        # would let the user start one while the other is still going.
+        self._inspect_in_progress = False
+        # Bumped by anything that makes an in-flight check irrelevant — a new
+        # scan, closing the window — so its result can be recognised as stale.
+        self._inspection_token = 0
         self._connection_status_phase = 0
         self._status_pulsing = False
         self._focus_follow_wired = False
@@ -549,6 +556,8 @@ class MainWindow(QMainWindow):
     def _wire_device_events(self):
         self.scan_button.clicked.connect(self._ble_events.start_scan)
         self.connect_button.clicked.connect(self._ble_events.handle_connect)
+        self._ble.inspection_finished.connect(self._on_inspection_finished)
+        self.device_combo.currentIndexChanged.connect(lambda _index: self._sync_connect_buttons())
         self.disconnect_button.clicked.connect(self._ble.disconnect)
         self.add_mirror_button.clicked.connect(self._ble_events.request_add_mirror)
         self.logs_toggle_button.clicked.connect(self._show_logs_overlay)
@@ -703,6 +712,7 @@ class MainWindow(QMainWindow):
         self.copy_diagnostics_button.clicked.connect(self._copy_diagnostics_report)
         self.report_device_button.clicked.connect(self._report_unsupported_device)
         self.export_diagnostics_button.clicked.connect(self._export_diagnostics_report)
+        self.export_scan_button.clicked.connect(self._diagnostics_ctrl.export_scan_snapshot)
         self.show_logs_button.clicked.connect(self._show_logs_overlay)
 
     def _wire_schedule_events(self):
@@ -989,6 +999,36 @@ class MainWindow(QMainWindow):
         # light"); when the strip is off it falls back to a neutral glass look.
         self.power_button.set_role("led" if powered_on else "ghost")
 
+    def _describe_connect_button(self, name: str, hint: str) -> None:
+        self.connect_button.setAccessibleName(name)
+        self.connect_button.setToolTip(hint)
+
+    def _selected_device(self) -> dict | None:
+        index = self.device_combo.currentIndex()
+        if index < 0 or index >= len(self._devices):
+            return None
+        return self._devices[index]
+
+    def _selected_device_is_unknown(self) -> bool:
+        device = self._selected_device()
+        return device is not None and device.get("supported", True) is False
+
+    def _on_inspection_finished(self, inspection) -> None:
+        """Report a compatibility check, unless it has been overtaken."""
+        if getattr(inspection, "token", None) != self._inspection_token:
+            return  # a rescan or a close happened while this was running
+        self._inspect_in_progress = False
+        self._sync_connect_buttons()
+        if inspection.error:
+            # The user gets what to do about it, not the exception text.
+            self._show_error(self._tr("device.inspect_failed"))
+            return
+        services = len(inspection.services)
+        characteristics = sum(len(service.characteristics) for service in inspection.services)
+        self._log(
+            self._tr("device.inspect_done", services=services, characteristics=characteristics)
+        )
+
     def _sync_connect_buttons(self):
         connected = bool(self._is_connected)
         connecting = bool(self._connect_in_progress)
@@ -1003,10 +1043,28 @@ class MainWindow(QMainWindow):
         elif self._connection_status_timer.isActive():
             self._connection_status_timer.stop()
         self._update_status_dot()
-        self.scan_button.setEnabled(not connected and not connecting and not self._scan_in_progress)
+        inspecting = bool(self._inspect_in_progress)
+        busy = connecting or self._scan_in_progress or inspecting
+        self.scan_button.setEnabled(not connected and not busy)
         self.connect_button.setVisible(not connected)
-        self.connect_button.setEnabled(not connected and not connecting and has_devices and not self._scan_in_progress)
-        self.connect_button.setText(self._tr("device.connect"))
+        self.connect_button.setEnabled(not connected and not busy and has_devices)
+        # An unrecognised device gets a read-only check instead of a connection.
+        # Offering "Connect" there would mean trying a guessed protocol on
+        # hardware we know nothing about.
+        if inspecting:
+            self.connect_button.setText(self._tr("device.inspect_running"))
+            self._describe_connect_button(self._tr("device.inspect_running"), "")
+        elif self._selected_device_is_unknown():
+            # Short label, full meaning in the tooltip and the accessible name:
+            # the whole phrase does not fit this button at the minimum window
+            # size, and a clipped label helps nobody.
+            self.connect_button.setText(self._tr("device.inspect"))
+            self._describe_connect_button(
+                self._tr("device.inspect_full"), self._tr("device.inspect_hint")
+            )
+        else:
+            self.connect_button.setText(self._tr("device.connect"))
+            self._describe_connect_button(self._tr("device.connect"), "")
         self.disconnect_button.setVisible(connected)
         self.disconnect_button.setEnabled(connected)
         self.logs_toggle_button.setVisible(connected)
@@ -1378,7 +1436,13 @@ class MainWindow(QMainWindow):
             app.removeEventFilter(self._tooltip_manager)
         self._tooltip_manager.shutdown()
 
+    def _abandon_inspection(self) -> None:
+        """Stop caring about a compatibility check that is still running."""
+        self._inspection_token += 1
+        self._inspect_in_progress = False
+
     def closeEvent(self, event):
+        self._abandon_inspection()
         try:
             self._save_window_settings()
         except Exception:
