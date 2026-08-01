@@ -38,11 +38,18 @@ def _offer(window, *devices) -> None:
 
 
 def _supported(name="ELK-BLEDOM"):
-    return {"name": name, "address": "AA:BB:CC:DD:EE:01", "supported": True}
+    # Shaped like a real scan result, driver and signal included.
+    return {
+        "name": name,
+        "address": "AA:BB:CC:DD:EE:01",
+        "driver": "BLEDOM",
+        "rssi": "-48",
+        "supported": True,
+    }
 
 
 def _unknown(name="SP630E"):
-    return {"name": name, "address": "AA:BB:CC:DD:EE:02", "supported": False}
+    return {"name": name, "address": "AA:BB:CC:DD:EE:02", "rssi": "-55", "supported": False}
 
 
 def test_a_supported_strip_still_offers_an_ordinary_connection(window) -> None:
@@ -228,3 +235,120 @@ def test_the_button_still_fits_the_minimum_window(window) -> None:
     button = window.connect_button
     # The longer label must not be clipped: the hint width has to cover it.
     assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
+
+
+def test_the_card_names_the_protocol_for_a_supported_strip(window) -> None:
+    _offer(window, _supported())
+    window._sync_connect_buttons()
+
+    assert "BLEDOM" in window.device_primary_meta.text()
+
+
+def test_the_card_admits_it_does_not_know_the_protocol(window) -> None:
+    """Naming a driver for an unrecognised device would be the guess this whole
+    path exists to avoid."""
+    _offer(window, _unknown())
+    window._sync_connect_buttons()
+
+    meta = window.device_primary_meta.text()
+    assert window._tr("device.meta.unknown_protocol") in meta
+    assert "BLEDOM" not in meta
+
+
+def test_a_failed_check_is_still_visible_on_the_card_afterwards(window, monkeypatch) -> None:
+    """A dialog is dismissed and forgotten; the card is where the user looks
+    when they wonder why nothing happened."""
+    monkeypatch.setattr(window, "_show_error", lambda message: None)
+    _offer(window, _unknown())
+    window._inspect_in_progress = True
+    window._inspection_token = 2
+
+    window._on_inspection_finished(GattInspection(address="AA:BB", token=2, error="boom"))
+
+    assert window._device_view().state == "error"
+    assert window._device_problem == window._tr("device.inspect_failed")
+
+
+def test_starting_another_attempt_clears_the_old_complaint(window, monkeypatch) -> None:
+    monkeypatch.setattr(window._ble, "inspect_device", lambda *a, **k: None)
+    _offer(window, _unknown())
+    window._device_problem = "something old"
+
+    window._ble_events.handle_connect()
+
+    assert window._device_problem == ""
+
+
+def test_drawing_the_card_does_not_change_what_the_next_command_sends(window) -> None:
+    """The capability probe used to build a real 50% brightness payload, and
+    drivers that remember the last brightness would then apply it to the next
+    colour write — so merely rendering the card changed the light."""
+    from app.ble_drivers.banlanx import BanlanxDriver
+
+    driver = BanlanxDriver()
+    window._ble._driver = driver
+    window._is_connected = True
+    driver.brightness_payloads(80)  # the user set 80%
+    before = driver.color_payloads(10, 20, 30)
+
+    for _ in range(5):
+        window._sync_connect_buttons()
+
+    assert driver.color_payloads(10, 20, 30) == before, (
+        "rendering the card altered the driver's remembered brightness"
+    )
+
+
+def test_the_capability_probe_still_reports_brightness(window) -> None:
+    """Asking without exercising must not turn into always answering no."""
+    from app.ble_drivers.banlanx import BanlanxDriver
+
+    window._ble._driver = BanlanxDriver()
+
+    assert window._ble.diagnostics_snapshot()["commands"]["brightness"] is True
+
+
+def test_a_failed_check_is_written_on_the_card_itself(window, monkeypatch) -> None:
+    monkeypatch.setattr(window, "_show_error", lambda message: None)
+    _offer(window, _unknown())
+    window._inspect_in_progress = True
+    window._inspection_token = 4
+
+    window._on_inspection_finished(GattInspection(address="AA:BB", token=4, error="boom"))
+
+    assert window._tr("device.inspect_failed") in window.device_primary_meta.text()
+
+
+def test_choosing_another_device_drops_the_old_complaint(window) -> None:
+    """Otherwise a failure keeps outranking the fresh result the user is now
+    looking at."""
+    _offer(window, _unknown(), _supported())
+    window._device_problem = "an old failure"
+
+    window.device_combo.setCurrentIndex(1)
+    QApplication.instance().processEvents()
+
+    assert window._device_problem == ""
+    assert window._device_view().state == "supported"
+
+
+def test_a_new_scan_drops_the_old_complaint(window, monkeypatch) -> None:
+    monkeypatch.setattr(window._ble, "scan", lambda *a, **k: None)
+    window._device_problem = "an old failure"
+
+    window._ble_events.start_scan()
+
+    assert window._device_problem == ""
+
+
+def test_a_connected_strip_shows_its_signal(window, monkeypatch) -> None:
+    monkeypatch.setattr(
+        window._ble,
+        "diagnostics_snapshot",
+        lambda: {"device": {"rssi": -57}, "driver": {"name": "BLEDOM"}, "commands": {}},
+    )
+    window._is_connected = True
+
+    assert window._device_view().signal_rssi == -57
+    window._sync_connect_buttons()
+    assert "-57" in window.device_primary_meta.text()

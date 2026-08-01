@@ -976,6 +976,19 @@
         "device.inspect_failed": "设备没有响应。它可能已在手机应用中连接 — 请关闭该应用并关闭手机蓝牙，然后重试。",
         "error.wait_inspect": "兼容性检查正在进行中，请等待其完成。",
         "device.inspect_full": "检查兼容性",
-        "device.inspect_hint": "读取设备提供的服务和特征，不向其发送任何内容，也不改变灯光。"
+        "device.inspect_hint": "读取设备提供的服务和特征，不向其发送任何内容，也不改变灯光。",
+        "device.status.checking": "正在检查设备…",
+        "device.status.problem": "出现问题",
+        "device.status.supported_selected": "已找到受支持的控制器",
+        "device.status.unknown_selected": "未识别",
+        "device.fact.power": "电源",
+        "device.fact.color": "颜色",
+        "device.fact.brightness": "亮度",
+        "device.fact.effects": "效果",
+        "device.fact.yes": "是",
+        "device.fact.no": "否",
+        "device.meta.driver": "协议：{driver}",
+        "device.meta.signal": "信号：{rssi} dBm",
+        "device.meta.unknown_protocol": "协议未知 — 请检查设备以了解它提供什么"
     }
 }

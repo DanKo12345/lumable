@@ -126,6 +126,16 @@ class LedBleDriver:
     def brightness_payloads(self, value_percent: int) -> list[bytes]:
         raise NotImplementedError
 
+    def supports_brightness(self) -> bool:
+        """Whether this driver has a brightness command, asked without using it.
+
+        Answering by calling ``brightness_payloads`` would be a side effect:
+        several drivers remember the value they were handed and use it for the
+        next colour write. Drawing the device card must not decide how bright
+        the next command turns out.
+        """
+        return type(self).brightness_payloads is not LedBleDriver.brightness_payloads
+
     def effect_payload(self, code: int) -> bytes | None:
         return None
 

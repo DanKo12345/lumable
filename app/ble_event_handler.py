@@ -318,6 +318,7 @@ class BleEventHandler:
         # A new scan replaces the device list the running check was about, so any
         # result still on its way is no longer answering a question we have.
         host._inspection_token += 1
+        host._clear_device_problem()
         host._scan_in_progress = True
         host._devices = []
         host.device_combo.clear()
@@ -360,6 +361,7 @@ class BleEventHandler:
         if host._inspect_in_progress:
             self.show_error(host._tr("error.wait_inspect"))
             return
+        host._device_problem = ""  # a new attempt clears the last complaint
         device = host._devices[index]
         if device.get("supported", True) is False:
             # Never the ordinary connect path for a device no driver claims:

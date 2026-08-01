@@ -121,6 +121,10 @@ class FakeHost:
     # A read-only compatibility check, tracked apart from a connection.
     _inspect_in_progress: bool = False
     _inspection_token: int = 0
+    _device_problem: str = ""
+
+    def _clear_device_problem(self) -> None:
+        self._device_problem = ""
     _settings: dict[str, Any] = field(default_factory=dict)
     _ui_feedback: FakeFeedback = field(default_factory=FakeFeedback)
 

@@ -46,6 +46,7 @@ from app.constants import (
     WINDOW_MIN_HEIGHT,
     WINDOW_MIN_WIDTH,
 )
+from app.device_view_state import describe_device
 from app.diagnostics_controller import DiagnosticsController
 from app.diy_ui_controller import DiyUiController
 from app.feature_gate import FREE_COLOR_HISTORY_COUNT, PRO_COLOR_HISTORY_COUNT, can_use
@@ -188,6 +189,8 @@ class MainWindow(QMainWindow):
         # Bumped by anything that makes an in-flight check irrelevant — a new
         # scan, closing the window — so its result can be recognised as stale.
         self._inspection_token = 0
+        # Last failure worth showing on the card; cleared by the next attempt.
+        self._device_problem = ""
         self._connection_status_phase = 0
         self._status_pulsing = False
         self._focus_follow_wired = False
@@ -557,7 +560,7 @@ class MainWindow(QMainWindow):
         self.scan_button.clicked.connect(self._ble_events.start_scan)
         self.connect_button.clicked.connect(self._ble_events.handle_connect)
         self._ble.inspection_finished.connect(self._on_inspection_finished)
-        self.device_combo.currentIndexChanged.connect(lambda _index: self._sync_connect_buttons())
+        self.device_combo.currentIndexChanged.connect(self._on_device_selection_changed)
         self.disconnect_button.clicked.connect(self._ble.disconnect)
         self.add_mirror_button.clicked.connect(self._ble_events.request_add_mirror)
         self.logs_toggle_button.clicked.connect(self._show_logs_overlay)
@@ -999,9 +1002,69 @@ class MainWindow(QMainWindow):
         # light"); when the strip is off it falls back to a neutral glass look.
         self.power_button.set_role("led" if powered_on else "ghost")
 
+    def _device_view(self):
+        """Ask the one function what the card should be saying.
+
+        The connected details come from the diagnostics snapshot the controller
+        already produces, so the card and the report can never disagree.
+        """
+        snapshot = self._ble.diagnostics_snapshot() if self._is_connected else {}
+        return describe_device(
+            connected=bool(self._is_connected),
+            scanning=bool(self._scan_in_progress),
+            connecting=bool(self._connect_in_progress),
+            checking=bool(self._inspect_in_progress),
+            error=getattr(self, "_device_problem", ""),
+            selected=self._selected_device(),
+            connected_name=str(
+                self._settings.get("last_device_name")
+                or self._settings.get("last_device_address")
+                or ""
+            ),
+            driver_name=str((snapshot.get("driver") or {}).get("name", "")),
+            connected_rssi=(snapshot.get("device") or {}).get("rssi"),
+            capabilities=snapshot.get("commands") or None,
+        )
+
+    def _render_device_meta(self, view) -> None:
+        """Second line of the card: protocol, signal, capabilities.
+
+        Rendered from the view-state only — the widget never re-derives any of
+        it, so there is one answer to "what is this device" and not three.
+        """
+        meta = getattr(self, "device_primary_meta", None)
+        if meta is None:
+            return
+        parts: list[str] = []
+        if view.detail and view.state in ("error", "unknown", "checking"):
+            # For these three the detail *is* the message — a failure, the name
+            # of an unrecognised device, the one being checked. Without it the
+            # card falls back to "pick a controller above", which reads as if
+            # nothing had happened at all.
+            parts.append(view.detail)
+        if view.driver_name:
+            parts.append(self._tr("device.meta.driver", driver=view.driver_name))
+        elif view.is_unknown:
+            parts.append(self._tr("device.meta.unknown_protocol"))
+        if view.signal_rssi is not None:
+            parts.append(self._tr("device.meta.signal", rssi=view.signal_rssi))
+        parts.extend(f"{self._tr(label)}: {self._tr(value) if value.startswith('device.fact.') else value}"
+                     for label, value in view.facts)
+        meta.setText("  ·  ".join(parts) if parts else self._tr("device.primary_empty"))
+
     def _describe_connect_button(self, name: str, hint: str) -> None:
         self.connect_button.setAccessibleName(name)
         self.connect_button.setToolTip(hint)
+
+    def _on_device_selection_changed(self, _index: int) -> None:
+        self._clear_device_problem()
+        self._sync_connect_buttons()
+
+    def _clear_device_problem(self) -> None:
+        """Drop the last failure. Anything that changes what the card is about —
+        a different device, a new scan — makes the old complaint misleading."""
+        if getattr(self, "_device_problem", ""):
+            self._device_problem = ""
 
     def _selected_device(self) -> dict | None:
         index = self.device_combo.currentIndex()
@@ -1021,7 +1084,9 @@ class MainWindow(QMainWindow):
         self._sync_connect_buttons()
         if inspection.error:
             # The user gets what to do about it, not the exception text.
-            self._show_error(self._tr("device.inspect_failed"))
+            self._device_problem = self._tr("device.inspect_failed")
+            self._show_error(self._device_problem)
+            self._sync_connect_buttons()
             return
         services = len(inspection.services)
         characteristics = sum(len(service.characteristics) for service in inspection.services)
@@ -1043,6 +1108,8 @@ class MainWindow(QMainWindow):
         elif self._connection_status_timer.isActive():
             self._connection_status_timer.stop()
         self._update_status_dot()
+        view = self._device_view()
+        self._render_device_meta(view)
         inspecting = bool(self._inspect_in_progress)
         busy = connecting or self._scan_in_progress or inspecting
         self.scan_button.setEnabled(not connected and not busy)

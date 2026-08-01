@@ -976,6 +976,19 @@
         "device.inspect_failed": "The device did not answer. It may be connected in its phone app — close that app, turn the phone's Bluetooth off, and try again.",
         "error.wait_inspect": "A compatibility check is already running. Wait for it to finish.",
         "device.inspect_full": "Check compatibility",
-        "device.inspect_hint": "Reads what the device offers — services and characteristics — without sending it anything or changing its lights."
+        "device.inspect_hint": "Reads what the device offers — services and characteristics — without sending it anything or changing its lights.",
+        "device.status.checking": "Checking the device…",
+        "device.status.problem": "Something went wrong",
+        "device.status.supported_selected": "Supported controller found",
+        "device.status.unknown_selected": "Not recognised",
+        "device.fact.power": "Power",
+        "device.fact.color": "Colour",
+        "device.fact.brightness": "Brightness",
+        "device.fact.effects": "Effects",
+        "device.fact.yes": "yes",
+        "device.fact.no": "no",
+        "device.meta.driver": "Protocol: {driver}",
+        "device.meta.signal": "Signal: {rssi} dBm",
+        "device.meta.unknown_protocol": "Protocol unknown — check the device to find out what it offers"
     }
 }

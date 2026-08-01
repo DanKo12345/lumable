@@ -976,6 +976,19 @@
         "device.inspect_failed": "Устройство не ответило. Возможно, оно подключено в приложении на телефоне — закройте его, выключите там Bluetooth и попробуйте снова.",
         "error.wait_inspect": "Проверка совместимости уже выполняется. Дождитесь её завершения.",
         "device.inspect_full": "Проверить совместимость",
-        "device.inspect_hint": "Читает, что устройство предлагает — сервисы и характеристики — ничего ему не отправляя и не меняя свет."
+        "device.inspect_hint": "Читает, что устройство предлагает — сервисы и характеристики — ничего ему не отправляя и не меняя свет.",
+        "device.status.checking": "Проверяем устройство…",
+        "device.status.problem": "Что-то пошло не так",
+        "device.status.supported_selected": "Найден поддерживаемый контроллер",
+        "device.status.unknown_selected": "Не распознан",
+        "device.fact.power": "Питание",
+        "device.fact.color": "Цвет",
+        "device.fact.brightness": "Яркость",
+        "device.fact.effects": "Эффекты",
+        "device.fact.yes": "да",
+        "device.fact.no": "нет",
+        "device.meta.driver": "Протокол: {driver}",
+        "device.meta.signal": "Сигнал: {rssi} дБм",
+        "device.meta.unknown_protocol": "Протокол неизвестен — проверьте устройство, чтобы узнать, что оно предлагает"
     }
 }

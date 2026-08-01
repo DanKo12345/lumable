@@ -976,6 +976,19 @@
         "device.inspect_failed": "El dispositivo no respondió. Puede estar conectado en su aplicación del teléfono: ciérrala, desactiva el Bluetooth del teléfono e inténtalo de nuevo.",
         "error.wait_inspect": "Ya hay una comprobación en curso. Espera a que termine.",
         "device.inspect_full": "Comprobar compatibilidad",
-        "device.inspect_hint": "Lee lo que ofrece el dispositivo — servicios y características — sin enviarle nada ni cambiar su luz."
+        "device.inspect_hint": "Lee lo que ofrece el dispositivo — servicios y características — sin enviarle nada ni cambiar su luz.",
+        "device.status.checking": "Comprobando el dispositivo…",
+        "device.status.problem": "Algo salió mal",
+        "device.status.supported_selected": "Controlador compatible encontrado",
+        "device.status.unknown_selected": "Sin reconocer",
+        "device.fact.power": "Encendido",
+        "device.fact.color": "Color",
+        "device.fact.brightness": "Brillo",
+        "device.fact.effects": "Efectos",
+        "device.fact.yes": "sí",
+        "device.fact.no": "no",
+        "device.meta.driver": "Protocolo: {driver}",
+        "device.meta.signal": "Señal: {rssi} dBm",
+        "device.meta.unknown_protocol": "Protocolo desconocido: comprueba el dispositivo para ver qué ofrece"
     }
 }

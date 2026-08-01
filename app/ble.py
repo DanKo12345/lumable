@@ -896,7 +896,11 @@ class BleController(QObject):
         brightness = False
         speed = False
         try:
-            brightness = bool(driver.brightness_payloads(50))
+            # Asked, not exercised: the old probe built a real 50% payload, and
+            # drivers that remember the last brightness would then apply it to
+            # the next colour command — so merely rendering the card changed the
+            # light.
+            brightness = bool(driver.supports_brightness())
         except DRIVER_CAPABILITY_ERRORS:
             brightness = False
         try:
