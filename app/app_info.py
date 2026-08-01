@@ -4,7 +4,7 @@ APP_NAME = "LumaBLE"
 APP_AUTHOR = "dollza"
 APP_AUTHOR_SIGNATURE = "by dollza"
 APP_ORGANIZATION = "LumaBLE"
-APP_VERSION = "0.3.6"
+APP_VERSION = "0.3.7"
 # LumaBLE currently ships as a beta, so the updater must offer GitHub releases
 # marked ``prerelease: true`` — otherwise a beta user would never see the next
 # beta. This is a property of the build, not a user-facing channel switch; flip

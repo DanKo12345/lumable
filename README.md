@@ -79,6 +79,21 @@ run while LumaBLE is closed. Hardware compatibility is never restricted to Pro.
 - BanlanX SP61x / SP62x BLE controllers.
 - Triones / Happy Lighting compatible BLE controllers.
 
+### Recognised, control not yet supported
+
+- **BanlanX SP630E** — LumaBLE identifies it from its advertisement, but does not send it commands.
+  The command protocol has not been verified against real hardware yet. Select it and use
+  **Check** to run a read-only look at what it offers, then save the **BLE scan report** from
+  Diagnostics and attach it to
+  [issue #2](https://github.com/DanKo12345/lumable/issues/2).
+
+### Reporting a controller LumaBLE does not know
+
+Run a scan, then **Diagnostics → BLE scan report**. The file records what every nearby device
+broadcast — including devices filtered out of the visible list, which is where an unrecognised
+controller ends up. It can contain technical identifiers inside the advertised payloads, so have a
+look before posting it publicly.
+
 Support depends on the protocol advertised by the controller, not only the product name. If a model
 is missing, use the
 [Unsupported controller form](https://github.com/DanKo12345/lumable/issues/new?template=unsupported_controller.yml).

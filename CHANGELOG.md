@@ -2,6 +2,21 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.3.7] - 2026-08-01
+
+Controller compatibility: LumaBLE can now say what it found, what it cannot drive and why — and hand you a file that makes support possible for a controller nobody here owns.
+
+### Added
+- **BLE scan report** in Diagnostics: everything nearby devices broadcast, manufacturer data included, and devices filtered out of the visible list — which is exactly where an unrecognised controller ends up.
+- **Check** replaces Connect for an unrecognised device: a read-only look at its services and characteristics that writes nothing, guesses no protocol and leaves the strip's state alone.
+- **BanlanX SP630E is recognised** from its advertising signature and named as such. Control is not supported yet and no commands are sent to it.
+- The device card now states one thing at a time — supported, unrecognised, checking, connected or a problem — with protocol, signal and capabilities.
+
+### Fixed
+- Every anonymous device in range was offered as a possible LED strip: nameless devices arrive as "Unknown BLE Device", and the "ble" in that placeholder matched the name heuristic.
+- Drawing the device card could change the light. The capability probe built a real 50% brightness payload, and drivers that remember the last brightness applied it to the next colour command.
+- An unrecognised device was invited to connect, on the theory that a failed connect yields a diagnostic. It no longer is.
+
 ## [0.3.6] - 2026-07-30
 
 Automations: schedules and App Triggers become one rule system that can explain what ran, why a rule was skipped and whether Windows can run it while LumaBLE is closed.
