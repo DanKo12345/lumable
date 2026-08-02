@@ -100,10 +100,19 @@ class PanelHost(Protocol):
     diagnostics_card: GlassCard
     diagnostics_output: object
     diagnostics_support_label: QLabel
+    diagnostics_report_label: QLabel
+    diagnostics_logs_label: QLabel
+    diagnostics_logs_hint: QLabel
+    diagnostics_scan_label: QLabel
+    diagnostics_scan_hint: QLabel
+    diagnostics_update_label: QLabel
+    diagnostics_update_hint: QLabel
+    diagnostics_tools_list: QWidget
     copy_diagnostics_button: LiquidButton
     report_device_button: LiquidButton
     show_logs_button: LiquidButton
     export_diagnostics_button: LiquidButton
+    export_scan_button: LiquidButton
 
     schedule_card: GlassCard
     schedule_runtime_note: QLabel

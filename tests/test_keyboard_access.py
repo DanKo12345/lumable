@@ -501,6 +501,113 @@ def test_clicking_a_diy_step_chip_targets_that_step(monkeypatch) -> None:
         app.processEvents()
 
 
+def test_diy_motion_names_fit_inside_their_chips(monkeypatch) -> None:
+    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
+    invalidate_pro_cache()
+
+    from app.diy_effects import MOTION_KEYS
+    from app.widgets.diy_row import DiyRow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        window._diy_ui._steps = [
+            {"id": index + 1, "rgb": [120, 80, 200], "duration_ms": 1000, "motion": motion}
+            for index, motion in enumerate(MOTION_KEYS)
+        ]
+        window._diy_ui._rebuild_rows()
+        app.processEvents()
+
+        chips = window.diy_list.findChildren(ValueChip)
+        motion_chips = chips[::2]
+        assert len(motion_chips) == len(MOTION_KEYS)
+        for chip in motion_chips:
+            text_width = chip.fontMetrics().horizontalAdvance(chip.text())
+            assert chip.width() >= text_width + 20, f"{chip.text()!r} is clipped inside the motion chip"
+            row = chip.parentWidget()
+            while row is not None and not isinstance(row, DiyRow):
+                row = row.parentWidget()
+            assert row is not None
+            chip_rect = chip.rect().translated(chip.mapTo(row, QPoint(0, 0)))
+            assert row.rect().contains(chip_rect), f"{chip.text()!r} runs outside its DIY row"
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_diy_library_actions_stay_compact_and_named_at_the_minimum_size(monkeypatch) -> None:
+    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
+    invalidate_pro_cache()
+
+    from app.widgets.diy_row import DiyRow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        window.show()
+        select_section(window, "effects")
+        app.processEvents()
+        window.body_scroll.ensureWidgetVisible(window.diy_card, 0, 16)
+        app.processEvents()
+
+        assert window.diy_save_button.text()
+        for button in (
+            window.diy_delete_button,
+            window.diy_share_button,
+            window.diy_import_button,
+        ):
+            assert button.text() == ""
+            assert button.accessibleName()
+            assert button.toolTip()
+            assert button.width() == button.height()
+
+        def left(widget) -> int:
+            return widget.mapTo(window.diy_card, QPoint(0, 0)).x()
+
+        def right(widget) -> int:
+            return left(widget) + widget.width()
+
+        left_column = (
+            window.diy_library_label,
+            window.diy_saved_combo,
+            window.diy_timeline_label,
+            window.diy_timeline_hint,
+            window.diy_preview,
+            window.diy_list,
+            window.diy_add_button,
+            window.diy_playback_label,
+            window.diy_transition_label,
+        )
+        assert len({left(widget) for widget in left_column}) == 1
+
+        right_column = (
+            window.diy_import_button,
+            window.diy_timeline_label,
+            window.diy_preview,
+            window.diy_list,
+            window.diy_speed_value,
+            window.diy_run_button,
+        )
+        assert len({right(widget) for widget in right_column}) == 1
+
+        rows = window.diy_list.findChildren(DiyRow)
+        assert len(rows) >= 2
+        preview_bottom = window.diy_preview.mapTo(window.diy_card, QPoint(0, 0)).y() + window.diy_preview.height()
+        first_top = rows[0].mapTo(window.diy_card, QPoint(0, 0)).y()
+        first_bottom = first_top + rows[0].height()
+        second_top = rows[1].mapTo(window.diy_card, QPoint(0, 0)).y()
+        assert first_top - preview_bottom == second_top - first_bottom
+        assert window.diy_preview.height() >= window._sz(44)
+        assert window.body_scroll.horizontalScrollBar().maximum() == 0
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def test_timer_pill_purpose_follows_the_language() -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow()

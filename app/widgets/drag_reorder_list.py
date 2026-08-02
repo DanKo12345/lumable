@@ -15,12 +15,12 @@ class DragReorderList(QWidget):
 
     reordered = Signal(list)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, spacing: int = 8) -> None:
         super().__init__(parent)
         self.setAcceptDrops(True)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(8)
+        self._layout.setSpacing(spacing)
 
     def clear(self) -> None:
         while self._layout.count():

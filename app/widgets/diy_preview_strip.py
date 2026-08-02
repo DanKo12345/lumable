@@ -4,7 +4,15 @@ from PySide6.QtCore import QElapsedTimer, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
-from app.diy_effects import DiyEffect, color_at, duration_scale, total_duration_ms
+from app.diy_effects import (
+    DiyEffect,
+    color_at,
+    duration_scale,
+    timeline_boundaries,
+    timeline_stops,
+    total_duration_ms,
+)
+from app.theme import qcolor_from_token, theme_manager
 
 
 class DiyPreviewStrip(QWidget):
@@ -26,7 +34,7 @@ class DiyPreviewStrip(QWidget):
         self._timer.setTimerType(Qt.PreciseTimer)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._advance)
-        self.setMinimumHeight(26)
+        self.setMinimumHeight(48)
 
     def set_colors(self, colors: list[tuple[int, int, int]]) -> None:
         self._colors = [tuple(c) for c in colors] or [(40, 40, 44)]
@@ -86,37 +94,53 @@ class DiyPreviewStrip(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         rect = QRectF(self.rect()).adjusted(1.0, 1.0, -1.0, -1.0)
-        radius = rect.height() / 2.0
-        path = QPainterPath()
-        path.addRoundedRect(rect, radius, radius)
+        outer_radius = 11.0
+        outer_path = QPainterPath()
+        outer_path.addRoundedRect(rect, outer_radius, outer_radius)
+        painter.fillPath(outer_path, qcolor_from_token(theme_manager.palette["field_alt"]))
+        painter.setPen(QPen(qcolor_from_token(theme_manager.palette["field_border"]), 1.0))
+        painter.drawPath(outer_path)
 
-        grad = QLinearGradient(rect.left(), 0.0, rect.right(), 0.0)
-        colors = self._colors
-        if len(colors) == 1:
-            grad.setColorAt(0.0, QColor(*colors[0]))
-            grad.setColorAt(1.0, QColor(*colors[0]))
+        track = rect.adjusted(9.0, 10.0, -9.0, -10.0)
+        radius = track.height() / 2.0
+        path = QPainterPath()
+        path.addRoundedRect(track, radius, radius)
+
+        grad = QLinearGradient(track.left(), 0.0, track.right(), 0.0)
+        if self._effect is not None:
+            for position, color in timeline_stops(self._effect):
+                grad.setColorAt(max(0.0, min(1.0, position)), QColor(*color))
         else:
-            seq = [*colors, colors[0]]  # loop back so it reads as a cycle
-            span = len(seq) - 1
-            for index, color in enumerate(seq):
-                qc = QColor(*color)
-                if self._smooth:
+            colors = self._colors
+            if len(colors) == 1:
+                grad.setColorAt(0.0, QColor(*colors[0]))
+                grad.setColorAt(1.0, QColor(*colors[0]))
+            else:
+                seq = [*colors, colors[0]]
+                span = len(seq) - 1
+                for index, color in enumerate(seq):
+                    qc = QColor(*color)
                     grad.setColorAt(index / span, qc)
-                else:
-                    grad.setColorAt(min(1.0, index / span), qc)
-                    if index < span:
-                        grad.setColorAt(min(1.0, (index + 1) / span - 1e-4), qc)
         painter.fillPath(path, grad)
+
+        if self._effect is not None:
+            painter.save()
+            painter.setClipPath(path)
+            painter.setPen(QPen(QColor(255, 255, 255, 85), 1.0))
+            for boundary in timeline_boundaries(self._effect):
+                x = track.left() + boundary * track.width()
+                painter.drawLine(QPointF(x, track.top() + 3.0), QPointF(x, track.bottom() - 3.0))
+            painter.restore()
 
         head = self._playhead()
         if head is not None:
             phase, color = head
             painter.setClipPath(path)  # keep the bead inside the rounded strip
-            cx = rect.left() + phase * rect.width()
-            cy = rect.center().y()
+            cx = track.left() + phase * track.width()
+            cy = track.center().y()
             qc = QColor(*color)
             level = max(color) / 255.0  # brightness drives size + glow → shows motion
-            bead_r = rect.height() * (0.30 + 0.10 * level)
+            bead_r = track.height() * (0.34 + 0.10 * level)
 
             # soft outer halo (tinted with the current colour)
             halo_r = bead_r * 1.9

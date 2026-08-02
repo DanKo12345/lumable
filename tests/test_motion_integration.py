@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QPropertyAnimation, Qt
+from PySide6.QtCore import QAbstractAnimation, QObject, QPropertyAnimation, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -103,10 +103,9 @@ def test_combo_popup_restores_scrollbar_policy_when_reduced(preserve_motion_poli
         app.processEvents()
 
 
-def test_onboarding_open_and_step_transition_land_final_state_when_reduced(preserve_motion_policy) -> None:
-    """Reduced motion must complete both the onboarding open (dropping the
-    overlay effect via the fade's finished) and a step change synchronously,
-    landing on the new step with _sliding cleared."""
+def test_onboarding_open_and_tour_transition_land_final_state_when_reduced(preserve_motion_policy) -> None:
+    """Reduced motion completes the welcome opening and moves the spotlight
+    without leaving a position or scroll animation running."""
     from app.widgets.onboarding_overlay import OnboardingOverlay
 
     policy = preserve_motion_policy
@@ -114,8 +113,15 @@ def test_onboarding_open_and_step_transition_land_final_state_when_reduced(prese
     policy.set_mode("reduced")
 
     labels = {
-        "skip": "Skip", "scan": "Scan", "back": "Back", "next": "Next", "finish": "Finish",
-        "steps": [{"title": "One", "body": "First"}, {"title": "Two", "body": "Second"}],
+        "skip": "Skip",
+        "tour": "Tour",
+        "back": "Back",
+        "next": "Next",
+        "finish": "Finish",
+        "tour_steps": [
+            {"section": "color", "target": "missing", "title": "One", "body": "First"},
+            {"section": "settings", "target": "missing", "title": "Two", "body": "Second"},
+        ],
     }
     app = QApplication.instance() or QApplication([])
     parent = QWidget()
@@ -130,11 +136,11 @@ def test_onboarding_open_and_step_transition_land_final_state_when_reduced(prese
         assert overlay._opacity_effect is None
         assert overlay._panel.pos() == overlay._panel_anim.endValue()
 
-        # Step transition runs the whole slide-out → slide-in chain synchronously.
+        # Starting the tour lands on its first step without a moving spotlight.
         overlay._next()
         app.processEvents()
-        assert overlay._index == 1
-        assert overlay._sliding is False
+        assert overlay._tour_index == 0
+        assert overlay._spot_anim.state() == QAbstractAnimation.Stopped
     finally:
         overlay.hide()
         parent.deleteLater()

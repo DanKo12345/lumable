@@ -303,18 +303,18 @@ class BleEventHandler:
                     combo.setItemText(index, self._device_label(device))
                     break
 
-    def start_scan(self) -> None:
+    def start_scan(self) -> bool:
         host = self._host
         if host._is_connected:
             self.show_error(host._tr("error.disconnect_before_scan"))
-            return
+            return False
         if host._connect_in_progress:
             self.show_error(host._tr("error.wait_inspect") if host._inspect_in_progress
                             else host._tr("error.wait_connect"))
-            return
+            return False
         if host._inspect_in_progress:
             self.show_error(host._tr("error.wait_inspect"))
-            return
+            return False
         # A new scan replaces the device list the running check was about, so any
         # result still on its way is no longer answering a question we have.
         host._inspection_token += 1
@@ -328,6 +328,7 @@ class BleEventHandler:
         self._sync_device_onboarding_hint()
         host._sync_connect_buttons()
         host._ble.scan()
+        return True
 
     def connect_or_scan(self) -> None:
         """Use an existing scan result before starting the scanner again.

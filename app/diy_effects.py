@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from app import software_effects as sfx
@@ -14,7 +15,7 @@ RGB = tuple[int, int, int]
 # pure maths here so it can stream to any controller via the colour-stream engine.
 
 MIN_STEPS = 2
-MAX_STEPS = 8
+MAX_STEPS = 12
 MIN_MS = 0
 MAX_MS = 10_000
 
@@ -22,7 +23,16 @@ MAX_MS = 10_000
 # while it's on-screen (during its whole transition + hold span), reusing the
 # software-effect generators. "none" leaves the colour steady. One motion cycle
 # spans MOTION_PERIOD_MS so the liveliness reads the same regardless of step length.
-MOTION_KEYS: tuple[str, ...] = ("none", "breathe", "pulse", "twinkle", "strobe")
+MOTION_KEYS: tuple[str, ...] = (
+    "none",
+    "breathe",
+    "pulse",
+    "twinkle",
+    "flicker",
+    "fade_in",
+    "fade_out",
+    "strobe",
+)
 MOTION_PERIOD_MS = 1500
 _MOTION_FUNCS = {
     "breathe": sfx.breathing,
@@ -50,8 +60,68 @@ def total_duration_ms(effect: DiyEffect) -> int:
     return sum(step.transition_ms + step.hold_ms for step in effect.steps)
 
 
-def _apply_motion(motion: str, rgb: RGB, t_in_step_ms: float) -> RGB:
+def timeline_stops(effect: DiyEffect) -> tuple[tuple[float, RGB], ...]:
+    """Gradient stops that describe the real, duration-weighted DIY timeline."""
+    total = total_duration_ms(effect)
+    if not effect.steps:
+        return ((0.0, (40, 40, 44)), (1.0, (40, 40, 44)))
+    if total <= 0:
+        color = effect.steps[0].rgb
+        return ((0.0, color), (1.0, color))
+
+    stops: list[tuple[float, RGB]] = []
+    cursor = 0
+    previous = effect.steps[-1].rgb
+    for step in effect.steps:
+        start = cursor / total
+        if step.transition_ms > 0:
+            stops.append((start, previous))
+            cursor += step.transition_ms
+            stops.append((cursor / total, step.rgb))
+        else:
+            # The preceding hold already ends at this same position. Two colours
+            # at one stop make the preview show the same hard cut as playback.
+            stops.append((start, step.rgb))
+        cursor += step.hold_ms
+        stops.append((cursor / total, step.rgb))
+        previous = step.rgb
+    return tuple(stops)
+
+
+def timeline_boundaries(effect: DiyEffect) -> tuple[float, ...]:
+    """End position of every step except the last, in the 0..1 timeline."""
+    total = total_duration_ms(effect)
+    if total <= 0:
+        return ()
+    cursor = 0
+    boundaries: list[float] = []
+    for step in effect.steps[:-1]:
+        cursor += step.transition_ms + step.hold_ms
+        boundaries.append(cursor / total)
+    return tuple(boundaries)
+
+
+def _scale(rgb: RGB, level: float) -> RGB:
+    return (
+        max(0, min(255, round(rgb[0] * level))),
+        max(0, min(255, round(rgb[1] * level))),
+        max(0, min(255, round(rgb[2] * level))),
+    )
+
+
+def _apply_motion(motion: str, rgb: RGB, t_in_step_ms: float, span_ms: float) -> RGB:
     """Modulate ``rgb`` by the step's motion at ``t_in_step_ms`` into the step."""
+    progress = max(0.0, min(1.0, t_in_step_ms / span_ms)) if span_ms > 0 else 1.0
+    if motion == "fade_in":
+        return _scale(rgb, 0.08 + 0.92 * progress)
+    if motion == "fade_out":
+        return _scale(rgb, 1.0 - 0.92 * progress)
+    if motion == "flicker":
+        phase = (t_in_step_ms % MOTION_PERIOD_MS) / MOTION_PERIOD_MS
+        level = 0.58 + 0.22 * math.sin(phase * math.tau * 2.7 + 1.3) + 0.14 * math.sin(
+            phase * math.tau * 6.1 + 0.7
+        )
+        return _scale(rgb, max(0.22, min(1.0, level)))
     func = _MOTION_FUNCS.get(motion)
     if func is None:
         return rgb
@@ -66,7 +136,7 @@ def color_at(effect: DiyEffect, t_ms: float) -> RGB:
         return (0, 0, 0)
     total = total_duration_ms(effect)
     if total <= 0:
-        return _apply_motion(steps[0].motion, steps[0].rgb, 0.0)
+        return _apply_motion(steps[0].motion, steps[0].rgb, 0.0, 0.0)
     t = t_ms % total
     prev = steps[-1].rgb  # loop: first step fades in from the last colour
     for step in steps:
@@ -77,10 +147,10 @@ def color_at(effect: DiyEffect, t_ms: float) -> RGB:
                 base = lerp_rgb(prev, step.rgb, frac)
             else:
                 base = step.rgb
-            return _apply_motion(step.motion, base, t)
+            return _apply_motion(step.motion, base, t, span)
         t -= span
         prev = step.rgb
-    return _apply_motion(steps[-1].motion, steps[-1].rgb, 0.0)
+    return _apply_motion(steps[-1].motion, steps[-1].rgb, 0.0, 0.0)
 
 
 def duration_scale(speed: int) -> float:

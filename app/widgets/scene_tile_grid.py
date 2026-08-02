@@ -78,6 +78,10 @@ class SceneTile(QRadioButton):
     def scene_id(self) -> str:
         return self._data.scene_id
 
+    @property
+    def data(self) -> SceneTileData:
+        return self._data
+
     def set_active(self, active: bool) -> None:
         active = bool(active)
         if active == self.isChecked():

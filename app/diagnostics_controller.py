@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileDialog
 
@@ -30,6 +30,10 @@ class DiagnosticsController:
 
     def __init__(self, host: Any) -> None:
         self._host = host
+        self._save_after_scan = False
+        discovered = getattr(getattr(host, "_ble", None), "devices_discovered", None)
+        if discovered is not None and hasattr(discovered, "connect"):
+            discovered.connect(self._on_scan_completed)
 
     def text(self, *, include_crashes: bool = False) -> str:
         host = self._host
@@ -139,7 +143,15 @@ class DiagnosticsController:
         snapshot = host._ble.scan_snapshot()
         state = snapshot_state(snapshot, len(getattr(host._ble, "_unknown_devices", [])))
         if state == STATE_NO_SNAPSHOT:
-            host._show_error(host._tr("scan_snapshot.none_yet"))
+            self._save_after_scan = True
+            if not host._ble_events.start_scan():
+                self._save_after_scan = False
+                return
+            scroll = getattr(host, "body_scroll", None)
+            card = getattr(host, "device_card", None)
+            if scroll is not None and card is not None:
+                scroll.ensureWidgetVisible(card, 0, 24)
+            host._log(host._tr("scan_snapshot.started_for_export"))
             return
         if state == STATE_EMPTY:
             host._show_error(host._tr("scan_snapshot.nothing_found"))
@@ -161,6 +173,12 @@ class DiagnosticsController:
             return
         host._log(host._tr("scan_snapshot.saved", path=Path(path).name))
         self._reveal_in_explorer(Path(path))
+
+    def _on_scan_completed(self, _devices: list[dict[str, Any]]) -> None:
+        if not self._save_after_scan:
+            return
+        self._save_after_scan = False
+        QTimer.singleShot(0, self._host, self.export_scan_snapshot)
 
     @staticmethod
     def _reveal_in_explorer(path: Path) -> None:

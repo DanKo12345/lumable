@@ -613,18 +613,20 @@ def validate_hotkeys(data: Any) -> dict[str, Any]:
 
 
 def validate_diy(data: Any) -> dict[str, Any]:
+    from app.diy_effects import MAX_STEPS, MOTION_KEYS
+
     if not isinstance(data, dict):
         data = {}
     steps: list[dict[str, Any]] = []
     raw_steps = data.get("steps", [])
     if isinstance(raw_steps, list):
-        for item in raw_steps[:8]:
+        for item in raw_steps[:MAX_STEPS]:
             if not isinstance(item, dict):
                 continue
             rgb = item.get("rgb", [255, 255, 255])
             rgb = rgb if isinstance(rgb, (list, tuple)) and len(rgb) == 3 else [255, 255, 255]
             motion = _coerce_str(item.get("motion"), "none")
-            if motion not in {"none", "breathe", "pulse", "twinkle", "strobe"}:
+            if motion not in MOTION_KEYS:
                 motion = "none"
             steps.append({
                 "rgb": [_coerce_int(rgb[0], 255, 0, 255), _coerce_int(rgb[1], 255, 0, 255), _coerce_int(rgb[2], 255, 0, 255)],

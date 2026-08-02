@@ -114,14 +114,20 @@ class DiyUiController:
         index = combo.findData(select_name) if select_name else 0
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)
+        self._sync_library_actions()
 
     def _on_saved_selected(self) -> None:
         name = str(self._host.diy_saved_combo.currentData() or "")
+        self._sync_library_actions()
         if not name:
             return
         entry = next((e for e in self._saved_list() if str(e.get("name", "")) == name), None)
         if entry is not None:
             self._load_effect(entry)
+
+    def _sync_library_actions(self) -> None:
+        name = str(self._host.diy_saved_combo.currentData() or "")
+        self._host.diy_delete_button.setEnabled(bool(name) and can_use("diy_effects"))
 
     def _load_effect(self, entry: dict) -> None:
         host = self._host
@@ -308,7 +314,7 @@ class DiyUiController:
 
         # Fixed right-side grid: motion / duration / remove.
         right = QWidget()
-        right.setFixedWidth(host._sz(260))
+        right.setFixedWidth(host._sz(310))
         right_layout = QHBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(host._sz(8))
@@ -317,6 +323,8 @@ class DiyUiController:
 
         motion_key = _clean_motion(step.get("motion", "none"))
         motion = host._pill(host._tr(f"diy.motion_{motion_key}"))
+        text_width = motion.fontMetrics().horizontalAdvance(motion.text())
+        motion.setFixedWidth(max(host._sz(74), text_width + host._sz(30)))
         motion.setToolTip(host._tr("diy.motion_hint"))
         # These chips sit in a bare row with no label beside them, so the
         # purpose has to come from the tooltip's wording.
@@ -502,6 +510,7 @@ class DiyUiController:
 
         self._fx.start(sink)
         self._set_manual_controls_enabled(False)
+        host.diy_run_button.set_icon_kind("square")
         host.diy_run_button.setText(host._tr("diy.stop"))
         host._log(host._tr("diy.started_log"))
 
@@ -511,6 +520,7 @@ class DiyUiController:
         self._fx.stop()
         self._set_manual_controls_enabled(True)
         host.diy_run_button.setChecked(False)
+        host.diy_run_button.set_icon_kind("circle-play")
         host.diy_run_button.setText(host._tr("diy.run"))
         if was_running:
             host._log(host._tr("diy.stopped_log"))
@@ -574,9 +584,16 @@ class DiyUiController:
             widget = getattr(host, name, None)
             if widget is not None:
                 widget.setEnabled(unlocked)
+        self._sync_library_actions()
 
     def relocalize(self) -> None:
         host = self._host
+        host.diy_library_label.setText(host._tr("diy.library"))
+        host.diy_library_hint.setText(host._tr("diy.library_hint"))
+        host.diy_timeline_label.setText(host._tr("diy.timeline"))
+        host.diy_timeline_hint.setText(host._tr("diy.timeline_hint"))
+        host.diy_playback_label.setText(host._tr("diy.playback"))
+        host.diy_playback_hint.setText(host._tr("diy.playback_hint"))
         host.diy_add_button.setText(host._tr("diy.add_step"))
         host.diy_transition_label.setText(host._tr("diy.transition"))
         host.diy_transition_segment.set_labels({
@@ -584,13 +601,22 @@ class DiyUiController:
             "cut": host._tr("diy.transition_cut"),
         })
         self._sync_transition_segment()
-        host.diy_run_button.setText(host._tr("diy.stop") if self._fx.is_running() else host._tr("diy.run"))
+        running = self._fx.is_running()
+        host.diy_run_button.set_icon_kind("square" if running else "circle-play")
+        host.diy_run_button.setText(host._tr("diy.stop") if running else host._tr("diy.run"))
         host.diy_save_button.setText(host._tr("diy.save"))
-        host.diy_delete_button.setText(host._tr("diy.delete"))
-        host.diy_share_button.setText(host._tr("diy.share"))
-        host.diy_import_button.setText(host._tr("diy.import"))
+        for button, key in (
+            (host.diy_delete_button, "diy.delete"),
+            (host.diy_share_button, "diy.share"),
+            (host.diy_import_button, "diy.import"),
+        ):
+            label = host._tr(key)
+            button.setText("")
+            button.setAccessibleName(label)
+            button.setToolTip(label)
         host._set_slider_label_text("diy.speed", host._tr("diy.speed"))
         self._rebuild_rows()  # row labels (duration / seconds)
         current = str(host.diy_saved_combo.currentData() or "")
         self._refresh_saved_combo(select_name=current)
         self.refresh_lock()
+        self._sync_library_actions()

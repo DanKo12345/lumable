@@ -2,7 +2,7 @@
 
 All notable changes to LumaBLE will be documented here.
 
-## [0.3.7] - 2026-08-01
+## [0.3.7] - 2026-08-02
 
 Controller compatibility: LumaBLE can now say what it found, what it cannot drive and why — and hand you a file that makes support possible for a controller nobody here owns.
 
@@ -11,11 +11,19 @@ Controller compatibility: LumaBLE can now say what it found, what it cannot driv
 - **Check** replaces Connect for an unrecognised device: a read-only look at its services and characteristics that writes nothing, guesses no protocol and leaves the strip's state alone.
 - **BanlanX SP630E is recognised** from its advertising signature and named as such. Control is not supported yet and no commands are sent to it.
 - The device card now states one thing at a time — supported, unrecognised, checking, connected or a problem — with protocol, signal and capabilities.
+- A guided welcome tour demonstrates colour control, scenes, screen sync, automations, connection status and Diagnostics without sending commands to a real strip.
+- DIY effects now support up to 12 colour steps and eight per-step motions, including flicker, fade in and fade out.
+
+### Changed
+- Diagnostics has one clear reporting workflow, compact secondary tools and automatic scanning when a BLE report needs fresh data.
+- The DIY editor has a denser library, duration-weighted colour timeline, visible step boundaries and a focused playback area.
+- The welcome tour uses smoother simulated controls, stable focus frames and longer reading time while respecting Reduced Motion.
 
 ### Fixed
 - Every anonymous device in range was offered as a possible LED strip: nameless devices arrive as "Unknown BLE Device", and the "ble" in that placeholder matched the name heuristic.
 - Drawing the device card could change the light. The capability probe built a real 50% brightness payload, and drivers that remember the last brightness applied it to the next colour command.
 - An unrecognised device was invited to connect, on the theory that a failed connect yields a diagnostic. It no longer is.
+- Long DIY motion names no longer clip, and the timeline spacing remains consistent at scaled Windows DPI.
 
 ## [0.3.6] - 2026-07-30
 

@@ -298,6 +298,20 @@ def test_settings_are_not_written_without_the_lock(monkeypatch) -> None:
     assert json.loads(storage.SETTINGS_PATH.read_text(encoding="utf-8"))["language"] == "en"
 
 
+def test_diy_validation_keeps_twelve_steps_and_the_new_motions() -> None:
+    from app.diy_effects import MAX_STEPS
+
+    motions = ("flicker", "fade_in", "fade_out")
+    steps = [
+        {"rgb": [index, 80, 160], "duration_ms": 750, "motion": motions[index % len(motions)]}
+        for index in range(MAX_STEPS)
+    ]
+
+    validated = storage.validate_diy({"steps": steps})
+
+    assert validated["steps"] == steps
+
+
 def test_ensure_data_dir_migrates_old_author_data_dir(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "new"
     old_author_dir = tmp_path / "dollza" / "LumaBLE"

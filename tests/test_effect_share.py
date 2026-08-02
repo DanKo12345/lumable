@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.diy_effects import MAX_STEPS
 from app.effect_share import SHARE_PREFIX, decode_effect, encode_effect
 
 _EFFECT = {
@@ -59,3 +60,18 @@ def test_encode_clamps_and_sanitises() -> None:
     assert first["rgb"] == [255, 0, 50]
     assert first["duration_ms"] == 10_000
     assert first["motion"] == "none"  # unknown motion -> none
+
+
+def test_share_codes_keep_the_larger_palette_and_new_motion_types() -> None:
+    steps = [
+        {
+            "rgb": [index * 10, 50, 100],
+            "duration_ms": 500,
+            "motion": ("flicker", "fade_in", "fade_out")[index % 3],
+        }
+        for index in range(MAX_STEPS)
+    ]
+    decoded = decode_effect(encode_effect({**_EFFECT, "steps": steps}))
+
+    assert decoded is not None
+    assert decoded["steps"] == steps

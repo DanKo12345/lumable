@@ -28,6 +28,7 @@ build/*
 !build/release_notes_0.3.4.md
 !build/release_notes_0.3.5.md
 !build/release_notes_0.3.6.md
+!build/release_notes_0.3.7.md
 dist/
 *.spec
 aoh2_launcher_build/bin/

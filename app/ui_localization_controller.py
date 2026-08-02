@@ -430,14 +430,25 @@ class UiLocalizationController:
         if host.diagnostics_card.subtitle_label is not None:
             host.diagnostics_card.subtitle_label.setText(host._tr("diagnostics.subtitle"))
         host.diagnostics_support_label.setText(host._tr("diagnostics.support_hint"))
-        host.copy_diagnostics_button.setText(host._tr("diagnostics.copy"))
-        host.copy_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
+        host.diagnostics_report_label.setText(host._tr("diagnostics.report_section"))
+        host.diagnostics_logs_label.setText(host._tr("diagnostics.logs_title"))
+        host.diagnostics_logs_hint.setText(host._tr("diagnostics.logs_hint"))
+        host.diagnostics_scan_label.setText(host._tr("diagnostics.scan_title"))
+        host.diagnostics_scan_hint.setText(host._tr("diagnostics.scan_hint"))
+        host.diagnostics_update_label.setText(host._tr("diagnostics.updates_title"))
+        host.diagnostics_update_hint.setText(host._tr("diagnostics.updates_hint"))
+        host.copy_diagnostics_button.setAccessibleName(host._tr("diagnostics.copy"))
+        host.copy_diagnostics_button.setToolTip(
+            f"{host._tr('diagnostics.copy')}\n{host._tr('diagnostics.support_hint')}"
+        )
         host.report_device_button.setText(host._tr("diagnostics.report"))
         host.report_device_button.setToolTip(host._tr("diagnostics.report_hint"))
-        host.show_logs_button.setText(host._tr("device.show_logs"))
-        host.export_diagnostics_button.setText(host._tr("diagnostics.export"))
-        host.export_diagnostics_button.setToolTip(host._tr("diagnostics.support_hint"))
-        host.export_scan_button.setText(host._tr("scan_snapshot.export"))
+        host.show_logs_button.setText(host._tr("diagnostics.open"))
+        host.export_diagnostics_button.setAccessibleName(host._tr("diagnostics.export"))
+        host.export_diagnostics_button.setToolTip(
+            f"{host._tr('diagnostics.export')}\n{host._tr('diagnostics.support_hint')}"
+        )
+        host.export_scan_button.setText(host._tr("diagnostics.save"))
         host.export_scan_button.setToolTip(host._tr("scan_snapshot.export_hint"))
         host.check_update_button.setText(
             host._tr("updates.open")

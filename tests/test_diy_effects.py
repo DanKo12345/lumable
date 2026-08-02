@@ -6,6 +6,8 @@ from app.diy_effects import (
     color_at,
     duration_scale,
     frames,
+    timeline_boundaries,
+    timeline_stops,
     total_duration_ms,
 )
 
@@ -27,6 +29,35 @@ def _two_step_fade() -> DiyEffect:
 
 def test_total_duration() -> None:
     assert total_duration_ms(_two_step_fade()) == 300
+
+
+def test_timeline_widths_follow_the_real_step_durations() -> None:
+    effect = DiyEffect(
+        steps=(
+            DiyStep(RED, transition_ms=0, hold_ms=1000),
+            DiyStep(BLUE, transition_ms=0, hold_ms=3000),
+        )
+    )
+
+    assert timeline_boundaries(effect) == (0.25,)
+    assert timeline_stops(effect) == (
+        (0.0, RED),
+        (0.25, RED),
+        (0.25, BLUE),
+        (1.0, BLUE),
+    )
+
+
+def test_timeline_shows_the_transition_span_instead_of_an_equal_colour_split() -> None:
+    stops = timeline_stops(_two_step_fade())
+
+    assert stops == (
+        (0.0, RED),
+        (1 / 3, RED),
+        (1 / 3, RED),
+        (2 / 3, BLUE),
+        (1.0, BLUE),
+    )
 
 
 def test_hold_returns_step_colour() -> None:
@@ -110,6 +141,25 @@ def test_strobe_motion_blinks_off() -> None:
     levels = [max(color_at(effect, t)) for t in range(0, 1500, 20)]
     assert min(levels) <= 30       # blinks nearly off part of the cycle
     assert max(levels) >= 200      # and fully on the rest
+
+
+def test_flicker_varies_brightness_without_changing_the_base_hue() -> None:
+    effect = DiyEffect(
+        steps=(DiyStep((120, 60, 30), 0, 1500, motion="flicker"), DiyStep(BLUE, 0, 100)),
+    )
+    samples = [color_at(effect, t) for t in range(0, 1500, 100)]
+    assert len(set(samples)) > 3
+    for red, green, blue in samples:
+        levels = (red / 120, green / 60, blue / 30)
+        assert max(levels) - min(levels) < 0.04
+
+
+def test_fade_motions_use_the_whole_step_instead_of_repeating_a_short_cycle() -> None:
+    fade_in = DiyEffect(steps=(DiyStep(RED, 0, 2000, motion="fade_in"), DiyStep(BLUE, 0, 100)))
+    fade_out = DiyEffect(steps=(DiyStep(RED, 0, 2000, motion="fade_out"), DiyStep(BLUE, 0, 100)))
+
+    assert color_at(fade_in, 0)[0] < color_at(fade_in, 1000)[0] < color_at(fade_in, 1999)[0]
+    assert color_at(fade_out, 0)[0] > color_at(fade_out, 1000)[0] > color_at(fade_out, 1999)[0]
 
 
 def test_unknown_motion_is_safe() -> None:

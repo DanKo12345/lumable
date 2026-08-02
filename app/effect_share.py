@@ -5,6 +5,8 @@ import binascii
 import json
 from typing import Any
 
+from app.diy_effects import MAX_STEPS, MOTION_KEYS
+
 # A shareable DIY effect is encoded as ``LUMA1-<base64>`` where the base64 body is
 # a compact JSON payload. The short prefix lets us recognise (and version) codes
 # pasted from chat/email, and keeps the format portable across machines without
@@ -15,8 +17,7 @@ SHARE_PREFIX = "LUMA1-"
 _KIND = "diy"
 _VERSION = 1
 
-_MOTIONS = frozenset({"none", "breathe", "pulse", "twinkle", "strobe"})
-_MAX_STEPS = 8
+_MOTIONS = frozenset(MOTION_KEYS)
 _MAX_MS = 10_000
 
 
@@ -31,7 +32,7 @@ def _clean_steps(raw: Any) -> list[dict[str, Any]]:
     steps: list[dict[str, Any]] = []
     if not isinstance(raw, list):
         return steps
-    for item in raw[:_MAX_STEPS]:
+    for item in raw[:MAX_STEPS]:
         if not isinstance(item, dict):
             continue
         rgb = item.get("rgb", [255, 255, 255])

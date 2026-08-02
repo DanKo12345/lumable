@@ -47,6 +47,7 @@ class SegmentedControl(QWidget):
         if animate:
             restart_animation(self._anim, self._pos, target)
         else:
+            self._anim.stop()
             self._pos = target
             self.update()
 
