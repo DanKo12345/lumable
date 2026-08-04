@@ -205,6 +205,150 @@ def test_a_grab_that_fails_mid_run_is_a_capture_failure(monkeypatch) -> None:
 
 
 # ── the pair must survive the queued path ──────────────────────────────
+# ── what the BLE layer did, not what the capture loop hoped ───────────
+def _running_controller(sink) -> AmbientController:
+    """A controller wired to ``sink`` with a session open, without a capture
+    thread — the tests below are about the send path, not the screen."""
+    controller = AmbientController()
+    controller._sink = sink
+    controller._engine.set_smoothing(1.0)
+    controller._engine.start(controller._deliver, initial=(0, 0, 0), labelled_sink=True)
+    controller._token = controller._metrics.start(0.0)
+    return controller
+
+
+def test_a_write_the_link_refused_to_take_is_not_a_submitted_command() -> None:
+    """The BLE layer drops a frame while an earlier write is still in flight.
+    Counting those would report a send rate the strip never saw."""
+    accepted: list[bool] = [True, False, True]
+    calls: list[tuple[int, int]] = []
+
+    def sink(r, g, b, token, frame_id):
+        calls.append((token, frame_id))
+        return accepted.pop(0)
+
+    controller = _running_controller(sink)
+    token = controller._token
+    for colour in (10, 20, 30):
+        controller._accept_sample(colour, 0, 0, token, controller._metrics.frame_processed(token, 0.1))
+        _tick(controller._engine)
+
+    session = controller.live_sync_report().session
+    assert len(calls) == 3, "every frame reached the link"
+    assert session.commands_submitted == 2, "a refused write was counted as sent"
+
+
+def test_the_frame_that_produced_a_write_is_the_one_the_result_belongs_to() -> None:
+    results: list[tuple[int, int]] = []
+
+    def sink(r, g, b, token, frame_id):
+        results.append((token, frame_id))
+        return True
+
+    controller = _running_controller(sink)
+    token = controller._token
+    frame = controller._metrics.frame_processed(token, 0.1, frame_ms=4.0)
+    controller._accept_sample(1, 2, 3, token, frame)
+    _tick(controller._engine)
+
+    assert results == [(token, frame)]
+
+    controller.command_finished(token, frame, ok=True)
+    session = controller.live_sync_report().session
+    assert session.commands_succeeded == 1
+    assert session.command_errors == 0
+
+
+def test_a_failed_write_is_counted_once_and_never_as_a_success() -> None:
+    controller = _running_controller(lambda *args: True)
+    token = controller._token
+    frame = controller._metrics.frame_processed(token, 0.1)
+    controller._accept_sample(1, 2, 3, token, frame)
+    _tick(controller._engine)
+
+    controller.command_finished(token, frame, ok=False)
+
+    session = controller.live_sync_report().session
+    assert session.command_errors == 1
+    assert session.commands_succeeded == 0
+    assert session.capture_errors == 0, "a link failure was blamed on the screen"
+
+
+def test_a_result_from_an_ended_session_lands_nowhere() -> None:
+    """A write submitted just before a stop finishes afterwards. It belongs to
+    the run that made it, and that run's numbers are already frozen."""
+    controller = _running_controller(lambda *args: True)
+    stale_token = controller._token
+    stale_frame = controller._metrics.frame_processed(stale_token, 0.1)
+    controller._metrics.stop(1.0)
+
+    fresh_token = controller._metrics.start(10.0)
+    controller._token = fresh_token
+    controller.command_finished(stale_token, stale_frame, ok=True)
+
+    session = controller.live_sync_report().session
+    assert session.commands_succeeded == 0, "an old run's result was charged to this one"
+
+
+def test_a_colour_the_strip_already_shows_invents_no_command() -> None:
+    calls: list = []
+
+    def sink(r, g, b, token, frame_id):
+        calls.append((r, g, b))
+        return True
+
+    controller = _running_controller(sink)
+    token = controller._token
+    for _ in range(3):
+        frame = controller._metrics.frame_processed(token, 0.1)
+        controller._accept_sample(7, 7, 7, token, frame)
+        _tick(controller._engine)
+
+    assert calls == [(7, 7, 7)], "the same colour was written again"
+    assert controller.live_sync_report().session.commands_submitted == 1
+
+
+def test_a_frame_displaced_before_the_tick_is_never_submitted() -> None:
+    calls: list = []
+
+    def sink(r, g, b, token, frame_id):
+        calls.append(frame_id)
+        return True
+
+    controller = _running_controller(sink)
+    token = controller._token
+    first = controller._metrics.frame_processed(token, 0.1)
+    second = controller._metrics.frame_processed(token, 0.2)
+    controller._accept_sample(1, 0, 0, token, first)
+    controller._accept_sample(2, 0, 0, token, second)  # first never had a turn
+    _tick(controller._engine)
+
+    session = controller.live_sync_report().session
+    assert calls == [second]
+    assert session.commands_submitted == 1
+    assert session.frames_coalesced == 1
+
+
+def test_a_reconnect_while_another_mode_owns_the_strip_is_not_counted() -> None:
+    """The BLE layer's reconnect signal belongs to the whole app. Music or DIY
+    losing the strip and getting it back is not a Screen Sync event.
+
+    The order matters: a reconnect *before* any session, checked against a live
+    report. Stopping first would freeze the numbers and hide a missing guard
+    rather than test it.
+    """
+    controller = AmbientController()
+
+    controller.note_reconnect()  # nothing of ours is running
+
+    assert controller.live_sync_report().session.reconnects == 0
+
+    token = controller._metrics.start(0.0)
+    controller._token = token
+    controller.note_reconnect()
+    assert controller.live_sync_report().session.reconnects == 1
+
+
 def test_a_stale_colour_never_reaches_the_strip() -> None:
     """The consequence the counters cannot show. A colour emitted just before a
     stop can be delivered after the next run has begun; if it is passed through,

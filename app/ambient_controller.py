@@ -82,6 +82,7 @@ class AmbientController(QObject):
         self._stop = threading.Event()
         self._metrics = LiveSyncMetrics()
         self._token = 0
+        self._sink: Callable[[int, int, int, int, int], bool] | None = None
         self.color_sampled.connect(self._accept_sample)
         self._engine.frame_coalesced.connect(self._on_frame_coalesced)
 
@@ -97,7 +98,14 @@ class AmbientController(QObject):
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self, sink: Callable[[int, int, int], None], initial: tuple[int, int, int] = (0, 0, 0)) -> None:
+    def start(
+        self,
+        sink: Callable[[int, int, int, int, int], bool],
+        initial: tuple[int, int, int] = (0, 0, 0),
+    ) -> None:
+        """Begin syncing. ``sink`` writes a frame's colour to the strip and says
+        whether the write was accepted; it is given the frame's token and id so
+        it can report the outcome back through :meth:`command_finished`."""
         if self.is_running():
             return
         # Passthrough: with easing off, the engine follows the target instantly
@@ -106,7 +114,8 @@ class AmbientController(QObject):
         # strip's current colour so no black frame is sent before the first
         # captured one.
         self._engine.set_smoothing(1.0)
-        self._engine.start(sink, initial=initial)
+        self._sink = sink
+        self._engine.start(self._deliver, initial=initial, labelled_sink=True)
         self._stop.clear()
         # Opened before the thread exists, so the very first frame already has a
         # session to belong to.
@@ -146,6 +155,35 @@ class AmbientController(QObject):
         if not token or token != self._token:
             return
         self._engine.set_target(r, g, b, token, frame_id)
+
+    def _deliver(self, r: int, g: int, b: int, token: int, frame_id: int) -> None:
+        """Hand a frame's colour to the BLE layer and count what happened.
+
+        Submitted means accepted by that layer, not "a frame was ready". The
+        link drops a write while an earlier one is still in flight, and counting
+        those would report a send rate the strip never saw.
+        """
+        accepted = self._sink(r, g, b, token, frame_id)
+        if accepted:
+            self._metrics.command_submitted(token, time.monotonic())
+
+    def command_finished(self, token: int, frame_id: int, ok: bool) -> None:
+        """The outcome of one accepted write. Called on the BLE loop thread.
+
+        The token comes back with the result rather than being read from the
+        controller: a write submitted just before a stop finishes afterwards,
+        and the session it belonged to is the one that should carry it — which
+        for an ended session means nowhere.
+        """
+        now = time.monotonic()
+        if ok:
+            self._metrics.command_succeeded(token, now)
+        else:
+            self._metrics.command_failed(token, now)
+
+    def note_reconnect(self) -> None:
+        """The strip dropped out and came back while syncing."""
+        self._metrics.reconnected(self._token)
 
     def _on_frame_coalesced(self, token: int, frame_id: int) -> None:
         self._metrics.frame_coalesced(token, frame_id)

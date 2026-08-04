@@ -73,7 +73,8 @@ class ColorStreamEngine(QObject):
         super().__init__(parent)
         self._smoother = ColorSmoother(smoothing)
         self._send_interval_ms = max(33, int(send_interval_ms))
-        self._sink: Callable[[int, int, int], None] | None = None
+        self._sink: Callable[..., None] | None = None
+        self._labelled_sink = False
         self._last_sent: RGB | None = None
         self._last_send_ms = 0
         self._error_count = 0
@@ -103,7 +104,22 @@ class ColorStreamEngine(QObject):
     def last_error(self) -> str:
         return self._last_error
 
-    def start(self, sink: Callable[[int, int, int], None], initial: RGB = (0, 0, 0)) -> None:
+    def start(
+        self,
+        sink: Callable[..., None],
+        initial: RGB = (0, 0, 0),
+        *,
+        labelled_sink: bool = False,
+    ) -> None:
+        """Begin ticking, writing colours to ``sink``.
+
+        A ``labelled_sink`` is called as ``sink(r, g, b, token, frame_id)`` so a
+        caller measuring the link can tie the write's outcome back to the frame
+        that produced it. Everything else keeps the plain three-argument sink —
+        sniffing the signature instead would guess, and guessing wrong here
+        means every frame of that mode raising inside the stream loop.
+        """
+        self._labelled_sink = bool(labelled_sink)
         self._sink = sink
         self._smoother.reset(initial)
         self._last_sent = None
@@ -139,15 +155,21 @@ class ColorStreamEngine(QObject):
         if now - self._last_send_ms < self._send_interval_ms:
             return  # still waiting for its turn, not displaced
         # From here the frame has had its chance, whether or not a write follows.
+        delivered = self._pending
         self._pending = None
         if color == self._last_sent:
             # The strip already shows this colour. Nothing was lost, so counting
-            # a drop here would report a still screen as a failing one.
+            # a drop here would report a still screen as a failing one — and no
+            # command is invented for a write that never happens.
             return
         self._last_sent = color
         self._last_send_ms = now
         try:
-            self._sink(color[0], color[1], color[2])
+            if self._labelled_sink:
+                token, frame_id = delivered or (0, 0)
+                self._sink(color[0], color[1], color[2], token, frame_id)
+            else:
+                self._sink(color[0], color[1], color[2])
         except Exception as exc:
             # A failed BLE write must never kill the stream loop, but record it
             # so a persistently failing stream is visible in diagnostics.

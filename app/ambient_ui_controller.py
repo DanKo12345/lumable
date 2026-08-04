@@ -36,8 +36,18 @@ class AmbientUiController:
         # to the engine inside the controller).
         self._ambient.preview_sampled.connect(self._update_preview)
         self._ambient.failed.connect(self._on_failed)
+        # A reconnect is only Screen Sync's business while Screen Sync is the
+        # one driving the strip; the signal itself belongs to the whole app.
+        host._ble.reconnect_succeeded.connect(self._on_reconnected)
         self.sync_controls()
         self.refresh_lock()
+
+    def _on_reconnected(self, _address: str) -> None:
+        # The session token is what actually keeps another mode's reconnect out
+        # of the Screen Sync report; this check only says so at the layer where
+        # the signal arrives. Removing it changes no observable behaviour.
+        if self._ambient.is_running():
+            self._ambient.note_reconnect()
 
     def refresh_lock(self) -> None:
         """Show the Pro badge and disable the controls until screen sync is unlocked.
@@ -155,10 +165,18 @@ class AmbientUiController:
             host._toggle_power()
         self._apply_options()
 
-        def sink(red: int, green: int, blue: int) -> None:
+        def sink(red: int, green: int, blue: int, token: int, frame_id: int) -> bool:
             # Colour-only quiet stream: never resends brightness, drops frames
             # while a BLE write is in flight, and stays out of the session log.
-            host._ble.set_color_stream(red, green, blue)
+            # The frame's identity rides along so the write's outcome can be
+            # attributed to the run that produced it, even if that run has ended
+            # by the time the strip answers.
+            return host._ble.set_color_stream(
+                red,
+                green,
+                blue,
+                observer=lambda ok: self._ambient.command_finished(token, frame_id, ok),
+            )
 
         # Seed from the strip's current colour so nothing flashes black before
         # the first captured frame (both the filter and the stream engine).

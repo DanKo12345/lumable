@@ -354,6 +354,15 @@ def test_another_mode_writing_to_the_same_path_is_not_counted() -> None:
     assert report.session.worst_frame_ms == 4.0
 
 
+def test_a_reconnect_belonging_to_another_session_is_refused() -> None:
+    metrics, token = _session()
+
+    metrics.reconnected(token + 1000)
+    metrics.reconnected(token)
+
+    assert metrics.report(101.0).session.reconnects == 1
+
+
 def test_a_late_result_from_the_previous_session_is_dropped() -> None:
     metrics, first = _session()
     metrics.frame_captured(first, 100.1)

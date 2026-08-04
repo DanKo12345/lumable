@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -196,6 +196,9 @@ class BleController(QObject):
     # emitted before each backoff wait, and give-up after the last attempt.
     reconnect_scheduled = Signal(str, int, int, float)
     reconnect_gave_up = Signal(str)
+    # The link came back. Distinct from an attempt: a live-sync session wants to
+    # know how many times the strip actually dropped out from under it.
+    reconnect_succeeded = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -580,28 +583,48 @@ class BleController(QObject):
         self._desired_power_on = True
         self._submit(self._set_color(red, green, blue))
 
-    def set_color_stream(self, red: int, green: int, blue: int) -> None:
+    def set_color_stream(
+        self,
+        red: int,
+        green: int,
+        blue: int,
+        observer: Callable[[bool], None] | None = None,
+    ) -> bool:
         """Fast colour-only write for live streaming (ambient sync, etc.).
 
         Drops the frame if a previous stream write is still in flight, so the
         slow BLE link never backs up; writes colour only (no brightness, no
         forced delay); and is logged quietly to avoid flooding the session log.
+
+        Returns whether the write was accepted. A dropped frame is not a failed
+        one, and callers measuring the link must be able to tell them apart.
+        ``observer`` is called exactly once with the outcome of an accepted
+        write, on the BLE loop thread.
         """
         self._fade_seq = getattr(self, "_fade_seq", 0) + 1
         if self._stream_busy:
-            return
+            return False
         self._last_red = clamp(red, 0, 255)
         self._last_green = clamp(green, 0, 255)
         self._last_blue = clamp(blue, 0, 255)
         self._desired_power_on = True
         self._stream_busy = True
-        self._submit_stream(self._set_color_stream(self._last_red, self._last_green, self._last_blue))
+        return self._submit_stream(
+            self._set_color_stream(self._last_red, self._last_green, self._last_blue),
+            observer=observer,
+        )
 
-    def _submit_stream(self, coroutine) -> None:
+    def _submit_stream(self, coroutine, observer: Callable[[bool], None] | None = None) -> bool:
+        """Run a streaming write. Returns whether it was accepted.
+
+        The optional observer is the only addition for callers that measure the
+        link; without one this behaves exactly as before, which is what every
+        other mode relies on.
+        """
         if self._shutdown_started or not self._loop.is_running():
             coroutine.close()
             self._stream_busy = False
-            return
+            return False
         # Streaming frames are best-effort and never tracked: they are replaced
         # by the next frame, so there is nothing for an automation to confirm.
         wrapper = self._run_serialized(coroutine)
@@ -611,17 +634,22 @@ class BleController(QObject):
             wrapper.close()
             coroutine.close()
             self._stream_busy = False
-            return
+            return False
 
         def _done(completed) -> None:
             self._stream_busy = False
+            ok = True
             try:
                 completed.result()
             except Exception:
                 # Streaming frames are best-effort; never spam logs/errors.
-                pass
+                ok = False
+            if observer is not None:
+                # Exactly once per accepted write, whichever way it ended.
+                observer(ok)
 
         future.add_done_callback(_done)
+        return True
 
     def set_brightness(self, value: int) -> None:
         self._last_brightness = clamp(value, 0, 100)
@@ -1705,6 +1733,7 @@ class BleController(QObject):
                 )
                 continue
             self.status_changed.emit(localization_manager.status_ble_event("reconnect_success", address=address))
+            self.reconnect_succeeded.emit(address)
             await self._restore_state_after_reconnect()
             return
         self.status_changed.emit(localization_manager.status_ble_event("reconnect_give_up", address=address))
