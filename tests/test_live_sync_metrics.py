@@ -65,8 +65,8 @@ def test_one_coalesced_frame_travels_the_whole_path_and_is_counted_once() -> Non
     metrics, token = _session()
 
     metrics.frame_captured(token, 100.1)
-    metrics.frame_processed(token, 100.1, frame_ms=5.0)
-    metrics.frame_coalesced(token, 100.4)  # a newer frame won the race
+    frame = metrics.frame_processed(token, 100.1, frame_ms=5.0)
+    metrics.frame_coalesced(token, frame)  # a newer frame won the race
 
     report = metrics.report(101.0)
     assert report.session.captured == 1
@@ -75,17 +75,50 @@ def test_one_coalesced_frame_travels_the_whole_path_and_is_counted_once() -> Non
     assert report.recent.drop_ratio == 1.0, "one computed colour, none delivered"
 
 
+def test_a_drop_belongs_to_the_frame_and_not_to_the_moment_it_happened() -> None:
+    """A frame processed just before the window opens can be displaced just
+    after. Filtering the two by their own timestamps would count the drop
+    without the frame it belongs to — a ratio above one, or a hidden drop at the
+    other edge, depending on which way the pair straddles the boundary."""
+    metrics, token = _session(start=100.0, window=30.0)
+
+    # Processed at 100.5, outside the window that opens at 170.0.
+    early = metrics.frame_processed(token, 100.5, frame_ms=5.0)
+    for index in range(10):  # ten healthy frames inside the window
+        metrics.frame_processed(token, 180.0 + index * 0.1, frame_ms=5.0)
+    metrics.frame_coalesced(token, early)  # displaced only now, at 200.0
+
+    report = metrics.report(200.0)
+    assert report.session.frames_coalesced == 1
+    assert report.recent.drop_ratio == 0.0, (
+        "a drop counted in a window that does not contain its frame"
+    )
+
+
+def test_the_same_frame_cannot_be_dropped_twice() -> None:
+    metrics, token = _session()
+    frame = metrics.frame_processed(token, 100.1, frame_ms=5.0)
+
+    metrics.frame_coalesced(token, frame)
+    metrics.frame_coalesced(token, frame)
+
+    report = metrics.report(101.0)
+    assert report.session.frames_coalesced == 1
+    assert report.recent.drop_ratio == 1.0
+
+
 def test_a_coalesced_frame_is_not_an_error() -> None:
     """It means the sync keeps up with the screen but not with the strip, which
     is a different problem from a failed write."""
     metrics, token = _session()
 
+    frames = []
     for index in range(10):
         at = 100.0 + index * 0.1
         metrics.frame_captured(token, at)
-        metrics.frame_processed(token, at, frame_ms=3.0)
-    for index in range(2):
-        metrics.frame_coalesced(token, 101.0 + index * 0.1)
+        frames.append(metrics.frame_processed(token, at, frame_ms=3.0))
+    for frame in frames[:2]:
+        metrics.frame_coalesced(token, frame)
 
     report = metrics.report(102.0)
     assert (report.session.captured, report.session.processed) == (10, 10)
@@ -209,8 +242,8 @@ def test_a_quiet_session_is_measured_by_the_clock_not_by_its_last_frame() -> Non
 
 def test_restarting_forgets_the_previous_session() -> None:
     metrics, token = _session()
-    metrics.frame_processed(token, 100.5, frame_ms=40.0)
-    metrics.frame_coalesced(token, 100.6)
+    frame = metrics.frame_processed(token, 100.5, frame_ms=40.0)
+    metrics.frame_coalesced(token, frame)
     metrics.command_submitted(token, 100.7, queue_depth=7)
     metrics.reconnected(token)
 
@@ -359,6 +392,19 @@ def test_stopping_keeps_the_numbers_for_the_export_that_follows() -> None:
     assert later.session.captured == 10
     assert later.session.seconds == 1.0
     assert later.recent.capture_fps > 0, "the frozen window must not decay to zero"
+
+
+def test_stopping_a_stopped_session_does_not_stretch_it() -> None:
+    """Stop can be reached from more than one path — the user ending sync, the
+    window closing, a disconnect. Without a guard the finished run grows longer
+    every time one of them fires again."""
+    metrics, token = _session()
+    metrics.frame_captured(token, 100.5)
+    metrics.stop(101.0)
+
+    metrics.stop(400.0)
+
+    assert metrics.report(500.0).session.seconds == 1.0
 
 
 def test_a_capture_failure_is_not_a_ble_failure() -> None:
