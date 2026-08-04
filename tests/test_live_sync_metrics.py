@@ -1,7 +1,7 @@
 """Live sync metrics: the numbers that replace "it feels slower".
 
-The load-bearing test is the last one — a run that degrades near the end must be
-visible, which is exactly what session averages cannot show.
+The load-bearing test is the degradation one — a run that goes bad near the end
+must be visible, which is exactly what session averages cannot show.
 """
 
 from __future__ import annotations
@@ -19,9 +19,11 @@ def _session(start: float = 100.0, window: float = 30.0):
 def test_a_steady_run_reports_the_same_rate_both_ways() -> None:
     metrics, token = _session()
     for index in range(1, 61):
-        metrics.frame_processed(token, 100.0 + index / 30.0, frame_ms=4.0)
+        at = 100.0 + index / 30.0
+        metrics.frame_captured(token, at)
+        metrics.frame_processed(token, at, frame_ms=4.0)
         if index % 2 == 0:
-            metrics.command_submitted(token, 100.0 + index / 30.0, queue_depth=1)
+            metrics.command_submitted(token, at, queue_depth=1)
 
     report = metrics.report(102.0)
 
@@ -38,11 +40,15 @@ def test_a_run_that_degrades_late_shows_it_in_the_recent_window() -> None:
     metrics, token = _session()
 
     for index in range(1, 1501):  # 50 seconds at 30 fps
-        metrics.frame_processed(token, 100.0 + index / 30.0, frame_ms=4.0)
+        at = 100.0 + index / 30.0
+        metrics.frame_captured(token, at)
+        metrics.frame_processed(token, at, frame_ms=4.0)
     # Then the strip falls behind: 5 fps for the next 40 seconds, which is
     # longer than the window, so the recent layer sees only the bad stretch.
     for index in range(1, 201):
-        metrics.frame_processed(token, 150.0 + index / 5.0, frame_ms=90.0)
+        at = 150.0 + index / 5.0
+        metrics.frame_captured(token, at)
+        metrics.frame_processed(token, at, frame_ms=90.0)
 
     report = metrics.report(190.0)
 
@@ -52,21 +58,58 @@ def test_a_run_that_degrades_late_shows_it_in_the_recent_window() -> None:
     assert report.recent.frame_ms_avg > 50.0
 
 
+def test_one_coalesced_frame_travels_the_whole_path_and_is_counted_once() -> None:
+    """A frame is captured, processed, and only later displaced by a newer one.
+    Counting the drop as another capture would put the same frame in the totals
+    twice and let the drop ratio exceed one."""
+    metrics, token = _session()
+
+    metrics.frame_captured(token, 100.1)
+    metrics.frame_processed(token, 100.1, frame_ms=5.0)
+    metrics.frame_coalesced(token, 100.4)  # a newer frame won the race
+
+    report = metrics.report(101.0)
+    assert report.session.captured == 1
+    assert report.session.processed == 1
+    assert report.session.frames_coalesced == 1
+    assert report.recent.drop_ratio == 1.0, "one computed colour, none delivered"
+
+
 def test_a_coalesced_frame_is_not_an_error() -> None:
     """It means the sync keeps up with the screen but not with the strip, which
     is a different problem from a failed write."""
     metrics, token = _session()
 
-    for index in range(8):
-        metrics.frame_processed(token, 100.0 + index * 0.1, frame_ms=3.0)
+    for index in range(10):
+        at = 100.0 + index * 0.1
+        metrics.frame_captured(token, at)
+        metrics.frame_processed(token, at, frame_ms=3.0)
     for index in range(2):
         metrics.frame_coalesced(token, 101.0 + index * 0.1)
 
     report = metrics.report(102.0)
-    assert (report.session.captured, report.session.processed) == (10, 8)
+    assert (report.session.captured, report.session.processed) == (10, 10)
     assert report.session.frames_coalesced == 2
     assert report.session.command_errors == 0
     assert report.recent.drop_ratio == 0.2
+
+
+def test_a_fast_session_is_not_reported_as_a_slow_one() -> None:
+    """120 fps with a command per frame fills the buffers. If the oldest events
+    are evicted while the divisor stays at the full window, the metric invents
+    the very slowdown it exists to detect."""
+    metrics, token = _session()
+
+    for index in range(1, 3601):  # 30 seconds at 120 fps
+        at = 100.0 + index / 120.0
+        metrics.frame_captured(token, at)
+        metrics.frame_processed(token, at, frame_ms=2.0)
+        metrics.command_submitted(token, at, queue_depth=1)
+
+    recent = metrics.report(130.0).recent
+    assert recent.seconds == 30.0
+    assert recent.capture_fps == 120.0
+    assert recent.command_rate == 120.0
 
 
 def test_a_failed_write_is_never_counted_as_a_command() -> None:
@@ -113,6 +156,18 @@ def test_the_p95_catches_what_the_average_smooths_over() -> None:
     assert recent.frame_ms_p95 > recent.frame_ms_avg * 5
 
 
+def test_the_p95_of_eleven_frames_is_the_slowest_one() -> None:
+    """Nearest-rank means ceil(0.95 × 11) = 11, the worst of the eleven.
+    Rounding instead gives rank 10 and quietly reports a p90 as a p95 — the
+    error shows up on small samples, which is where one bad frame matters."""
+    metrics, token = _session()
+
+    for index in range(1, 12):
+        metrics.frame_processed(token, 100.0 + index * 0.01, frame_ms=float(index))
+
+    assert metrics.report(101.0).recent.frame_ms_p95 == 11.0
+
+
 def test_the_deepest_queue_of_the_session_is_kept_and_the_current_one_reported() -> None:
     metrics, token = _session()
 
@@ -136,6 +191,20 @@ def test_taking_a_snapshot_changes_nothing() -> None:
     again = metrics.report(101.0)
 
     assert first == again
+
+
+def test_a_quiet_session_is_measured_by_the_clock_not_by_its_last_frame() -> None:
+    """A still screen produces almost no events. Ending the session's duration
+    at the last one would report ten idle minutes as half a second, and every
+    rate computed from it would be nonsense."""
+    metrics, token = _session()
+    metrics.frame_captured(token, 100.5)
+    metrics.frame_processed(token, 100.5, frame_ms=4.0)
+
+    report = metrics.report(700.0)
+
+    assert report.session.seconds == 600.0
+    assert report.recent.capture_fps == 0.0, "the frame is long out of the window"
 
 
 def test_restarting_forgets_the_previous_session() -> None:
@@ -188,8 +257,50 @@ def test_recording_from_several_threads_loses_nothing() -> None:
     for thread in threads:
         thread.join(timeout=10)
 
-    assert metrics.report(101.0).session.captured == 750
+    assert metrics.report(101.0).session.processed == 750
     assert len(readers) == 100
+
+
+def test_a_result_arriving_while_stop_builds_the_snapshot_is_refused() -> None:
+    """Freezing the snapshot and closing the session happen under one lock, so a
+    result cannot be accepted by the still-current token and then be missing
+    from the snapshot that was meant to be final.
+
+    This pins the behaviour; it does not prove the lock is needed. A split
+    version has a window of a few bytecodes, and releasing a lock in CPython
+    does not yield the GIL, so no timing this test can arrange makes another
+    thread land in it. The invariant is asserted directly instead: what the
+    object counted and what it will report must not disagree.
+    """
+    building = threading.Event()
+    finish = threading.Event()
+
+    class PausedWhileBuilding(LiveSyncMetrics):
+        def _report_locked(self, now: float):
+            building.set()
+            finish.wait(timeout=5)
+            return super()._report_locked(now)
+
+    metrics = PausedWhileBuilding(window_seconds=30.0)
+    token = metrics.start(100.0)
+    metrics.command_succeeded(token, 100.1)
+
+    closer = threading.Thread(target=metrics.stop, args=(101.0,))
+    closer.start()
+    assert building.wait(timeout=5), "stop() never began building the snapshot"
+
+    late = threading.Thread(target=metrics.command_succeeded, args=(token, 100.9))
+    late.start()
+    late.join(timeout=0.2)
+    assert late.is_alive(), "the late result should be waiting for the lock"
+
+    finish.set()
+    closer.join(timeout=5)
+    late.join(timeout=5)
+
+    frozen = metrics.report(400.0)
+    assert frozen.session.commands_succeeded == 1, "the late result was refused"
+    assert frozen.session.commands_succeeded == metrics._succeeded
 
 
 def test_another_mode_writing_to_the_same_path_is_not_counted() -> None:
@@ -197,6 +308,7 @@ def test_another_mode_writing_to_the_same_path_is_not_counted() -> None:
     Counting where they meet would put someone dragging a slider into the Live
     Sync report."""
     metrics, token = _session()
+    metrics.frame_captured(token, 100.1)
     metrics.frame_processed(token, 100.1, frame_ms=4.0)
 
     slider_token = token + 1000  # not a session we started
@@ -211,12 +323,12 @@ def test_another_mode_writing_to_the_same_path_is_not_counted() -> None:
 
 def test_a_late_result_from_the_previous_session_is_dropped() -> None:
     metrics, first = _session()
-    metrics.frame_processed(first, 100.1, frame_ms=4.0)
+    metrics.frame_captured(first, 100.1)
     metrics.stop(101.0)
 
     second = metrics.start(200.0)
     metrics.command_succeeded(first, 200.5)  # the old session's callback arrives
-    metrics.frame_processed(second, 200.6, frame_ms=3.0)
+    metrics.frame_captured(second, 200.6)
 
     report = metrics.report(201.0)
     assert report.session.commands_succeeded == 0
@@ -229,7 +341,7 @@ def test_nothing_is_recorded_while_no_session_runs() -> None:
     metrics.frame_processed(0, 100.0, frame_ms=5.0)
     metrics.command_submitted(1, 100.1)
 
-    assert metrics.report(101.0).session.captured == 0
+    assert metrics.report(101.0).session.processed == 0
 
 
 def test_stopping_keeps_the_numbers_for_the_export_that_follows() -> None:
@@ -237,13 +349,15 @@ def test_stopping_keeps_the_numbers_for_the_export_that_follows() -> None:
     moment would leave nothing to report."""
     metrics, token = _session()
     for index in range(10):
-        metrics.frame_processed(token, 100.0 + index * 0.1, frame_ms=6.0)
+        at = 100.0 + index * 0.1
+        metrics.frame_captured(token, at)
+        metrics.frame_processed(token, at, frame_ms=6.0)
 
     metrics.stop(101.0)
     later = metrics.report(400.0)
 
     assert later.session.captured == 10
-    assert later.session.seconds == 0.9
+    assert later.session.seconds == 1.0
     assert later.recent.capture_fps > 0, "the frozen window must not decay to zero"
 
 

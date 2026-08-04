@@ -12,25 +12,32 @@ over a recent window, and the difference between the two layers is the finding:
 session 30 fps with recent 6 fps is a strip that fell behind and stayed there.
 
 Definitions are fixed here rather than left to each call site, because loose ones
-make the numbers unfalsifiable:
+make the numbers unfalsifiable. A frame has three separate events, and each is
+recorded at the moment it actually happens:
 
-* **captured** — a frame was grabbed from the screen.
-* **processed** — a colour was computed from it *and* handed to the send path.
-* **coalesced** — a newer frame replaced one still waiting. Counted apart from
-  errors: it means the sync is keeping up with the screen but not the strip.
+* **captured** — grabbed from the screen. Counted here and nowhere else.
+* **processed** — a colour was computed from it and handed to the send path.
+* **coalesced** — a newer frame displaced this one while it was still waiting.
+  That happens *after* processing, so it must not count as another capture; one
+  frame counted twice would push the ratios above one. The drop ratio is
+  coalesced over processed: colours computed that never reached the strip.
+
+Commands are counted at each stage they actually reach:
+
 * **commands_submitted** — writes handed to the send path.
 * **commands_succeeded** — writes the BLE layer confirmed.
 * **command_errors** — writes it refused or failed. Submitted is deliberately
   not the sum of the other two: some are still in flight when the snapshot is
   taken, and pretending otherwise would make the numbers lie about timing.
-* Frame processing time never includes waiting on BLE. Mixing them would make a
-  slow strip look like slow code.
+
+Frame processing time never includes waiting on BLE — mixing them would make a
+slow strip look like slow code. A capture failure and a BLE failure stay apart,
+because which end is at fault is the first question worth answering.
 
 Everything is scoped to a **session token**. The colour sliders, DIY and music
 share the same streaming path as Screen Sync, so counting writes where they meet
 would mix modes into one report. Only events carrying the current token are
-recorded, which also drops the late callback of a session that has already
-stopped.
+recorded, which also drops the late callback of a session that has stopped.
 
 Taking a snapshot never mutates a counter, and every method is cheap enough to
 sit on the capture path — a metric that slows the thing down measures itself.
@@ -40,14 +47,18 @@ perform it here.
 
 from __future__ import annotations
 
+import math
 import threading
 from collections import deque
 from dataclasses import dataclass, field
 
-# Frames arrive at up to ~60/s; this covers the recent window at that rate with
-# room to spare, and is bounded so a long session cannot grow memory.
-_SAMPLE_LIMIT = 4096
 RECENT_WINDOW_SECONDS = 30.0
+
+# Per event kind, sized for the window at a rate no capture path will reach.
+# One shared buffer silently evicted the oldest events on a fast session while
+# the divisor stayed at the full window, so a healthy 120 fps run reported as a
+# slow one — the metric inventing the very problem it exists to detect.
+_SAMPLE_LIMIT = 8192
 
 
 @dataclass(frozen=True)
@@ -90,13 +101,18 @@ class LiveSyncReport:
 
 
 def _percentile(values: list[float], fraction: float) -> float:
-    """Nearest-rank percentile. Computed on snapshot only — sorting per frame
-    would put the cost of measuring on the path being measured."""
+    """Nearest-rank percentile: rank = ceil(fraction × count), 1-based.
+
+    Rounding instead of ceiling shifts the rank down on small samples, which
+    turns a p95 into something between p90 and p95 exactly when the sample is
+    small enough for one frame to matter. Computed on snapshot only — sorting
+    per frame would put the cost of measuring onto the path being measured.
+    """
     if not values:
         return 0.0
     ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, round(fraction * len(ordered)) - 1))
-    return ordered[index]
+    rank = min(len(ordered), max(1, math.ceil(fraction * len(ordered))))
+    return ordered[rank - 1]
 
 
 class LiveSyncMetrics:
@@ -109,29 +125,36 @@ class LiveSyncMetrics:
     def __init__(self, window_seconds: float = RECENT_WINDOW_SECONDS) -> None:
         self._lock = threading.Lock()
         self._window = float(window_seconds)
-        self._started_at = 0.0
-        self._last_at = 0.0
+        # 0 means "no session running": every recording call is rejected, so a
+        # stray write from the sliders or DIY cannot land in a stopped session.
+        self._token = 0
+        self._next_token = 0
+        self._frozen: LiveSyncReport | None = None
+        self._reset(0.0)
+
+    def _reset(self, now: float) -> None:
+        """Called with the lock held, or from __init__ before it exists."""
+        self._started_at = now
+        self._stopped_at: float | None = None
         self._captured = 0
         self._processed = 0
         self._coalesced = 0
-        self._commands = 0
+        self._capture_errors = 0
+        self._submitted = 0
+        self._succeeded = 0
         self._command_errors = 0
         self._reconnects = 0
         self._queue_max = 0
         self._queue_depth = 0
         self._worst_ms = 0.0
         self._worst_at = 0.0
-        self._capture_errors = 0
-        self._succeeded = 0
-        # 0 means "no session running": every recording call is rejected, so a
-        # stray write from the sliders or DIY cannot land in a stopped session.
-        self._token = 0
-        self._next_token = 0
-        self._frozen: LiveSyncReport | None = None
-        # (timestamp, kind, value) — kind: "frame" | "drop" | "command"
-        self._events: deque = deque(maxlen=_SAMPLE_LIMIT)
+        # One bounded buffer per kind, so a burst of one cannot evict another.
+        self._capture_times: deque[float] = deque(maxlen=_SAMPLE_LIMIT)
+        self._frame_times: deque[tuple[float, float]] = deque(maxlen=_SAMPLE_LIMIT)
+        self._drop_times: deque[float] = deque(maxlen=_SAMPLE_LIMIT)
+        self._command_times: deque[float] = deque(maxlen=_SAMPLE_LIMIT)
 
-    # ── recording ─────────────────────────────────────────────────────
+    # ── lifecycle ─────────────────────────────────────────────────────
     def start(self, now: float) -> int:
         """Begin a session and return its token.
 
@@ -142,15 +165,8 @@ class LiveSyncMetrics:
         with self._lock:
             self._next_token += 1
             self._token = self._next_token
-            self._started_at = now
-            self._last_at = now
-            self._captured = self._processed = self._coalesced = 0
-            self._capture_errors = 0
-            self._commands = self._succeeded = self._command_errors = self._reconnects = 0
-            self._queue_max = self._queue_depth = 0
-            self._worst_ms = self._worst_at = 0.0
             self._frozen = None
-            self._events.clear()
+            self._reset(now)
             return self._token
 
     def stop(self, now: float) -> None:
@@ -158,10 +174,14 @@ class LiveSyncMetrics:
 
         Diagnostics is usually exported *after* stopping — losing the numbers at
         that moment would leave nothing to report about the run just finished.
+
+        Freezing and closing happen under one lock. Split across two, a result
+        arriving in between is accepted by the still-current token and then
+        vanishes from the very snapshot that was meant to be final.
         """
-        report = self.report(now)
         with self._lock:
-            self._frozen = report
+            self._stopped_at = now
+            self._frozen = self._report_locked(now)
             self._token = 0
 
     def current_token(self) -> int:
@@ -172,32 +192,37 @@ class LiveSyncMetrics:
         """Called with the lock held."""
         return bool(self._token) and token == self._token
 
-    def frame_processed(self, token: int, now: float, frame_ms: float = 0.0) -> None:
-        """A captured frame became a colour and reached the send path."""
+    # ── recording ─────────────────────────────────────────────────────
+    def frame_captured(self, token: int, now: float) -> None:
+        """A frame was grabbed from the screen. The only place captures count."""
         with self._lock:
             if not self._accepts(token):
                 return
             self._captured += 1
+            self._capture_times.append(now)
+
+    def frame_processed(self, token: int, now: float, frame_ms: float = 0.0) -> None:
+        """A colour was computed from a frame and handed to the send path."""
+        with self._lock:
+            if not self._accepts(token):
+                return
             self._processed += 1
-            self._last_at = now
-            if frame_ms > 0:
-                self._events.append((now, "frame", float(frame_ms)))
-                if frame_ms > self._worst_ms:
-                    self._worst_ms = float(frame_ms)
-                    self._worst_at = max(0.0, now - self._started_at)
-            else:
-                self._events.append((now, "frame", 0.0))
+            self._frame_times.append((now, max(0.0, float(frame_ms))))
+            if frame_ms > self._worst_ms:
+                self._worst_ms = float(frame_ms)
+                self._worst_at = max(0.0, now - self._started_at)
 
     def frame_coalesced(self, token: int, now: float) -> None:
-        """A newer frame replaced one still waiting: keeping up with the screen,
-        not with the strip. Counted once, on the frame that was displaced."""
+        """A newer frame displaced this one before it reached the strip.
+
+        The frame was already captured and processed by the time this happens,
+        so it adds neither — only the drop.
+        """
         with self._lock:
             if not self._accepts(token):
                 return
-            self._captured += 1
             self._coalesced += 1
-            self._last_at = now
-            self._events.append((now, "drop", 0.0))
+            self._drop_times.append(now)
 
     def capture_failed(self, token: int, now: float) -> None:
         """The screen could not be grabbed. A different problem from a BLE
@@ -206,16 +231,15 @@ class LiveSyncMetrics:
             if not self._accepts(token):
                 return
             self._capture_errors += 1
-            self._last_at = now
 
     def command_submitted(self, token: int, now: float, queue_depth: int = 0) -> None:
         with self._lock:
             if not self._accepts(token):
                 return
-            self._commands += 1
+            self._submitted += 1
             self._queue_depth = int(queue_depth)
             self._queue_max = max(self._queue_max, int(queue_depth))
-            self._events.append((now, "command", 0.0))
+            self._command_times.append(now)
 
     def command_succeeded(self, token: int, now: float) -> None:
         """The BLE layer confirmed the write."""
@@ -223,15 +247,13 @@ class LiveSyncMetrics:
             if not self._accepts(token):
                 return
             self._succeeded += 1
-            self._last_at = now
 
     def command_failed(self, token: int, now: float) -> None:
-        """The write was refused or failed. Never counted as a success."""
+        """Refused or failed. Never counted as a success."""
         with self._lock:
             if not self._accepts(token):
                 return
             self._command_errors += 1
-            self._last_at = now
 
     def reconnected(self, token: int) -> None:
         with self._lock:
@@ -245,41 +267,48 @@ class LiveSyncMetrics:
         with self._lock:
             if self._frozen is not None:
                 return self._frozen
-            session = SessionTotals(
-                seconds=round(max(0.0, self._last_at - self._started_at), 1),
-                captured=self._captured,
-                processed=self._processed,
-                frames_coalesced=self._coalesced,
-                capture_errors=self._capture_errors,
-                commands_submitted=self._commands,
-                commands_succeeded=self._succeeded,
-                command_errors=self._command_errors,
-                reconnects=self._reconnects,
-                queue_max=self._queue_max,
-                worst_frame_ms=round(self._worst_ms, 1),
-                worst_frame_at=round(self._worst_at, 1),
-            )
-            cutoff = now - self._window
-            recent = [event for event in self._events if event[0] >= cutoff]
-            queue_depth = self._queue_depth
-            elapsed = min(self._window, max(0.0, now - self._started_at))
+            return self._report_locked(now)
 
-        frames = [value for _, kind, value in recent if kind == "frame"]
-        drops = sum(1 for _, kind, _ in recent if kind == "drop")
-        commands = sum(1 for _, kind, _ in recent if kind == "command")
-        timed = [value for value in frames if value > 0]
-        captured = len(frames) + drops
+    def _report_locked(self, now: float) -> LiveSyncReport:
+        """Called with the lock held."""
+        # Elapsed time comes from the clock, not from the last event. A session
+        # watching a still screen sends almost nothing, and measuring it by its
+        # final event would report ten quiet minutes as one busy one.
+        end = now if self._stopped_at is None else self._stopped_at
+        seconds = max(0.0, end - self._started_at)
+        session = SessionTotals(
+            seconds=round(seconds, 1),
+            captured=self._captured,
+            processed=self._processed,
+            frames_coalesced=self._coalesced,
+            capture_errors=self._capture_errors,
+            commands_submitted=self._submitted,
+            commands_succeeded=self._succeeded,
+            command_errors=self._command_errors,
+            reconnects=self._reconnects,
+            queue_max=self._queue_max,
+            worst_frame_ms=round(self._worst_ms, 1),
+            worst_frame_at=round(self._worst_at, 1),
+        )
+
+        cutoff = end - self._window
+        captures = sum(1 for at in self._capture_times if at >= cutoff)
+        processed = [ms for at, ms in self._frame_times if at >= cutoff]
+        drops = sum(1 for at in self._drop_times if at >= cutoff)
+        commands = sum(1 for at in self._command_times if at >= cutoff)
+        timed = [ms for ms in processed if ms > 0]
+        elapsed = min(self._window, seconds)
         divisor = elapsed or 1.0
 
         return LiveSyncReport(
             session=session,
             recent=RecentWindow(
                 seconds=round(elapsed, 1),
-                capture_fps=round(len(frames) / divisor, 1),
+                capture_fps=round(captures / divisor, 1),
                 command_rate=round(commands / divisor, 1),
-                drop_ratio=round(drops / captured, 3) if captured else 0.0,
+                drop_ratio=round(drops / len(processed), 3) if processed else 0.0,
                 frame_ms_avg=round(sum(timed) / len(timed), 1) if timed else 0.0,
                 frame_ms_p95=round(_percentile(timed, 0.95), 1),
-                queue_depth=queue_depth,
+                queue_depth=self._queue_depth,
             ),
         )
