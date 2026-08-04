@@ -154,24 +154,35 @@ class ColorStreamEngine(QObject):
         now = self._elapsed.elapsed()
         if now - self._last_send_ms < self._send_interval_ms:
             return  # still waiting for its turn, not displaced
-        # From here the frame has had its chance, whether or not a write follows.
         delivered = self._pending
-        self._pending = None
         if color == self._last_sent:
             # The strip already shows this colour. Nothing was lost, so counting
             # a drop here would report a still screen as a failing one — and no
             # command is invented for a write that never happens.
+            self._pending = None
             return
-        self._last_sent = color
+        # Pacing is charged for the attempt, so a link under pressure is retried
+        # at the next allowed tick rather than on every one.
         self._last_send_ms = now
         try:
             if self._labelled_sink:
                 token, frame_id = delivered or (0, 0)
-                self._sink(color[0], color[1], color[2], token, frame_id)
+                accepted = self._sink(color[0], color[1], color[2], token, frame_id)
             else:
-                self._sink(color[0], color[1], color[2])
+                accepted = self._sink(color[0], color[1], color[2])
         except Exception as exc:
             # A failed BLE write must never kill the stream loop, but record it
             # so a persistently failing stream is visible in diagnostics.
             self._error_count += 1
             self._last_error = str(exc)
+            return
+        # Only a colour the link actually took counts as shown. Marking it sent
+        # regardless means a refused frame is never retried: on a still screen
+        # no newer frame differs from it, so the strip keeps the old colour for
+        # as long as the session lasts.
+        if accepted is not False:
+            self._last_sent = color
+            self._pending = None
+        # Refused or raised: the frame stays pending. The retry then carries the
+        # same identity — losing it would submit a colour no frame claims — and
+        # if a newer frame arrives first, this one really was displaced.

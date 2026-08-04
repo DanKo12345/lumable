@@ -218,7 +218,7 @@ def _running_controller(sink) -> AmbientController:
 
 
 def test_a_write_the_link_refused_to_take_is_not_a_submitted_command() -> None:
-    """The BLE layer drops a frame while an earlier write is still in flight.
+    """The BLE layer refuses a frame while an earlier write is still going.
     Counting those would report a send rate the strip never saw."""
     accepted: list[bool] = [True, False, True]
     calls: list[tuple[int, int]] = []
@@ -236,6 +236,65 @@ def test_a_write_the_link_refused_to_take_is_not_a_submitted_command() -> None:
     session = controller.live_sync_report().session
     assert len(calls) == 3, "every frame reached the link"
     assert session.commands_submitted == 2, "a refused write was counted as sent"
+    assert session.link_rejections == 1
+    assert session.command_errors == 0, "back-pressure was reported as a failure"
+
+
+def test_a_refused_colour_is_offered_again_and_is_not_lost() -> None:
+    """The worst outcome of getting this wrong is silent and permanent: on a
+    still screen no later frame differs from the refused one, so if the engine
+    believes it was sent, the strip keeps the previous colour for the rest of
+    the session."""
+    outcomes: list[bool] = [False, True]
+    written: list[tuple[int, int, int]] = []
+    frames: list[int] = []
+
+    def sink(r, g, b, token, frame_id):
+        written.append((r, g, b))
+        frames.append(frame_id)
+        return outcomes.pop(0)
+
+    controller = _running_controller(sink)
+    token = controller._token
+    frame = controller._metrics.frame_processed(token, 0.1)
+    controller._accept_sample(90, 10, 5, token, frame)
+
+    _tick(controller._engine)  # refused
+    _tick(controller._engine)  # no newer frame: the same colour must be retried
+
+    assert written == [(90, 10, 5), (90, 10, 5)], "a refused colour was never retried"
+    # The retry is the same frame trying again, so it must keep its identity —
+    # a retry that forgot it would submit a colour no frame claims, and the
+    # session token on it would be 0.
+    assert frames == [frame, frame]
+    session = controller.live_sync_report().session
+    assert session.commands_submitted == 1
+    assert session.link_rejections == 1
+
+
+def test_a_result_that_arrives_inline_is_counted_after_its_command() -> None:
+    """An already-finished future runs its callback inside add_done_callback,
+    on this thread, before the submit call returns. A snapshot taken in between
+    would show a success for a command that had not been submitted yet."""
+    seen: list[tuple[int, int]] = []
+    controller = None
+
+    def sink(r, g, b, token, frame_id):
+        # The link answers immediately, from inside the submit call.
+        controller.command_finished(token, frame_id, ok=True)
+        session = controller.live_sync_report().session
+        seen.append((session.commands_submitted, session.commands_succeeded))
+        return True
+
+    controller = _running_controller(sink)
+    token = controller._token
+    frame = controller._metrics.frame_processed(token, 0.1)
+    controller._accept_sample(1, 2, 3, token, frame)
+    _tick(controller._engine)
+
+    assert seen == [(0, 0)], "a result was recorded before its command"
+    session = controller.live_sync_report().session
+    assert (session.commands_submitted, session.commands_succeeded) == (1, 1)
 
 
 def test_the_frame_that_produced_a_write_is_the_one_the_result_belongs_to() -> None:

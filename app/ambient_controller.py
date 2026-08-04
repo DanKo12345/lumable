@@ -83,6 +83,12 @@ class AmbientController(QObject):
         self._metrics = LiveSyncMetrics()
         self._token = 0
         self._sink: Callable[[int, int, int, int, int], bool] | None = None
+        # A write's result can come back on the BLE thread, or inline on this
+        # one if the future was already done. Either way it must not be recorded
+        # before the write it belongs to.
+        self._result_lock = threading.Lock()
+        self._submitting = False
+        self._deferred_results: list[tuple[int, bool]] = []
         self.color_sampled.connect(self._accept_sample)
         self._engine.frame_coalesced.connect(self._on_frame_coalesced)
 
@@ -156,16 +162,37 @@ class AmbientController(QObject):
             return
         self._engine.set_target(r, g, b, token, frame_id)
 
-    def _deliver(self, r: int, g: int, b: int, token: int, frame_id: int) -> None:
+    def _deliver(self, r: int, g: int, b: int, token: int, frame_id: int) -> bool:
         """Hand a frame's colour to the BLE layer and count what happened.
 
         Submitted means accepted by that layer, not "a frame was ready". The
-        link drops a write while an earlier one is still in flight, and counting
+        link refuses a write while an earlier one is still going, and counting
         those would report a send rate the strip never saw.
+
+        A result can arrive before this call returns — a future that is already
+        done runs its callback inline, on this very thread. Results are held
+        while the write is being handed over and applied after it is counted, so
+        a snapshot can never show a success for a command not yet submitted.
         """
-        accepted = self._sink(r, g, b, token, frame_id)
-        if accepted:
-            self._metrics.command_submitted(token, time.monotonic())
+        with self._result_lock:
+            self._submitting = True
+            self._deferred_results.clear()
+        try:
+            accepted = self._sink(r, g, b, token, frame_id)
+        finally:
+            with self._result_lock:
+                self._submitting = False
+                deferred = list(self._deferred_results)
+                self._deferred_results.clear()
+
+        now = time.monotonic()
+        if not accepted:
+            self._metrics.link_rejected(token, now)
+            return False
+        self._metrics.command_submitted(token, now)
+        for result_token, ok in deferred:
+            self._record_result(result_token, ok, now)
+        return True
 
     def command_finished(self, token: int, frame_id: int, ok: bool) -> None:
         """The outcome of one accepted write. Called on the BLE loop thread.
@@ -175,7 +202,13 @@ class AmbientController(QObject):
         and the session it belonged to is the one that should carry it — which
         for an ended session means nowhere.
         """
-        now = time.monotonic()
+        with self._result_lock:
+            if self._submitting:
+                self._deferred_results.append((token, ok))
+                return
+        self._record_result(token, ok, time.monotonic())
+
+    def _record_result(self, token: int, ok: bool, now: float) -> None:
         if ok:
             self._metrics.command_succeeded(token, now)
         else:

@@ -23,7 +23,7 @@ def test_a_steady_run_reports_the_same_rate_both_ways() -> None:
         metrics.frame_captured(token, at)
         metrics.frame_processed(token, at, frame_ms=4.0)
         if index % 2 == 0:
-            metrics.command_submitted(token, at, queue_depth=1)
+            metrics.command_submitted(token, at)
 
     report = metrics.report(102.0)
 
@@ -137,7 +137,7 @@ def test_a_fast_session_is_not_reported_as_a_slow_one() -> None:
         at = 100.0 + index / 120.0
         metrics.frame_captured(token, at)
         metrics.frame_processed(token, at, frame_ms=2.0)
-        metrics.command_submitted(token, at, queue_depth=1)
+        metrics.command_submitted(token, at)
 
     recent = metrics.report(130.0).recent
     assert recent.seconds == 30.0
@@ -148,7 +148,7 @@ def test_a_fast_session_is_not_reported_as_a_slow_one() -> None:
 def test_a_failed_write_is_never_counted_as_a_command() -> None:
     metrics, token = _session()
 
-    metrics.command_submitted(token, 100.5, queue_depth=1)
+    metrics.command_submitted(token, 100.5)
     metrics.command_failed(token, 100.6)
     metrics.command_failed(token, 100.7)
 
@@ -201,22 +201,26 @@ def test_the_p95_of_eleven_frames_is_the_slowest_one() -> None:
     assert metrics.report(101.0).recent.frame_ms_p95 == 11.0
 
 
-def test_the_deepest_queue_of_the_session_is_kept_and_the_current_one_reported() -> None:
+def test_back_pressure_is_reported_as_a_share_of_what_was_offered() -> None:
+    """Replaces a queue depth that could only ever read 0 or 1: the link permits
+    one write at a time, so a number dressed as a queue said nothing."""
     metrics, token = _session()
 
-    for depth in (1, 9, 2):
-        metrics.command_submitted(token, 100.5, queue_depth=depth)
+    for _ in range(3):
+        metrics.command_submitted(token, 100.5)
+    metrics.link_rejected(token, 100.6)
 
     report = metrics.report(101.0)
-    assert report.session.queue_max == 9
-    assert report.recent.queue_depth == 2
+    assert report.session.link_rejections == 1
+    assert report.session.command_errors == 0, "back-pressure is not a failure"
+    assert report.recent.rejection_rate == 0.25
 
 
 def test_taking_a_snapshot_changes_nothing() -> None:
     """Diagnostics can be exported repeatedly; that must not move the numbers."""
     metrics, token = _session()
     metrics.frame_processed(token, 100.5, frame_ms=7.0)
-    metrics.command_submitted(token, 100.6, queue_depth=3)
+    metrics.command_submitted(token, 100.6)
 
     first = metrics.report(101.0)
     for _ in range(5):
@@ -244,7 +248,7 @@ def test_restarting_forgets_the_previous_session() -> None:
     metrics, token = _session()
     frame = metrics.frame_processed(token, 100.5, frame_ms=40.0)
     metrics.frame_coalesced(token, frame)
-    metrics.command_submitted(token, 100.7, queue_depth=7)
+    metrics.command_submitted(token, 100.7)
     metrics.reconnected(token)
 
     token = metrics.start(200.0)
@@ -252,7 +256,7 @@ def test_restarting_forgets_the_previous_session() -> None:
 
     assert report.session.captured == 0
     assert report.session.worst_frame_ms == 0.0
-    assert report.session.queue_max == 0
+    assert report.session.link_rejections == 0
     assert report.recent.capture_fps == 0.0
 
 
@@ -345,13 +349,22 @@ def test_another_mode_writing_to_the_same_path_is_not_counted() -> None:
     metrics.frame_processed(token, 100.1, frame_ms=4.0)
 
     slider_token = token + 1000  # not a session we started
-    metrics.command_submitted(slider_token, 100.2, queue_depth=3)
+    metrics.command_submitted(slider_token, 100.2)
     metrics.frame_processed(slider_token, 100.3, frame_ms=99.0)
 
     report = metrics.report(101.0)
     assert report.session.captured == 1
     assert report.session.commands_submitted == 0
     assert report.session.worst_frame_ms == 4.0
+
+
+def test_back_pressure_from_another_session_is_refused() -> None:
+    metrics, token = _session()
+
+    metrics.link_rejected(token + 1000, 100.2)
+    metrics.link_rejected(token, 100.3)
+
+    assert metrics.report(101.0).session.link_rejections == 1
 
 
 def test_a_reconnect_belonging_to_another_session_is_refused() -> None:
@@ -434,7 +447,7 @@ def test_submitted_is_not_the_sum_of_succeeded_and_failed() -> None:
     metrics, token = _session()
 
     for _ in range(5):
-        metrics.command_submitted(token, 100.1, queue_depth=1)
+        metrics.command_submitted(token, 100.1)
     metrics.command_succeeded(token, 100.2)
     metrics.command_failed(token, 100.3)
 

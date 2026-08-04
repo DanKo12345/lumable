@@ -31,11 +31,17 @@ ratio above one at the other. Clamping the result would only hide the miscount.
 
 Commands are counted at each stage they actually reach:
 
-* **commands_submitted** — writes handed to the send path.
-* **commands_succeeded** — writes the BLE layer confirmed.
-* **command_errors** — writes it refused or failed. Submitted is deliberately
-  not the sum of the other two: some are still in flight when the snapshot is
-  taken, and pretending otherwise would make the numbers lie about timing.
+* **commands_submitted** — writes the BLE layer accepted.
+* **commands_succeeded** — writes it confirmed.
+* **command_errors** — writes that failed. Submitted is deliberately not the sum
+  of the other two: some are still in flight when the snapshot is taken, and
+  pretending otherwise would make the numbers lie about timing.
+* **link_rejections** — frames the link would not take because an earlier write
+  was still going. Not an error and not a coalesced frame: nothing displaced it
+  and the same colour is offered again at the next tick. It is the honest
+  measure of back-pressure, and it replaced a queue depth that could only ever
+  read 0 or 1 — a number dressed as a queue when the link permits one write at
+  a time says nothing at all.
 
 Frame processing time never includes waiting on BLE — mixing them would make a
 slow strip look like slow code. Failures are kept in three separate counts,
@@ -85,8 +91,8 @@ class SessionTotals:
     commands_submitted: int = 0
     commands_succeeded: int = 0
     command_errors: int = 0
+    link_rejections: int = 0
     reconnects: int = 0
-    queue_max: int = 0
     worst_frame_ms: float = 0.0
     # When the worst frame happened, in seconds from the start of the session.
     # Without it a single stall from minute two reads as a problem happening now.
@@ -103,7 +109,7 @@ class RecentWindow:
     drop_ratio: float = 0.0
     frame_ms_avg: float = 0.0
     frame_ms_p95: float = 0.0
-    queue_depth: int = 0
+    rejection_rate: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -156,14 +162,14 @@ class LiveSyncMetrics:
         self._submitted = 0
         self._succeeded = 0
         self._command_errors = 0
+        self._link_rejections = 0
         self._reconnects = 0
-        self._queue_max = 0
-        self._queue_depth = 0
         self._worst_ms = 0.0
         self._worst_at = 0.0
         # One bounded buffer per kind, so a burst of one cannot evict another.
         self._capture_times: deque[float] = deque(maxlen=_SAMPLE_LIMIT)
         self._command_times: deque[float] = deque(maxlen=_SAMPLE_LIMIT)
+        self._rejection_times: deque[float] = deque(maxlen=_SAMPLE_LIMIT)
         # Processed frames as [at, ms, dropped]. The drop lives on the frame's
         # own entry, so both sides of the ratio are filtered by one timestamp.
         self._frames: deque[list] = deque(maxlen=_SAMPLE_LIMIT)
@@ -289,14 +295,25 @@ class LiveSyncMetrics:
                 return
             self._processing_errors += 1
 
-    def command_submitted(self, token: int, now: float, queue_depth: int = 0) -> None:
+    def command_submitted(self, token: int, now: float) -> None:
+        """The BLE layer took the write."""
         with self._lock:
             if not self._accepts(token):
                 return
             self._submitted += 1
-            self._queue_depth = int(queue_depth)
-            self._queue_max = max(self._queue_max, int(queue_depth))
             self._command_times.append(now)
+
+    def link_rejected(self, token: int, now: float) -> None:
+        """The link would not take the write: an earlier one was still going.
+
+        Neither an error nor a coalesced frame — nothing displaced this colour,
+        and the next tick offers it again.
+        """
+        with self._lock:
+            if not self._accepts(token):
+                return
+            self._link_rejections += 1
+            self._rejection_times.append(now)
 
     def command_succeeded(self, token: int, now: float) -> None:
         """The BLE layer confirmed the write."""
@@ -343,8 +360,8 @@ class LiveSyncMetrics:
             commands_submitted=self._submitted,
             commands_succeeded=self._succeeded,
             command_errors=self._command_errors,
+            link_rejections=self._link_rejections,
             reconnects=self._reconnects,
-            queue_max=self._queue_max,
             worst_frame_ms=round(self._worst_ms, 1),
             worst_frame_at=round(self._worst_at, 1),
         )
@@ -352,6 +369,7 @@ class LiveSyncMetrics:
         cutoff = end - self._window
         captures = sum(1 for at in self._capture_times if at >= cutoff)
         commands = sum(1 for at in self._command_times if at >= cutoff)
+        rejections = sum(1 for at in self._rejection_times if at >= cutoff)
         # Both sides of the drop ratio come from the same frames: a frame in the
         # window contributes its own drop, and one outside it contributes
         # neither. The ratio cannot exceed one without a real miscount.
@@ -371,6 +389,11 @@ class LiveSyncMetrics:
                 drop_ratio=round(drops / processed, 3) if processed else 0.0,
                 frame_ms_avg=round(sum(timed) / len(timed), 1) if timed else 0.0,
                 frame_ms_p95=round(_percentile(timed, 0.95), 1),
-                queue_depth=self._queue_depth,
+                # Of everything offered to the link, the share it would not take.
+                rejection_rate=(
+                    round(rejections / (commands + rejections), 3)
+                    if commands + rejections
+                    else 0.0
+                ),
             ),
         )
