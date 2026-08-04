@@ -85,10 +85,12 @@ class AmbientController(QObject):
         self._sink: Callable[[int, int, int, int, int], bool] | None = None
         # A write's result can come back on the BLE thread, or inline on this
         # one if the future was already done. Either way it must not be recorded
-        # before the write it belongs to.
+        # before the write it belongs to. The pair being handed over is named,
+        # not merely flagged: a bare "submitting" flag swallows the result of a
+        # previous command that happens to finish at the same moment.
         self._result_lock = threading.Lock()
-        self._submitting = False
-        self._deferred_results: list[tuple[int, bool]] = []
+        self._registering: tuple[int, int] | None = None
+        self._held: bool | None = None
         self.color_sampled.connect(self._accept_sample)
         self._engine.frame_coalesced.connect(self._on_frame_coalesced)
 
@@ -175,24 +177,37 @@ class AmbientController(QObject):
         a snapshot can never show a success for a command not yet submitted.
         """
         with self._result_lock:
-            self._submitting = True
-            self._deferred_results.clear()
+            self._registering = (token, frame_id)
+            self._held = None
         try:
             accepted = self._sink(r, g, b, token, frame_id)
-        finally:
+        except BaseException:
             with self._result_lock:
-                self._submitting = False
-                deferred = list(self._deferred_results)
-                self._deferred_results.clear()
+                self._registering = None
+                self._held = None
+            raise
 
         now = time.monotonic()
-        if not accepted:
-            self._metrics.link_rejected(token, now)
-            return False
-        self._metrics.command_submitted(token, now)
-        for result_token, ok in deferred:
-            self._record_result(result_token, ok, now)
-        return True
+        with self._result_lock:
+            held = self._held
+            self._held = None
+            if accepted:
+                # Counted under the same lock that holds this pair's result, so
+                # a BLE thread cannot slip a terminal result in between the sink
+                # returning and the command existing.
+                self._metrics.command_submitted(token, now)
+            else:
+                # Nothing was submitted, so no result for this pair can be real.
+                # Only this pair's is discarded; other commands are untouched.
+                held = None
+            self._registering = None
+
+        if accepted:
+            if held is not None:
+                self._record_result(token, held, now)
+            return True
+        self._metrics.link_rejected(token, now)
+        return False
 
     def command_finished(self, token: int, frame_id: int, ok: bool) -> None:
         """The outcome of one accepted write. Called on the BLE loop thread.
@@ -203,9 +218,14 @@ class AmbientController(QObject):
         for an ended session means nowhere.
         """
         with self._result_lock:
-            if self._submitting:
-                self._deferred_results.append((token, ok))
+            if self._registering == (token, frame_id):
+                # This very command is still being handed over. Hold its result
+                # until it has been counted as submitted.
+                self._held = ok
                 return
+        # Any other command's result — including one that finished while this
+        # attempt was being refused — is applied now. Buffering by "a submit is
+        # in progress" rather than by which pair would lose it entirely.
         self._record_result(token, ok, time.monotonic())
 
     def _record_result(self, token: int, ok: bool, now: float) -> None:

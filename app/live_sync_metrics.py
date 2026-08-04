@@ -323,7 +323,11 @@ class LiveSyncMetrics:
             self._succeeded += 1
 
     def command_failed(self, token: int, now: float) -> None:
-        """Refused or failed. Never counted as a success."""
+        """An accepted write that ended badly. Never counted as a success.
+
+        A write the link would not take is not one of these — see
+        :meth:`link_rejected`.
+        """
         with self._lock:
             if not self._accepts(token):
                 return

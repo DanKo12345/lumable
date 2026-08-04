@@ -8,6 +8,7 @@ until a signal emitted just before a stop arrives after the next run has begun.
 from __future__ import annotations
 
 import sys
+import threading
 import types
 
 from app.ambient_controller import AmbientController
@@ -331,6 +332,116 @@ def test_a_failed_write_is_counted_once_and_never_as_a_success() -> None:
     assert session.command_errors == 1
     assert session.commands_succeeded == 0
     assert session.capture_errors == 0, "a link failure was blamed on the screen"
+
+
+def test_a_previous_command_finishing_during_a_refused_attempt_is_not_lost() -> None:
+    """Buffering by "a submit is in progress" rather than by which command is
+    being submitted swallows this: the earlier write's result lands in the
+    buffer, the refused attempt returns without applying it, and a confirmed
+    write disappears from the report."""
+    controller = None
+    frames: list[int] = []
+    outcomes = [True, False]
+
+    def sink(r, g, b, token, frame_id):
+        accepted = outcomes.pop(0)
+        if not accepted:
+            # The earlier write reports back exactly while this one is refused.
+            controller.command_finished(token, frames[0], ok=True)
+        return accepted
+
+    controller = _running_controller(sink)
+    token = controller._token
+    for colour in (10, 20):
+        frames.append(controller._metrics.frame_processed(token, 0.1))
+        controller._accept_sample(colour, 0, 0, token, frames[-1])
+        _tick(controller._engine)
+
+    session = controller.live_sync_report().session
+    assert session.commands_submitted == 1
+    assert session.link_rejections == 1
+    assert session.commands_succeeded == 1, "a confirmed write vanished"
+
+
+def test_a_snapshot_never_shows_a_success_for_a_command_not_yet_submitted() -> None:
+    """The result of the write being handed over arrives from the BLE thread.
+    It must wait for the command to exist, and the ordering has to hold whether
+    the thread lands before the sink returns or while the count is being made."""
+    applied: list[tuple[int, int]] = []
+
+    class _Watching(AmbientController):
+        def _record_result(self, token: int, ok: bool, now: float) -> None:
+            session = self._metrics.report(now).session
+            applied.append((session.commands_submitted, session.commands_succeeded))
+            super()._record_result(token, ok, now)
+
+    controller = _Watching()
+
+    def sink(r, g, b, token, frame_id):
+        # A real BLE completion, on its own thread, during the hand-over.
+        worker = threading.Thread(
+            target=controller.command_finished, args=(token, frame_id, True)
+        )
+        worker.start()
+        worker.join(timeout=5)
+        return True
+
+    controller._sink = sink
+    controller._engine.set_smoothing(1.0)
+    controller._engine.start(controller._deliver, initial=(0, 0, 0), labelled_sink=True)
+    controller._token = controller._metrics.start(0.0)
+    token = controller._token
+
+    frame = controller._metrics.frame_processed(token, 0.1)
+    controller._accept_sample(5, 6, 7, token, frame)
+    _tick(controller._engine)
+
+    assert applied == [(1, 0)], "the result was applied before its command existed"
+    session = controller.live_sync_report().session
+    assert (session.commands_submitted, session.commands_succeeded) == (1, 1)
+
+
+def test_the_invariant_holds_under_real_concurrency() -> None:
+    """Many hand-overs with results arriving from other threads. No observer
+    should ever see more successes than submitted commands."""
+    controller = None
+    workers: list[threading.Thread] = []
+
+    def sink(r, g, b, token, frame_id):
+        worker = threading.Thread(
+            target=controller.command_finished, args=(token, frame_id, True)
+        )
+        workers.append(worker)
+        worker.start()
+        return True
+
+    controller = _running_controller(sink)
+    token = controller._token
+    violations: list[tuple[int, int]] = []
+    stop = threading.Event()
+
+    def watch() -> None:
+        while not stop.is_set():
+            session = controller.live_sync_report().session
+            if session.commands_succeeded > session.commands_submitted:
+                violations.append(
+                    (session.commands_submitted, session.commands_succeeded)
+                )
+
+    reader = threading.Thread(target=watch)
+    reader.start()
+    try:
+        for index in range(200):
+            frame = controller._metrics.frame_processed(token, 0.1)
+            controller._accept_sample(index % 200, 0, 0, token, frame)
+            _tick(controller._engine)
+    finally:
+        stop.set()
+        reader.join(timeout=5)
+        for worker in workers:
+            worker.join(timeout=5)
+
+    assert violations == [], f"a success outran its command: {violations[:3]}"
 
 
 def test_a_result_from_an_ended_session_lands_nowhere() -> None:
