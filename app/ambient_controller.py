@@ -29,6 +29,14 @@ class AmbientOptions:
     interval_s: float = 0.05  # min gap between capture attempts; real dt is measured
 
 
+class _CaptureError(Exception):
+    """The screen itself could not be read.
+
+    Only ``mss`` construction and ``grab`` raise this. Everything after the pixels
+    arrive is ours, and is reported as a processing error instead.
+    """
+
+
 def _region_for(monitor: dict, region: str) -> dict:
     left = int(monitor["left"])
     top = int(monitor["top"])
@@ -74,7 +82,7 @@ class AmbientController(QObject):
         self._stop = threading.Event()
         self._metrics = LiveSyncMetrics()
         self._token = 0
-        self.color_sampled.connect(self._engine.set_target)
+        self.color_sampled.connect(self._accept_sample)
         self._engine.frame_coalesced.connect(self._on_frame_coalesced)
 
     def options(self) -> AmbientOptions:
@@ -116,14 +124,28 @@ class AmbientController(QObject):
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1.5)
         self._engine.stop()
-        # Last, so no frame from a still-running capture knocks on a session that
-        # has already been closed and had its numbers frozen.
+        # Closed last, after the capture thread has been asked to stop and given
+        # time to. The join has a timeout and so guarantees nothing; what makes a
+        # straggling frame harmless is the token check in _accept_sample, not the
+        # order here.
         self._metrics.stop(time.monotonic())
         self._token = 0
 
     def live_sync_report(self) -> LiveSyncReport:
         """The current session's numbers, or the last finished one's."""
         return self._metrics.report(time.monotonic())
+
+    def _accept_sample(self, r: int, g: int, b: int, token: int, frame_id: int) -> None:
+        """The gate between the capture thread and the strip.
+
+        A queued signal emitted just before a stop can be delivered after the
+        next run has begun. Without this check that stale colour would replace
+        the current one and be written to the strip — the token would keep the
+        numbers honest while the light showed the wrong thing.
+        """
+        if not token or token != self._token:
+            return
+        self._engine.set_target(r, g, b, token, frame_id)
 
     def _on_frame_coalesced(self, token: int, frame_id: int) -> None:
         self._metrics.frame_coalesced(token, frame_id)
@@ -151,7 +173,11 @@ class AmbientController(QObject):
             applied: AmbientOptions | None = None
             resolved = None
             prev_t = time.monotonic()
-            with mss.mss() as sct:
+            try:
+                session = mss.mss()
+            except Exception as exc:
+                raise _CaptureError(str(exc)) from exc
+            with session as sct:
                 monitors = sct.monitors
                 while not self._stop.is_set():
                     options = self._options
@@ -166,7 +192,10 @@ class AmbientController(QObject):
                     # monitors[0] is the full virtual desktop; 1.. are physical screens.
                     monitor = monitors[index + 1] if index + 1 < len(monitors) else monitors[-1]
                     frame_started = time.monotonic()
-                    shot = sct.grab(_region_for(monitor, options.region))
+                    try:
+                        shot = sct.grab(_region_for(monitor, options.region))
+                    except Exception as exc:
+                        raise _CaptureError(str(exc)) from exc
 
                     now = time.monotonic()
                     self._metrics.frame_captured(token, now)
@@ -197,6 +226,12 @@ class AmbientController(QObject):
                     self.preview_sampled.emit(raw[0], raw[1], raw[2], final[0], final[1], final[2])
                     self.color_sampled.emit(final[0], final[1], final[2], token, frame_id)
                     self._stop.wait(max(0.02, options.interval_s))
-        except Exception as exc:  # capture/driver failure — report and stop cleanly.
+        except _CaptureError as exc:  # the screen refused to be read
             self._metrics.capture_failed(token, time.monotonic())
+            self.failed.emit(str(exc))
+        except Exception as exc:  # our own colour code raised
+            # Not charged to capture: a bug in the filter or the colour maths
+            # reported as "screen capture failed" sends everyone looking at
+            # drivers and permissions instead of at this application.
+            self._metrics.processing_failed(token, time.monotonic())
             self.failed.emit(str(exc))

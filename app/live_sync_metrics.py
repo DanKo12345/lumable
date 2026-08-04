@@ -38,8 +38,12 @@ Commands are counted at each stage they actually reach:
   taken, and pretending otherwise would make the numbers lie about timing.
 
 Frame processing time never includes waiting on BLE — mixing them would make a
-slow strip look like slow code. A capture failure and a BLE failure stay apart,
-because which end is at fault is the first question worth answering.
+slow strip look like slow code. Failures are kept in three separate counts,
+because which end is at fault is the first question worth answering:
+``capture_errors`` is the screen refusing to be read, ``processing_errors`` is
+this application's own colour code raising, and ``command_errors`` is the strip.
+Folding the middle one into the first would make a bug here look like a driver
+problem on the user's machine.
 
 Everything is scoped to a **session token**. The colour sliders, DIY and music
 share the same streaming path as Screen Sync, so counting writes where they meet
@@ -77,6 +81,7 @@ class SessionTotals:
     processed: int = 0
     frames_coalesced: int = 0
     capture_errors: int = 0
+    processing_errors: int = 0
     commands_submitted: int = 0
     commands_succeeded: int = 0
     command_errors: int = 0
@@ -147,6 +152,7 @@ class LiveSyncMetrics:
         self._processed = 0
         self._coalesced = 0
         self._capture_errors = 0
+        self._processing_errors = 0
         self._submitted = 0
         self._succeeded = 0
         self._command_errors = 0
@@ -265,12 +271,23 @@ class LiveSyncMetrics:
         return self._frames[index]
 
     def capture_failed(self, token: int, now: float) -> None:
-        """The screen could not be grabbed. A different problem from a BLE
-        failure, and kept apart so the report says which end is at fault."""
+        """The screen could not be grabbed — the machine's end."""
         with self._lock:
             if not self._accepts(token):
                 return
             self._capture_errors += 1
+
+    def processing_failed(self, token: int, now: float) -> None:
+        """The frame arrived but our own colour code raised.
+
+        Separate from a capture failure on purpose: a bug in the filter or the
+        colour maths reported as "screen capture failed" sends everyone looking
+        at drivers and permissions instead of at this application.
+        """
+        with self._lock:
+            if not self._accepts(token):
+                return
+            self._processing_errors += 1
 
     def command_submitted(self, token: int, now: float, queue_depth: int = 0) -> None:
         with self._lock:
@@ -322,6 +339,7 @@ class LiveSyncMetrics:
             processed=self._processed,
             frames_coalesced=self._coalesced,
             capture_errors=self._capture_errors,
+            processing_errors=self._processing_errors,
             commands_submitted=self._submitted,
             commands_succeeded=self._succeeded,
             command_errors=self._command_errors,

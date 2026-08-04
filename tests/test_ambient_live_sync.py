@@ -140,6 +140,32 @@ def test_the_capture_loop_counts_every_frame_it_produces(monkeypatch) -> None:
     assert session.worst_frame_ms >= 0.0
 
 
+def test_a_bug_in_our_colour_code_is_not_blamed_on_the_screen(monkeypatch) -> None:
+    """Reported as a capture failure, a bug in the filter sends the user
+    chasing drivers and permissions instead of reaching this application."""
+    controller = AmbientController()
+    sct = _FakeSct(frames=5, stop_event=controller._stop)
+    _install_fake_mss(monkeypatch, lambda: sct)
+
+    import app.ambient_controller as module
+
+    def broken_shape(*args, **kwargs):
+        raise ValueError("gamma table is empty")
+
+    monkeypatch.setattr(module, "shape_color", broken_shape)
+    failures: list[str] = []
+    controller.failed.connect(failures.append)
+
+    token = controller._metrics.start(0.0)
+    controller._run((0, 0, 0), token)
+
+    session = controller.live_sync_report().session
+    assert session.processing_errors == 1
+    assert session.capture_errors == 0, "our own bug was charged to the screen"
+    assert session.captured == 1, "the frame was grabbed before we mishandled it"
+    assert failures and "gamma table" in failures[0]
+
+
 def test_a_capture_failure_is_recorded_and_is_not_a_ble_error(monkeypatch) -> None:
     controller = AmbientController()
 
@@ -155,11 +181,77 @@ def test_a_capture_failure_is_recorded_and_is_not_a_ble_error(monkeypatch) -> No
 
     session = controller.live_sync_report().session
     assert session.capture_errors == 1
+    assert session.processing_errors == 0
     assert session.command_errors == 0
     assert failures and "display disconnected" in failures[0]
 
 
+def test_a_grab_that_fails_mid_run_is_a_capture_failure(monkeypatch) -> None:
+    controller = AmbientController()
+
+    class _FailingSct(_FakeSct):
+        def grab(self, region):
+            raise OSError("the monitor went away")
+
+    _install_fake_mss(monkeypatch, lambda: _FailingSct(frames=5, stop_event=controller._stop))
+
+    token = controller._metrics.start(0.0)
+    controller._run((0, 0, 0), token)
+
+    session = controller.live_sync_report().session
+    assert session.capture_errors == 1
+    assert session.processing_errors == 0
+    assert session.captured == 0
+
+
 # ── the pair must survive the queued path ──────────────────────────────
+def test_a_stale_colour_never_reaches_the_strip() -> None:
+    """The consequence the counters cannot show. A colour emitted just before a
+    stop can be delivered after the next run has begun; if it is passed through,
+    the strip is set to a colour from a session the user already ended, and the
+    fresh frame it displaced is charged as a drop."""
+    controller = AmbientController()
+    written: list[tuple[int, int, int]] = []
+    controller._engine.set_smoothing(1.0)
+    controller._engine.start(lambda r, g, b: written.append((r, g, b)), initial=(0, 0, 0))
+
+    stale_token = controller._metrics.start(0.0)
+    controller._token = stale_token
+    controller._metrics.stop(1.0)
+
+    fresh_token = controller._metrics.start(10.0)
+    controller._token = fresh_token
+    fresh_frame = controller._metrics.frame_processed(fresh_token, 10.1, frame_ms=4.0)
+    controller._accept_sample(9, 9, 9, fresh_token, fresh_frame)
+
+    # The straggler from the ended session arrives now.
+    controller._accept_sample(200, 0, 0, stale_token, 1)
+
+    _tick(controller._engine)
+    assert written == [(9, 9, 9)], "a colour from an ended session reached the strip"
+    assert controller._metrics.report(11.0).session.frames_coalesced == 0, (
+        "the stale colour displaced a live frame"
+    )
+
+
+def test_a_sample_arriving_after_the_run_stopped_is_refused() -> None:
+    controller = AmbientController()
+    written: list[tuple[int, int, int]] = []
+    controller._engine.set_smoothing(1.0)
+    controller._engine.start(lambda r, g, b: written.append((r, g, b)), initial=(0, 0, 0))
+
+    token = controller._metrics.start(0.0)
+    controller._token = token
+    controller._token = 0  # what stop() leaves behind
+
+    controller._accept_sample(200, 0, 0, token, 1)
+
+    _tick(controller._engine)
+    # The seed colour the engine was started with may be written; the colour
+    # from the ended session must not be.
+    assert (200, 0, 0) not in written
+
+
 def test_a_frame_from_the_previous_run_cannot_land_in_the_current_one() -> None:
     """A colour emitted just before a stop can be delivered after the next run
     has started. It carries its own token, so it is refused rather than counted
