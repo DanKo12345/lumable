@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, Signal
 
 from app.ambient_color import shape_color
 from app.color_stream import ColorStreamEngine
+from app.live_sync_metrics import LiveSyncMetrics, LiveSyncReport
 from app.screen_profiles import get_profile, resolve_configs
 from app.screen_sample import extract_color, sample_step_for
 from app.screen_temporal import TemporalFilter
@@ -56,7 +57,9 @@ class AmbientController(QObject):
     surface via :attr:`failed`.
     """
 
-    color_sampled = Signal(int, int, int)                       # final colour → engine/BLE
+    # final colour → engine/BLE, carrying the session token and frame id that
+    # produced it so a drop can be attributed to the right frame of the right run
+    color_sampled = Signal(int, int, int, int, int)
     preview_sampled = Signal(int, int, int, int, int, int)      # raw rgb, final rgb → UI preview
     failed = Signal(str)
 
@@ -69,7 +72,10 @@ class AmbientController(QObject):
         self._options = AmbientOptions()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._metrics = LiveSyncMetrics()
+        self._token = 0
         self.color_sampled.connect(self._engine.set_target)
+        self._engine.frame_coalesced.connect(self._on_frame_coalesced)
 
     def options(self) -> AmbientOptions:
         return self._options
@@ -94,8 +100,11 @@ class AmbientController(QObject):
         self._engine.set_smoothing(1.0)
         self._engine.start(sink, initial=initial)
         self._stop.clear()
+        # Opened before the thread exists, so the very first frame already has a
+        # session to belong to.
+        self._token = self._metrics.start(time.monotonic())
         thread = threading.Thread(
-            target=self._run, args=(initial,), name="AmbientCapture", daemon=True
+            target=self._run, args=(initial, self._token), name="AmbientCapture", daemon=True
         )
         self._thread = thread
         thread.start()
@@ -107,6 +116,17 @@ class AmbientController(QObject):
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1.5)
         self._engine.stop()
+        # Last, so no frame from a still-running capture knocks on a session that
+        # has already been closed and had its numbers frozen.
+        self._metrics.stop(time.monotonic())
+        self._token = 0
+
+    def live_sync_report(self) -> LiveSyncReport:
+        """The current session's numbers, or the last finished one's."""
+        return self._metrics.report(time.monotonic())
+
+    def _on_frame_coalesced(self, token: int, frame_id: int) -> None:
+        self._metrics.frame_coalesced(token, frame_id)
 
     def stream_error_count(self) -> int:
         return self._engine.error_count()
@@ -114,10 +134,11 @@ class AmbientController(QObject):
     def last_stream_error(self) -> str:
         return self._engine.last_error()
 
-    def _run(self, initial: tuple[int, int, int]) -> None:
+    def _run(self, initial: tuple[int, int, int], token: int) -> None:
         try:
             import mss
         except Exception as exc:
+            self._metrics.capture_failed(token, time.monotonic())
             self.failed.emit(f"screen_capture_unavailable: {exc}")
             return
         try:
@@ -144,9 +165,11 @@ class AmbientController(QObject):
                     index = max(0, options.monitor_index)
                     # monitors[0] is the full virtual desktop; 1.. are physical screens.
                     monitor = monitors[index + 1] if index + 1 < len(monitors) else monitors[-1]
+                    frame_started = time.monotonic()
                     shot = sct.grab(_region_for(monitor, options.region))
 
                     now = time.monotonic()
+                    self._metrics.frame_captured(token, now)
                     dt = now - prev_t
                     prev_t = now
 
@@ -163,9 +186,17 @@ class AmbientController(QObject):
                         min_saturation=resolved.shape.min_saturation,
                     )
                     final = temporal.push(shaped, dt)
+                    # Grab and colour work only: the wait between frames and
+                    # everything BLE stay out, or a slow strip would read as slow
+                    # code and the worst-frame figure would point at the wrong end.
+                    done = time.monotonic()
+                    frame_id = self._metrics.frame_processed(
+                        token, done, frame_ms=(done - frame_started) * 1000.0
+                    )
                     # Only the final colour reaches BLE; the preview shows both.
                     self.preview_sampled.emit(raw[0], raw[1], raw[2], final[0], final[1], final[2])
-                    self.color_sampled.emit(final[0], final[1], final[2])
+                    self.color_sampled.emit(final[0], final[1], final[2], token, frame_id)
                     self._stop.wait(max(0.02, options.interval_s))
         except Exception as exc:  # capture/driver failure — report and stop cleanly.
+            self._metrics.capture_failed(token, time.monotonic())
             self.failed.emit(str(exc))

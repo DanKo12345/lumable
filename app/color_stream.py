@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QElapsedTimer, QObject, Qt, QTimer
+from PySide6.QtCore import QElapsedTimer, QObject, Qt, QTimer, Signal
 
 RGB = tuple[int, int, int]
 
@@ -52,7 +52,15 @@ class ColorStreamEngine(QObject):
     The engine ticks fast for smooth interpolation but only calls the sink at
     ``send_interval_ms`` and only when the colour actually changed, so the BLE
     link (which handles ~10-20 writes/sec) is never flooded.
+
+    Callers that label their frames (screen sync does; a slider does not) get
+    :attr:`frame_coalesced` back for every frame whose colour was replaced by a
+    newer one before any tick could act on it. That is the only place a drop can
+    be observed honestly — the engine is what displaces frames.
     """
+
+    # (token, frame_id) of a frame whose colour never got its chance to be sent.
+    frame_coalesced = Signal(int, int)
 
     def __init__(
         self,
@@ -70,6 +78,10 @@ class ColorStreamEngine(QObject):
         self._last_send_ms = 0
         self._error_count = 0
         self._last_error = ""
+        # The labelled frame currently holding the target, if any. It is cleared
+        # by the tick that acts on it and reported as coalesced if a newer frame
+        # arrives first.
+        self._pending: tuple[int, int] | None = None
         self._elapsed = QElapsedTimer()
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.PreciseTimer)
@@ -98,14 +110,25 @@ class ColorStreamEngine(QObject):
         self._last_send_ms = 0
         self._error_count = 0
         self._last_error = ""
+        self._pending = None
         self._elapsed.restart()
         self._timer.start()
 
     def stop(self) -> None:
         self._timer.stop()
         self._sink = None
+        self._pending = None
 
-    def set_target(self, r: int, g: int, b: int) -> None:
+    def set_target(self, r: int, g: int, b: int, token: int = 0, frame_id: int = 0) -> None:
+        """Aim at a colour, optionally saying which frame it came from.
+
+        The pair travels together because a queued signal can arrive after the
+        session that produced it has ended; a controller holding only "the last
+        frame id" would attribute such a straggler to whatever is running now.
+        """
+        if self._pending is not None:
+            self.frame_coalesced.emit(*self._pending)
+        self._pending = (token, frame_id) if frame_id else None
         self._smoother.set_target((r, g, b))
 
     def _tick(self) -> None:
@@ -114,8 +137,12 @@ class ColorStreamEngine(QObject):
         color = self._smoother.advance()
         now = self._elapsed.elapsed()
         if now - self._last_send_ms < self._send_interval_ms:
-            return
+            return  # still waiting for its turn, not displaced
+        # From here the frame has had its chance, whether or not a write follows.
+        self._pending = None
         if color == self._last_sent:
+            # The strip already shows this colour. Nothing was lost, so counting
+            # a drop here would report a still screen as a failing one.
             return
         self._last_sent = color
         self._last_send_ms = now
