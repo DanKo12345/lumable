@@ -5,7 +5,7 @@
 <h1 align="center">LumaBLE</h1>
 
 <p align="center">
-  Control Bluetooth LED strips from Windows — colours, effects, sync and automations.
+  <b>Turn a cheap ELK-BLEDOM Bluetooth strip into responsive PC lighting. No hub required.</b>
 </p>
 
 <p align="center">
@@ -31,9 +31,12 @@
 
 ![LumaBLE colour and brightness controls](docs/images/lumable-color-dark.png)
 
-LumaBLE discovers compatible BLE LED controllers nearby and gives them a proper desktop interface:
-colour, brightness, power, effects, scenes, screen and audio sync, profiles, schedules and automation
-rules. It is designed for repeated everyday use rather than one-off controller setup.
+Those £8 Bluetooth LED strips — **ELK-BLEDOM**, **Triones** / Happy Lighting, **Magic Home**,
+**BanlanX SP61x / SP62x** — normally come with a phone app and nothing else. LumaBLE gives them a
+real Windows application: the strip follows what is on your screen, reacts to whatever the PC is
+playing, and switches scenes by itself when you open a game.
+
+No hub, no bridge, no account. The controller you already own, driven from the desktop.
 
 > LumaBLE is currently in beta. Controller protocols vary between manufacturers, so please attach a
 > diagnostics report when requesting support for a new model.
