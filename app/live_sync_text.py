@@ -29,7 +29,46 @@ pasted into bug reports, and one spelling makes two users' reports comparable.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from app.live_sync_metrics import RECENT_WINDOW_SECONDS, LiveSyncReport
+
+
+def _hex(rgb: object) -> str:
+    if not isinstance(rgb, (tuple, list)) or len(rgb) != 3:
+        return "-"
+    try:
+        r, g, b = (max(0, min(255, int(channel))) for channel in rgb)
+    except (TypeError, ValueError):
+        return "-"
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def _settings_lines(settings: Mapping | None) -> list[str]:
+    """How the colour was configured, and what it came out as.
+
+    Without these a "wrong colour" report cannot be checked at all: the same
+    frame gives a muted lilac on one profile and a saturated blue on another,
+    and full-screen versus centre changes it from sky to sunset. Reconstructing
+    that from a photograph of a wall is guesswork.
+    """
+    if not settings:
+        return []
+    return [
+        "settings: profile {profile}, region {region}, monitor {monitor}, "
+        "intensity {intensity}, smoothness {smoothness}".format(
+            profile=settings.get("profile", "-"),
+            region=settings.get("region", "-"),
+            monitor=settings.get("monitor", "-"),
+            intensity=settings.get("intensity", "-"),
+            smoothness=settings.get("smoothness", "-"),
+        ),
+        # Raw is what the frame averaged to; final is after shaping and
+        # smoothing. Which of the two is already wrong says whether to look at
+        # the sampling or at the profile.
+        f"last colour: raw {_hex(settings.get('raw_rgb'))} "
+        f"-> final {_hex(settings.get('final_rgb'))}",
+    ]
 
 
 def _has_anything(report: LiveSyncReport) -> bool:
@@ -62,6 +101,7 @@ def format_live_sync(
     mode: str = "screen",
     running: bool = False,
     window_seconds: float = RECENT_WINDOW_SECONDS,
+    settings: Mapping | None = None,
 ) -> list[str]:
     """Two blocks of report lines, or nothing at all.
 
@@ -71,6 +111,7 @@ def format_live_sync(
     """
     if not _has_anything(report):
         return []
+    settings_lines = _settings_lines(settings)
 
     session = report.session
     recent = report.recent
@@ -88,6 +129,7 @@ def format_live_sync(
         "",
         "Live Sync — session",
         f"mode: {mode} ({state})",
+        *settings_lines,
         f"duration: {session.seconds}s",
         f"frames: {session.captured} captured, {session.processed} processed, "
         f"{session.frames_coalesced} coalesced",

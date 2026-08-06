@@ -11,8 +11,38 @@ import sys
 import threading
 import types
 
+import pytest
+
 from app.ambient_controller import AmbientController
 from app.color_stream import ColorStreamEngine
+
+
+@pytest.fixture(autouse=True)
+def _stop_every_engine_started_here():
+    """Starting the stream engine starts a QTimer, and a test that leaves one
+    running leaves a live timer pointing at an object the test dropped. It fires
+    inside whatever processes events next — another test's ``processEvents``, in
+    a different file — and takes the interpreter down there, where nothing looks
+    related. Stopping is tracked at ``start`` so no call site can forget."""
+    started: list[ColorStreamEngine] = []
+    original = ColorStreamEngine.start
+
+    def tracked(self, *args, **kwargs):
+        started.append(self)
+        return original(self, *args, **kwargs)
+
+    ColorStreamEngine.start = tracked
+    try:
+        yield
+    finally:
+        ColorStreamEngine.start = original
+        for engine in started:
+            try:
+                engine.stop()
+            except RuntimeError:
+                # Its owner was collected first and took the C++ timer with it.
+                # That one cannot fire again either, which is all we needed.
+                pass
 
 
 def _let_the_rate_gate_pass(engine: ColorStreamEngine) -> None:
@@ -139,6 +169,90 @@ def test_the_capture_loop_counts_every_frame_it_produces(monkeypatch) -> None:
     assert session.processed == 5
     assert session.capture_errors == 0
     assert session.worst_frame_ms >= 0.0
+
+
+def test_the_wait_is_what_is_left_of_the_period_not_a_fresh_one(monkeypatch) -> None:
+    """Pausing a full interval after the work makes the real rate
+    ``work + interval``. With 25 ms of colour work under a 50 ms period that is
+    13 fps rather than 20 — and the report then reads as slow sampling when the
+    sampling had 25 ms of room to spare."""
+    controller = AmbientController()
+    controller.configure(interval_s=0.05)
+    sct = _FakeSct(frames=4, stop_event=controller._stop)
+    _install_fake_mss(monkeypatch, lambda: sct)
+
+    clock = [1000.0]
+    waits: list[float] = []
+
+    def fake_monotonic() -> float:
+        return clock[0]
+
+    def fake_wait(delay: float = 0.0) -> bool:
+        waits.append(delay)
+        clock[0] += delay
+        return controller._stop.is_set()
+
+    import app.ambient_controller as module
+
+    monkeypatch.setattr(module.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(controller._stop, "wait", fake_wait)
+
+    # Every grab costs 25 ms of the 50 ms period.
+    original_grab = sct.grab
+
+    def slow_grab(region):
+        clock[0] += 0.025
+        return original_grab(region)
+
+    sct.grab = slow_grab
+
+    token = controller._metrics.start(clock[0])
+    controller._token = token
+    controller._run((0, 0, 0), token)
+
+    assert waits, "the loop never waited"
+    assert all(abs(delay - 0.025) < 1e-6 for delay in waits), (
+        f"the loop waited a full period on top of the work: {waits}"
+    )
+
+
+def test_a_frame_that_overruns_its_slot_does_not_burst_afterwards(monkeypatch) -> None:
+    """Catching up on missed frames would fire several back to back at the
+    strip and then stall again. The schedule restarts instead."""
+    controller = AmbientController()
+    controller.configure(interval_s=0.05)
+    sct = _FakeSct(frames=3, stop_event=controller._stop)
+    _install_fake_mss(monkeypatch, lambda: sct)
+
+    clock = [1000.0]
+    waits: list[float] = []
+
+    def fake_wait(delay: float = 0.0) -> bool:
+        waits.append(delay)
+        clock[0] += delay
+        return controller._stop.is_set()
+
+    import app.ambient_controller as module
+
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(controller._stop, "wait", fake_wait)
+
+    original_grab = sct.grab
+
+    def slow_grab(region):
+        clock[0] += 0.4  # eight periods in one frame
+        return original_grab(region)
+
+    sct.grab = slow_grab
+
+    token = controller._metrics.start(clock[0])
+    controller._token = token
+    controller._run((0, 0, 0), token)
+
+    assert waits and all(delay > 0.0 for delay in waits), (
+        "a frame that overran left no pause at all"
+    )
+    assert all(delay < 0.05 for delay in waits)
 
 
 def test_a_bug_in_our_colour_code_is_not_blamed_on_the_screen(monkeypatch) -> None:

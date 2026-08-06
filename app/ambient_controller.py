@@ -29,6 +29,12 @@ class AmbientOptions:
     interval_s: float = 0.05  # min gap between capture attempts; real dt is measured
 
 
+# A floor on the frame period (50 fps), and the pause used when a frame overran
+# its slot — small enough to keep up, large enough to let other threads run.
+_MIN_FRAME_PERIOD = 0.02
+_CATCH_UP_YIELD = 0.002
+
+
 class _CaptureError(Exception):
     """The screen itself could not be read.
 
@@ -82,6 +88,11 @@ class AmbientController(QObject):
         self._stop = threading.Event()
         self._metrics = LiveSyncMetrics()
         self._token = 0
+        # The last colour the loop produced, kept for the report. Written on the
+        # capture thread and read on the UI thread; a tuple assignment is atomic,
+        # and a report one frame out of date costs nothing.
+        self._last_raw: tuple[int, int, int] | None = None
+        self._last_final: tuple[int, int, int] | None = None
         self._sink: Callable[[int, int, int, int, int], bool] | None = None
         # A write's result can come back on the BLE thread, or inline on this
         # one if the future was already done. Either way it must not be recorded
@@ -151,6 +162,25 @@ class AmbientController(QObject):
     def live_sync_report(self) -> LiveSyncReport:
         """The current session's numbers, or the last finished one's."""
         return self._metrics.report(time.monotonic())
+
+    def live_sync_settings(self) -> dict:
+        """How the colour was configured, and the last one produced.
+
+        Kept next to the numbers because a "wrong colour" report is otherwise
+        unfalsifiable: the same frame is a muted lilac on one profile and a
+        saturated blue on another, and full screen versus centre turns a sunset
+        into a sky. Survives the stop, like the report itself.
+        """
+        options = self._options
+        return {
+            "profile": options.profile_id,
+            "region": options.region,
+            "monitor": options.monitor_index,
+            "intensity": options.intensity,
+            "smoothness": options.smoothness,
+            "raw_rgb": self._last_raw,
+            "final_rgb": self._last_final,
+        }
 
     def _accept_sample(self, r: int, g: int, b: int, token: int, frame_id: int) -> None:
         """The gate between the capture thread and the strip.
@@ -264,6 +294,7 @@ class AmbientController(QObject):
             applied: AmbientOptions | None = None
             resolved = None
             prev_t = time.monotonic()
+            next_frame = prev_t
             try:
                 session = mss.mss()
             except Exception as exc:
@@ -306,6 +337,8 @@ class AmbientController(QObject):
                         min_saturation=resolved.shape.min_saturation,
                     )
                     final = temporal.push(shaped, dt)
+                    self._last_raw = raw
+                    self._last_final = final
                     # Grab and colour work only: the wait between frames and
                     # everything BLE stay out, or a slow strip would read as slow
                     # code and the worst-frame figure would point at the wrong end.
@@ -316,7 +349,22 @@ class AmbientController(QObject):
                     # Only the final colour reaches BLE; the preview shows both.
                     self.preview_sampled.emit(raw[0], raw[1], raw[2], final[0], final[1], final[2])
                     self.color_sampled.emit(final[0], final[1], final[2], token, frame_id)
-                    self._stop.wait(max(0.02, options.interval_s))
+
+                    # Wait out what is left of the frame period, not a fresh
+                    # interval on top of the work. Pausing the full interval
+                    # after every frame made the real rate work + interval:
+                    # 25 ms of colour work under a 50 ms period ran at 13 fps
+                    # instead of 20, and the report then blamed the sampling.
+                    period = max(_MIN_FRAME_PERIOD, options.interval_s)
+                    next_frame += period
+                    delay = next_frame - time.monotonic()
+                    if delay <= 0.0:
+                        # Behind schedule. Start the period fresh rather than
+                        # firing the missed frames back to back, which would
+                        # burst at the strip and then stall again.
+                        next_frame = time.monotonic()
+                        delay = _CATCH_UP_YIELD
+                    self._stop.wait(delay)
         except _CaptureError as exc:  # the screen refused to be read
             self._metrics.capture_failed(token, time.monotonic())
             self.failed.emit(str(exc))

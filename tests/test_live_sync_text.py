@@ -58,6 +58,50 @@ def test_a_running_session_reports_both_layers() -> None:
     assert "processing time: 4.0 ms avg, 4.0 ms p95" in text
 
 
+def test_the_settings_that_produced_the_colour_are_in_the_report() -> None:
+    """A "wrong colour" report is unfalsifiable without them: the same frame is
+    a muted lilac on one profile and a saturated blue on another, and full
+    screen versus centre turns a sunset into a sky. Reconstructing that from a
+    photograph of a wall is guesswork."""
+    metrics = LiveSyncMetrics()
+    token = metrics.start(100.0)
+    metrics.frame_captured(token, 100.1)
+    metrics.frame_processed(token, 100.1, frame_ms=4.0)
+
+    text = _text(
+        metrics.report(101.0),
+        running=True,
+        settings={
+            "profile": "desktop",
+            "region": "full",
+            "monitor": 0,
+            "intensity": 55,
+            "smoothness": 65,
+            "raw_rgb": (146, 141, 160),
+            "final_rgb": (73, 120, 211),
+        },
+    )
+
+    assert (
+        "settings: profile desktop, region full, monitor 0, "
+        "intensity 55, smoothness 65"
+    ) in text
+    # Which of the two is already wrong says whether to look at the sampling or
+    # at the profile.
+    assert "last colour: raw #928DA0 -> final #4978D3" in text
+
+
+def test_a_colour_that_was_never_produced_is_shown_as_missing() -> None:
+    metrics = LiveSyncMetrics()
+    token = metrics.start(100.0)
+    metrics.capture_failed(token, 100.1)
+
+    text = _text(metrics.report(101.0), running=True, settings={"profile": "movie"})
+
+    assert "last colour: raw - -> final -" in text
+    assert "profile movie" in text
+
+
 def test_the_three_error_kinds_stay_apart() -> None:
     """Which end is at fault is the first question a report has to answer: the
     screen, this application, or the strip."""

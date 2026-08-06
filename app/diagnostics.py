@@ -132,8 +132,13 @@ def _ambient_section(ambient: dict[str, Any] | None) -> list[str]:
     if not ambient:
         return []
     live_sync = ambient.get("live_sync")
+    settings = ambient.get("live_sync_settings")
     measured = (
-        format_live_sync(live_sync, running=bool(ambient.get("running")))
+        format_live_sync(
+            live_sync,
+            running=bool(ambient.get("running")),
+            settings=settings if isinstance(settings, dict) else None,
+        )
         if isinstance(live_sync, LiveSyncReport)
         else []
     )
