@@ -104,6 +104,9 @@ class AmbientUiController:
             "running": self._ambient.is_running(),
             "errors": self._ambient.stream_error_count(),
             "last_error": self._ambient.last_stream_error(),
+            # The last run's numbers survive its stop, so a report exported
+            # after switching sync off still describes the run being asked about.
+            "live_sync": self._ambient.live_sync_report(),
         }
 
     def stop_if_running(self) -> None:

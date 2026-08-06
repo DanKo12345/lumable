@@ -9,6 +9,8 @@ from typing import Any
 from app.app_info import APP_AUTHOR, APP_NAME, APP_VERSION
 from app.constants import CRASH_LOG_MAX_AGE_DAYS
 from app.crash_logging import CRASH_LOG_DIR
+from app.live_sync_metrics import LiveSyncReport
+from app.live_sync_text import format_live_sync
 from app.localization import localization_manager
 from app.motion_policy import motion_policy
 
@@ -127,7 +129,15 @@ def sanitize_report_text(text: str) -> str:
 
 
 def _ambient_section(ambient: dict[str, Any] | None) -> list[str]:
-    if not ambient or not (ambient.get("errors") or ambient.get("running")):
+    if not ambient:
+        return []
+    live_sync = ambient.get("live_sync")
+    measured = (
+        format_live_sync(live_sync, running=bool(ambient.get("running")))
+        if isinstance(live_sync, LiveSyncReport)
+        else []
+    )
+    if not (ambient.get("errors") or ambient.get("running") or measured):
         return []
     lines = [
         "",
@@ -138,7 +148,7 @@ def _ambient_section(ambient: dict[str, Any] | None) -> list[str]:
     error_text = sanitize_report_text(str(ambient.get("last_error", "") or ""))
     if error_text.strip():
         lines.append(_line_key("ambient_last_error", error_text))
-    return lines
+    return lines + measured
 
 
 def _strips_section(snapshot: dict[str, Any]) -> list[str]:
