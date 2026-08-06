@@ -21,6 +21,18 @@ def test_a_session_that_never_ran_adds_nothing() -> None:
     assert format_live_sync(LiveSyncReport()) == []
 
 
+def test_a_broken_invariant_is_shown_rather_than_hidden() -> None:
+    """A result without a submission cannot happen today. If it ever does, the
+    report has to say so — deciding it is impossible and printing nothing would
+    hide exactly the contradiction worth seeing."""
+    from app.live_sync_metrics import SessionTotals
+
+    impossible = LiveSyncReport(session=SessionTotals(commands_succeeded=3))
+
+    text = _text(impossible, running=False)
+    assert "commands: 0 submitted, 3 succeeded, 0 failed" in text
+
+
 def test_a_running_session_reports_both_layers() -> None:
     metrics = LiveSyncMetrics()
     token = metrics.start(100.0)

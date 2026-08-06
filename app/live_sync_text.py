@@ -33,6 +33,14 @@ from app.live_sync_metrics import RECENT_WINDOW_SECONDS, LiveSyncReport
 
 
 def _has_anything(report: LiveSyncReport) -> bool:
+    """Whether anything at all was measured.
+
+    Results are checked separately from submissions even though a result cannot
+    exist without one. If that invariant ever breaks, the formatter's job is to
+    show the broken numbers, not to decide they cannot have happened and print
+    nothing — a diagnostics report that hides a contradiction is worse than one
+    that displays it.
+    """
     session = report.session
     return bool(
         session.seconds
@@ -41,6 +49,8 @@ def _has_anything(report: LiveSyncReport) -> bool:
         or session.capture_errors
         or session.processing_errors
         or session.commands_submitted
+        or session.commands_succeeded
+        or session.command_errors
         or session.link_rejections
         or session.reconnects
     )
