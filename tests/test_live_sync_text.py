@@ -7,12 +7,39 @@ plausible wrong reading — a caption that invites one is a defect.
 
 from __future__ import annotations
 
+from app.ambient_color import shape_color
 from app.live_sync_metrics import LiveSyncMetrics, LiveSyncReport
 from app.live_sync_text import format_live_sync
+from app.screen_profiles import (
+    NEUTRAL_INTENSITY,
+    NEUTRAL_SMOOTHNESS,
+    get_profile,
+    resolve_configs,
+)
 
 
 def _text(report: LiveSyncReport, **kwargs) -> str:
     return "\n".join(format_live_sync(report, **kwargs))
+
+
+def _shaped(raw: tuple[int, int, int], profile_id: str) -> tuple[int, int, int]:
+    """The final colour this raw really becomes on this profile.
+
+    Derived rather than written down: a raw/final pair the pipeline could not
+    produce would pass as text while teaching a false reading of the report,
+    and it would keep passing after a profile is retuned.
+    """
+    resolved = resolve_configs(
+        get_profile(profile_id), NEUTRAL_INTENSITY, NEUTRAL_SMOOTHNESS
+    )
+    return shape_color(
+        raw,
+        saturation=resolved.shape.saturation,
+        gamma=resolved.shape.gamma,
+        min_brightness=resolved.shape.min_brightness,
+        max_brightness=resolved.shape.max_brightness,
+        min_saturation=resolved.shape.min_saturation,
+    )
 
 
 def test_a_session_that_never_ran_adds_nothing() -> None:
@@ -68,6 +95,9 @@ def test_the_settings_that_produced_the_colour_are_in_the_report() -> None:
     metrics.frame_captured(token, 100.1)
     metrics.frame_processed(token, 100.1, frame_ms=4.0)
 
+    raw = (0x8A, 0x86, 0x95)
+    final = _shaped(raw, "desktop")
+
     text = _text(
         metrics.report(101.0),
         running=True,
@@ -77,8 +107,8 @@ def test_the_settings_that_produced_the_colour_are_in_the_report() -> None:
             "monitor": 0,
             "intensity": 55,
             "smoothness": 65,
-            "raw_rgb": (146, 141, 160),
-            "final_rgb": (73, 120, 211),
+            "raw_rgb": raw,
+            "final_rgb": final,
         },
     )
 
@@ -88,7 +118,11 @@ def test_the_settings_that_produced_the_colour_are_in_the_report() -> None:
     ) in text
     # Which of the two is already wrong says whether to look at the sampling or
     # at the profile.
-    assert "last colour: raw #928DA0 -> final #4978D3" in text
+    assert "last colour: raw #8A8695 -> final #928DA0" in text
+    assert final == (0x92, 0x8D, 0xA0), (
+        "the desktop profile no longer turns this raw into this final; the "
+        "example in the report's test has to stay one the pipeline produces"
+    )
 
 
 def test_a_run_with_no_completed_frame_names_no_settings() -> None:
