@@ -83,7 +83,7 @@ def test_the_settings_that_produced_the_colour_are_in_the_report() -> None:
     )
 
     assert (
-        "settings: profile desktop, region full, monitor 0, "
+        "last sample settings: profile desktop, region full, monitor 0, "
         "intensity 55, smoothness 65"
     ) in text
     # Which of the two is already wrong says whether to look at the sampling or
@@ -91,15 +91,17 @@ def test_the_settings_that_produced_the_colour_are_in_the_report() -> None:
     assert "last colour: raw #928DA0 -> final #4978D3" in text
 
 
-def test_a_colour_that_was_never_produced_is_shown_as_missing() -> None:
+def test_a_run_with_no_completed_frame_names_no_settings() -> None:
+    """There are no settings that produced a colour, because no colour was
+    produced. Printing the current ones would invent a sample."""
     metrics = LiveSyncMetrics()
     token = metrics.start(100.0)
     metrics.capture_failed(token, 100.1)
 
-    text = _text(metrics.report(101.0), running=True, settings={"profile": "movie"})
+    text = _text(metrics.report(101.0), running=True, settings={"sampled": False})
 
-    assert "last colour: raw - -> final -" in text
-    assert "profile movie" in text
+    assert "last sample: none, no frame completed this run" in text
+    assert "profile" not in text
 
 
 def test_the_three_error_kinds_stay_apart() -> None:

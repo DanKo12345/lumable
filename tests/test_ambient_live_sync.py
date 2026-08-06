@@ -255,6 +255,113 @@ def test_a_frame_that_overruns_its_slot_does_not_burst_afterwards(monkeypatch) -
     assert all(delay < 0.05 for delay in waits)
 
 
+def test_the_reported_settings_are_the_ones_that_made_the_colour(monkeypatch) -> None:
+    """Read from the live options instead, the report pairs the colour of a
+    finished run with a profile chosen afterwards — and describes something
+    that never happened."""
+    controller = AmbientController()
+    controller.configure(profile_id="desktop", region="full")
+    sct = _FakeSct(frames=3, stop_event=controller._stop)
+    _install_fake_mss(monkeypatch, lambda: sct)
+
+    token = controller._metrics.start(0.0)
+    controller._token = token
+    controller._run((0, 0, 0), token)
+    after_run = controller.live_sync_settings()
+
+    # The user pokes at the card after stopping, then exports.
+    controller.configure(profile_id="movie", region="center", intensity=90)
+
+    settings = controller.live_sync_settings()
+    assert settings["profile"] == "desktop"
+    assert settings["region"] == "full"
+    assert settings["intensity"] != 90
+    assert settings == after_run
+
+
+def test_a_run_that_dies_before_its_first_frame_shows_no_colour(monkeypatch) -> None:
+    """Otherwise the failed run wears the colour of the last one that worked,
+    which is the most convincing wrong answer the report could give."""
+    controller = AmbientController()
+
+    def run_once() -> None:
+        """Through the real start/stop, so the clearing under test is exercised
+        rather than reproduced by hand."""
+        controller.start(lambda *args: True, initial=(0, 0, 0))
+        thread = controller._thread
+        if thread is not None:
+            thread.join(timeout=5)
+        controller.stop()
+
+    sct = _FakeSct(frames=2, stop_event=controller._stop)
+    _install_fake_mss(monkeypatch, lambda: sct)
+    run_once()
+    assert controller.live_sync_settings()["sampled"] is True
+
+    class _DeadSct(_FakeSct):
+        def grab(self, region):
+            raise OSError("the monitor went away")
+
+    _install_fake_mss(monkeypatch, lambda: _DeadSct(frames=1, stop_event=controller._stop))
+    run_once()
+
+    assert controller.live_sync_settings() == {"sampled": False}
+
+
+def test_changing_the_profile_mid_run_moves_settings_and_colour_together(monkeypatch) -> None:
+    controller = AmbientController()
+    controller.configure(profile_id="desktop")
+    sct = _FakeSct(frames=4, stop_event=controller._stop)
+    _install_fake_mss(monkeypatch, lambda: sct)
+
+    original_grab = sct.grab
+
+    def switching_grab(region):
+        if sct.grabs == 1:  # after the first frame, as the card's toggle would
+            controller.configure(profile_id="movie")
+        return original_grab(region)
+
+    sct.grab = switching_grab
+
+    token = controller._metrics.start(0.0)
+    controller._token = token
+    controller._run((0, 0, 0), token)
+
+    settings = controller.live_sync_settings()
+    assert settings["profile"] == "movie", "the report kept the profile the run began with"
+    assert settings["raw_rgb"] is not None and settings["final_rgb"] is not None
+
+
+def test_a_switch_during_the_last_frame_does_not_relabel_it(monkeypatch) -> None:
+    """A frame is made with the options read at the top of its iteration. If the
+    user switches profile while that frame is being processed, re-reading the
+    options at the end would label the colour with a profile that had no part in
+    producing it — the same lie as reading them at export time, just narrower."""
+    controller = AmbientController()
+    controller.configure(profile_id="desktop")
+    sct = _FakeSct(frames=2, stop_event=controller._stop)
+    _install_fake_mss(monkeypatch, lambda: sct)
+
+    original_grab = sct.grab
+
+    def switching_grab(region):
+        shot = original_grab(region)
+        if sct.grabs == 2:  # during the final frame, after its options were read
+            controller.configure(profile_id="movie")
+        return shot
+
+    sct.grab = switching_grab
+
+    token = controller._metrics.start(0.0)
+    controller._token = token
+    controller._run((0, 0, 0), token)
+
+    assert controller._options.profile_id == "movie", "the switch did not happen"
+    assert controller.live_sync_settings()["profile"] == "desktop", (
+        "the colour was labelled with a profile that never touched it"
+    )
+
+
 def test_a_bug_in_our_colour_code_is_not_blamed_on_the_screen(monkeypatch) -> None:
     """Reported as a capture failure, a bug in the filter sends the user
     chasing drivers and permissions instead of reaching this application."""

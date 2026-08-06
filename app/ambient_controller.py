@@ -88,11 +88,12 @@ class AmbientController(QObject):
         self._stop = threading.Event()
         self._metrics = LiveSyncMetrics()
         self._token = 0
-        # The last colour the loop produced, kept for the report. Written on the
-        # capture thread and read on the UI thread; a tuple assignment is atomic,
-        # and a report one frame out of date costs nothing.
-        self._last_raw: tuple[int, int, int] | None = None
-        self._last_final: tuple[int, int, int] | None = None
+        # The last completed frame as one record: the options that produced it
+        # and the colours they produced. Kept together and replaced in a single
+        # assignment, because reading the settings from the live options and the
+        # colour from the last frame lets the report pair a colour with settings
+        # that never made it. Written on the capture thread, read on the UI one.
+        self._last_sample: tuple[AmbientOptions, tuple[int, int, int], tuple[int, int, int]] | None = None
         self._sink: Callable[[int, int, int, int, int], bool] | None = None
         # A write's result can come back on the BLE thread, or inline on this
         # one if the future was already done. Either way it must not be recorded
@@ -137,7 +138,10 @@ class AmbientController(QObject):
         self._engine.start(self._deliver, initial=initial, labelled_sink=True)
         self._stop.clear()
         # Opened before the thread exists, so the very first frame already has a
-        # session to belong to.
+        # session to belong to. The previous run's sample goes with it: a session
+        # that fails before its first frame must not show the colour of the last
+        # one that worked.
+        self._last_sample = None
         self._token = self._metrics.start(time.monotonic())
         thread = threading.Thread(
             target=self._run, args=(initial, self._token), name="AmbientCapture", daemon=True
@@ -164,22 +168,32 @@ class AmbientController(QObject):
         return self._metrics.report(time.monotonic())
 
     def live_sync_settings(self) -> dict:
-        """How the colour was configured, and the last one produced.
+        """The settings of the last completed frame, and its colours.
 
         Kept next to the numbers because a "wrong colour" report is otherwise
         unfalsifiable: the same frame is a muted lilac on one profile and a
         saturated blue on another, and full screen versus centre turns a sunset
-        into a sky. Survives the stop, like the report itself.
+        into a sky.
+
+        Deliberately the *sample's* settings and not the current ones. The
+        profile can be changed while syncing, and after a stop, so reading the
+        live options would pair the colour of one run with the settings of
+        another and make the report describe something that never happened.
+        Survives the stop, like the report itself.
         """
-        options = self._options
+        sample = self._last_sample
+        if sample is None:
+            return {"sampled": False}
+        options, raw, final = sample
         return {
+            "sampled": True,
             "profile": options.profile_id,
             "region": options.region,
             "monitor": options.monitor_index,
             "intensity": options.intensity,
             "smoothness": options.smoothness,
-            "raw_rgb": self._last_raw,
-            "final_rgb": self._last_final,
+            "raw_rgb": raw,
+            "final_rgb": final,
         }
 
     def _accept_sample(self, r: int, g: int, b: int, token: int, frame_id: int) -> None:
@@ -337,8 +351,9 @@ class AmbientController(QObject):
                         min_saturation=resolved.shape.min_saturation,
                     )
                     final = temporal.push(shaped, dt)
-                    self._last_raw = raw
-                    self._last_final = final
+                    # One assignment: the options in scope are the ones this
+                    # frame was made with, whatever the user has changed since.
+                    self._last_sample = (options, raw, final)
                     # Grab and colour work only: the wait between frames and
                     # everything BLE stay out, or a slow strip would read as slow
                     # code and the worst-frame figure would point at the wrong end.

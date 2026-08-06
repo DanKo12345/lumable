@@ -45,17 +45,26 @@ def _hex(rgb: object) -> str:
 
 
 def _settings_lines(settings: Mapping | None) -> list[str]:
-    """How the colour was configured, and what it came out as.
+    """The settings of the last completed frame, and what it came out as.
 
     Without these a "wrong colour" report cannot be checked at all: the same
     frame gives a muted lilac on one profile and a saturated blue on another,
     and full-screen versus centre changes it from sky to sunset. Reconstructing
     that from a photograph of a wall is guesswork.
+
+    They belong to the sample rather than to the moment of export, because the
+    profile can be changed while syncing and after stopping. Pairing a colour
+    with settings it was never made under would describe a run that never
+    happened.
     """
     if not settings:
         return []
+    if not settings.get("sampled", True):
+        # Nothing was produced, so there are no settings that produced it.
+        # Naming the current ones here would invent a sample.
+        return ["last sample: none, no frame completed this run"]
     return [
-        "settings: profile {profile}, region {region}, monitor {monitor}, "
+        "last sample settings: profile {profile}, region {region}, monitor {monitor}, "
         "intensity {intensity}, smoothness {smoothness}".format(
             profile=settings.get("profile", "-"),
             region=settings.get("region", "-"),
