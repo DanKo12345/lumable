@@ -308,6 +308,7 @@ class UiLocalizationController:
             title=host._tr("ambient.area_title"),
             help_text=host._tr("ambient.area_help"),
             labels={region: host._tr(f"ambient.region.{region}") for region in REGION_IDS},
+            tooltips={region: host._tr(f"ambient.region_tip.{region}") for region in REGION_IDS},
         )
 
         if host.ambient_monitor_combo is not None:

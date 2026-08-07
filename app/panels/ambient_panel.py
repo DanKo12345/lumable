@@ -95,6 +95,7 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
         title=host._tr("ambient.area_title"),
         help_text=host._tr("ambient.area_help"),
         labels={region: host._tr(f"ambient.region.{region}") for region in REGION_IDS},
+        tooltips={region: host._tr(f"ambient.region_tip.{region}") for region in REGION_IDS},
     )
     host.ambient_card.content_layout.addWidget(host.ambient_area_selector)
 

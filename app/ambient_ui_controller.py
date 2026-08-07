@@ -200,9 +200,6 @@ class AmbientUiController:
         was_running = self._ambient.is_running()
         self._ambient.stop()
         host.ambient_preview.clear()
-        # Left glowing, the diagram would claim the strip is still showing a
-        # colour it stopped showing.
-        host.ambient_area_selector.set_result_color(None)
         self._set_manual_controls_enabled(True)
         host.ambient_toggle_button.setChecked(False)
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_off"))
@@ -273,8 +270,6 @@ class AmbientUiController:
     def _update_preview(self, raw_r: int, raw_g: int, raw_b: int, r: int, g: int, b: int) -> None:
         host = self._host
         host.ambient_preview.set_colors((raw_r, raw_g, raw_b), (r, g, b))
-        # The diagram's wash is the atmosphere; the figures stay in the preview.
-        host.ambient_area_selector.set_result_color((r, g, b))
         # Live capture rate: count frames sampled in the last second.
         now = time.monotonic()
         self._frame_times.append(now)

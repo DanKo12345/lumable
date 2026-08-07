@@ -7,13 +7,14 @@ kind of wrong that survives review because it looks right.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeyEvent
-from PySide6.QtTest import QTest
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QColor, QKeyEvent
 
 from app.ambient_controller import _region_for
 from app.capture_regions import REGION_IDS, normalize_region, region_box
@@ -24,6 +25,20 @@ _MONITOR = {"left": 0, "top": 0, "width": 1920, "height": 1080}
 
 def _selector() -> CaptureAreaSelector:
     return CaptureAreaSelector({region: region.title() for region in REGION_IDS})
+
+
+def _widest_region_labels() -> dict[str, str]:
+    """The longest label each region has in any language LumaBLE ships."""
+    import json
+
+    longest: dict[str, str] = dict.fromkeys(REGION_IDS, "")
+    for path in pathlib.Path("app/i18n").glob("*.json"):
+        translations = json.loads(path.read_text(encoding="utf-8"))["translations"]
+        for region in REGION_IDS:
+            label = str(translations.get(f"ambient.region.{region}", ""))
+            if len(label) > len(longest[region]):
+                longest[region] = label
+    return longest
 
 
 def _press(widget, key) -> None:
@@ -83,73 +98,6 @@ def test_choosing_a_region_moves_the_drawing_and_reports_it() -> None:
 
     assert heard == ["center"]
     assert selector.current_region() == "center"
-    assert selector.diagram._region == "center"
-
-
-@pytest.mark.parametrize("region", REGION_IDS)
-def test_the_rectangle_it_draws_is_the_one_it_will_capture(region: str) -> None:
-    """The claim of the whole widget. Rectangles of its own — even plausible
-    ones — make the picture an illustration rather than a statement about what
-    the app is about to do."""
-    selector = _selector()
-    selector.set_current_region(region, animate=False)
-
-    box = region_box(region)
-    assert selector.diagram._box == (box.left, box.top, box.width, box.height)
-
-
-def test_the_drawing_actually_travels_to_the_new_area() -> None:
-    """The path every user takes, and the one the other tests skipped by asking
-    for no animation. Animating the rectangle as a QVariant tuple looked right
-    and moved nothing: Qt cannot interpolate a Python tuple, so the setter got
-    None, the box stayed put, and the picture showed the old area while the
-    capture had already switched — the widget's one claim, quietly false."""
-    selector = _selector()
-    selector.set_current_region("full", animate=False)
-    assert selector.diagram._box == (0.0, 0.0, 1.0, 1.0)
-
-    selector.set_current_region("center", animate=True)
-
-    QTest.qWait(90)
-    midway = selector.diagram._box
-    assert midway != (0.0, 0.0, 1.0, 1.0), "the rectangle never left the full screen"
-    assert midway != (0.25, 0.25, 0.5, 0.5), "it jumped instead of travelling"
-    assert 0.0 < midway[0] < 0.25, f"left edge outside the move: {midway}"
-    assert 0.5 < midway[2] < 1.0, f"width outside the move: {midway}"
-
-    QTest.qWait(180)
-    assert selector.diagram._box == (0.25, 0.25, 0.5, 0.5), "it never arrived"
-
-
-def test_an_interrupted_move_continues_from_what_is_on_screen() -> None:
-    """Restarting from the target instead would snap the rectangle backwards
-    before setting off again."""
-    selector = _selector()
-    selector.set_current_region("full", animate=False)
-    selector.set_current_region("center", animate=True)
-    QTest.qWait(60)
-    caught = selector.diagram._box
-
-    selector.set_current_region("top", animate=True)
-
-    assert selector.diagram._from == caught
-    QTest.qWait(260)
-    box = region_box("top")
-    assert selector.diagram._box == (box.left, box.top, box.width, box.height)
-
-
-def test_reduced_motion_puts_the_rectangle_straight_where_it_belongs() -> None:
-    from app.motion_policy import motion_policy
-
-    selector = _selector()
-    selector.set_current_region("full", animate=False)
-    motion_policy.set_mode("reduced")
-    try:
-        selector.set_current_region("bottom", animate=True)
-        box = region_box("bottom")
-        assert selector.diagram._box == (box.left, box.top, box.width, box.height)
-    finally:
-        motion_policy.set_mode("system")
 
 
 def test_the_arrows_move_the_choice_without_a_mouse() -> None:
@@ -194,18 +142,6 @@ def test_setting_the_region_programmatically_says_nothing() -> None:
     assert selector.current_region() == "top"
 
 
-def test_the_wash_is_dropped_when_nothing_is_running() -> None:
-    """Left glowing, it would claim the strip is showing a colour it stopped
-    showing — a picture that lies about the present."""
-    selector = _selector()
-    selector.set_result_color((234, 173, 17))
-    assert selector.diagram._result == (234, 173, 17)
-
-    selector.set_result_color(None)
-
-    assert selector.diagram._result is None
-
-
 def test_the_explanation_is_reachable_without_costing_height() -> None:
     """The card had no room for a paragraph, so the sentence lives where a
     screen reader can still find it."""
@@ -226,16 +162,164 @@ def test_the_explanation_is_reachable_without_costing_height() -> None:
     assert selector.segments.accessibleName() == "Capture area, top, 3 / 4"
 
 
-def test_the_row_stays_one_line_and_within_its_height_budget() -> None:
-    """Stacking is what put this block over the card's budget, so a narrow card
-    shrinks the monitor instead — and never below the size where a third of the
-    height stops being tellable from a half."""
+
+def test_each_option_carries_a_drawing_of_its_own_crop() -> None:
+    """The glyph is painted from the same fractions the loop crops with. Drawn
+    by hand it would be an illustration that happens to resemble the setting,
+    and would stop resembling it the first time either changed."""
+    from PySide6.QtGui import QImage, QPainter
+
+    from app.widgets.capture_area_selector import ICON_HEIGHT, ICON_WIDTH, paint_region_glyph
+
+    filled: dict[str, set[int]] = {}
+    for region in REGION_IDS:
+        image = QImage(ICON_WIDTH, ICON_HEIGHT, QImage.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        paint_region_glyph(painter, QRectF(0, 0, ICON_WIDTH, ICON_HEIGHT), region, True)
+        painter.end()
+        rows = set()
+        for y in range(1, ICON_HEIGHT - 1):
+            for x in range(3, ICON_WIDTH - 3):
+                pixel = QColor(image.pixel(x, y))
+                # The accent fill, not the near-white outline: both are bright
+                # in blue, only the fill is markedly less red.
+                if pixel.alpha() and pixel.blue() - pixel.red() > 40:
+                    rows.add(y)
+                    break
+        filled[region] = rows
+
+    assert min(filled["top"]) < min(filled["center"]) < min(filled["bottom"]), (
+        "the bands are not drawn where their names say"
+    )
+    assert len(filled["full"]) > len(filled["center"]), "the centre is not smaller than the whole"
+    assert max(filled["top"]) < min(filled["bottom"]), "top and bottom overlap"
+
+
+def test_every_option_explains_its_own_crop() -> None:
+    """One tooltip for the whole control cannot say what "Centre" actually
+    takes, which is the number a 24-pixel drawing cannot show."""
     selector = _selector()
+    selector.set_texts(
+        title="Capture area",
+        help_text="general",
+        labels={region: region for region in REGION_IDS},
+        tooltips={region: f"tip-{region}" for region in REGION_IDS},
+    )
 
-    selector.resize(520, selector.sizeHint().height())
-    wide = selector.diagram.width()
-    selector.resize(240, selector.sizeHint().height())
-    narrow = selector.diagram.width()
+    assert selector.segments._tooltips["center"] == "tip-center"
+    assert selector.segments._tooltips["bottom"] == "tip-bottom"
 
-    assert wide >= narrow >= 96
-    assert selector.sizeHint().height() <= 80, "the row outgrew the card's spare height"
+
+def test_the_focus_ring_belongs_to_the_keyboard() -> None:
+    """A ring after every click is noise beside the pill that already says what
+    is selected. But the click must still hand over focus, or the arrows would
+    do nothing until the control were tabbed to."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QFocusEvent, QMouseEvent
+
+    selector = _selector()
+    segments = selector.segments
+    # Whether a widget really holds focus depends on an active window, which an
+    # offscreen test has not got. The contract worth pinning is that the click
+    # asks for focus at all — without that the arrows are dead until Tab.
+    asked: list[object] = []
+    segments.setFocus = lambda reason=None: asked.append(reason)
+
+    segments.focusInEvent(QFocusEvent(QFocusEvent.FocusIn, Qt.TabFocusReason))
+    assert segments._show_focus_ring, "tabbing in should show the ring"
+
+    segments.mousePressEvent(
+        QMouseEvent(
+            QMouseEvent.MouseButtonPress,
+            QPointF(5.0, 5.0),
+            QPointF(5.0, 5.0),
+            Qt.LeftButton,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        )
+    )
+    assert not segments._show_focus_ring, "a click should not draw the ring"
+    assert asked == [Qt.MouseFocusReason], "a click must still give the control focus"
+
+    _press(segments, Qt.Key_Right)
+    assert segments._show_focus_ring, "using the arrows after a click must show it again"
+
+    segments.focusOutEvent(QFocusEvent(QFocusEvent.FocusOut, Qt.OtherFocusReason))
+    assert not segments._show_focus_ring
+
+
+def test_the_picker_fits_the_card_in_the_smallest_window() -> None:
+    """Four options carrying a glyph and a word each multiply the default
+    padding by four. In Russian that came to 774px, wider than the card once the
+    sidebar is out, so the control was clipped or the card was pushed wider —
+    and nothing caught it, because the narrow-width check went out with the
+    monitor it belonged to."""
+    from PySide6.QtWidgets import QApplication
+
+    from app.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window.resize(860, 420)
+        window.show()
+        app.processEvents()
+
+        selector = window.ambient_area_selector
+        card = window.ambient_card
+        # Measured against the widest labels any shipped language uses, not
+        # whichever locale the test happens to run in — the 774px case was
+        # Russian, and an English-only check would have missed it.
+        selector.set_texts(
+            title="X",
+            help_text="X",
+            labels=_widest_region_labels(),
+            tooltips=dict.fromkeys(REGION_IDS, "X"),
+        )
+        app.processEvents()
+        needed = selector.segments.sizeHint().width()
+        available = card.contentsRect().width()
+
+        assert needed <= available, (
+            f"the picker needs {needed}px inside a {available}px card"
+        )
+        assert not window.body_scroll.horizontalScrollBar().isVisible(), (
+            "the page scrolls sideways"
+        )
+    finally:
+        overlay = getattr(window, "_onboarding_overlay", None)
+        if overlay is not None:
+            overlay.hide()
+        window._ble.shutdown()
+        window.close()
+
+
+def test_the_option_explains_itself_to_a_screen_reader_too() -> None:
+    """A tooltip needs a pointer. Without this, someone on a screen reader
+    hears the general sentence and never "the central quarter of the screen" —
+    the number the 24-pixel glyph cannot show."""
+    selector = _selector()
+    selector.set_texts(
+        title="Capture area",
+        help_text="general sentence",
+        labels=dict.fromkeys(REGION_IDS, "x"),
+        tooltips={region: f"crops the {region}" for region in REGION_IDS},
+    )
+
+    selector.set_current_region("center", animate=False)
+    assert selector.segments.accessibleDescription() == "crops the center"
+
+    _press(selector.segments, Qt.Key_Right)
+    assert selector.segments.accessibleDescription() == "crops the top"
+
+
+def test_without_per_option_hints_the_general_one_is_still_described() -> None:
+    selector = _selector()
+    selector.set_texts(
+        title="Capture area",
+        help_text="general sentence",
+        labels=dict.fromkeys(REGION_IDS, "x"),
+    )
+
+    assert selector.segments.accessibleDescription() == "general sentence"

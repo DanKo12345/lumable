@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Property, QEasingCurve, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import Property, QEasingCurve, QEvent, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QSizePolicy, QWidget
+from PySide6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
 from app.widgets.animation_helpers import make_property_animation, restart_animation
@@ -23,6 +23,13 @@ class SegmentedControl(QWidget):
         self._current = self._keys[0] if self._keys else ""
         self._pos = 0.0  # animated highlight index
         self._pad = 20
+        self._tooltips: dict[str, str] = {}
+        self._icon_painter = None
+        self._icon_size: tuple[int, int] = (0, 0)
+        self._icon_gap = 8
+        # Shown for keyboard use only. A ring drawn after every click is noise
+        # next to the pill that already says what is selected.
+        self._show_focus_ring = False
         self._anim = make_property_animation(self, b"posValue", 240, QEasingCurve.OutCubic)
         self.setMinimumHeight(38)
         self.setCursor(Qt.PointingHandCursor)
@@ -37,6 +44,40 @@ class SegmentedControl(QWidget):
         for key, label in labels.items():
             if key in self._labels:
                 self._labels[key] = label
+        self.updateGeometry()
+        self.update()
+
+    def set_tooltips(self, tooltips: dict[str, str]) -> None:
+        """One hint per option, shown for whichever segment is under the cursor.
+
+        A single tooltip on the whole control cannot say what "Centre" actually
+        crops, which is the one thing a person hovering it wants to know.
+        """
+        self._tooltips = dict(tooltips)
+
+    def set_metrics(self, *, pad: int | None = None, icon_gap: int | None = None) -> None:
+        """Tighten the spacing for a control that has to fit somewhere narrow.
+
+        The defaults suit a two or three option control with room around it.
+        Four options carrying both a glyph and a label multiply that padding by
+        four and stop fitting the card, so this one asks for less.
+        """
+        if pad is not None:
+            self._pad = int(pad)
+        if icon_gap is not None:
+            self._icon_gap = int(icon_gap)
+        self.updateGeometry()
+        self.update()
+
+    def set_icon_painter(self, painter_fn, size: tuple[int, int]) -> None:
+        """Draw a glyph to the left of each label.
+
+        A callback rather than a pixmap so the drawing can be derived from the
+        thing it describes — an icon that is merely shaped like the setting
+        drifts away from it the first time either changes.
+        """
+        self._icon_painter = painter_fn
+        self._icon_size = size
         self.updateGeometry()
         self.update()
 
@@ -56,10 +97,19 @@ class SegmentedControl(QWidget):
             self.update()
 
     # ── sizing ────────────────────────────────────────────────────────
+    def _icon_extent(self) -> int:
+        return (self._icon_size[0] + self._icon_gap) if self._icon_painter else 0
+
     def _segment_width(self) -> float:
         metrics = self.fontMetrics()
         widest = max((metrics.horizontalAdvance(label) for label in self._labels.values()), default=40)
-        return float(widest + self._pad * 2)
+        return float(widest + self._icon_extent() + self._pad * 2)
+
+    def _segment_index_at(self, x: float) -> int:
+        if not self._keys:
+            return -1
+        seg = self.width() / len(self._keys)
+        return int(max(0, min(len(self._keys) - 1, x // seg)))
 
     def sizeHint(self) -> QSize:
         seg = self._segment_width()
@@ -73,14 +123,39 @@ class SegmentedControl(QWidget):
         if event.button() != Qt.LeftButton or not self._keys:
             super().mousePressEvent(event)
             return
-        seg = self.width() / len(self._keys)
-        index = int(max(0, min(len(self._keys) - 1, event.position().x() // seg)))
-        key = self._keys[index]
+        key = self._keys[self._segment_index_at(event.position().x())]
         if key != self._current:
             self.set_current(key)
             self.selected.emit(key)
+        # Focus still moves here, so the arrows work straight after a click —
+        # only the ring stays hidden until the keyboard is actually used.
+        self._show_focus_ring = False
         self.setFocus(Qt.MouseFocusReason)
+        self.update()
         event.accept()
+
+    def event(self, event):
+        if event.type() == QEvent.ToolTip and self._tooltips:
+            index = self._segment_index_at(event.pos().x())
+            if index >= 0:
+                QToolTip.showText(event.globalPos(), self._tooltips.get(self._keys[index], ""), self)
+                return True
+        return super().event(event)
+
+    def focusInEvent(self, event) -> None:
+        # Arriving by keyboard shows the ring; arriving by click does not.
+        self._show_focus_ring = event.reason() in (
+            Qt.TabFocusReason,
+            Qt.BacktabFocusReason,
+            Qt.ShortcutFocusReason,
+        )
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        self._show_focus_ring = False
+        super().focusOutEvent(event)
+        self.update()
 
     def keyPressEvent(self, event) -> None:
         """Arrows move the selection; Home and End jump to the ends.
@@ -105,10 +180,13 @@ class SegmentedControl(QWidget):
         else:
             super().keyPressEvent(event)
             return
+        # The keyboard is in use now, whichever way the focus first arrived.
+        self._show_focus_ring = True
         key = self._keys[target]
         if key != self._current:
             self.set_current(key)
             self.selected.emit(key)
+        self.update()
         event.accept()
 
     # ── animation prop ────────────────────────────────────────────────
@@ -154,8 +232,10 @@ class SegmentedControl(QWidget):
         painter.setPen(QPen(QColor(255, 255, 255, 40 if is_dark else 0), 1.0))
         painter.drawPath(pill_path)
 
-        # labels
+        # labels, with the optional glyph and the label centred together
         font = self.font()
+        icon_w, icon_h = self._icon_size
+        extent = self._icon_extent()
         for index, key in enumerate(self._keys):
             seg_rect = QRectF(rect.left() + index * seg_w, rect.top(), seg_w, rect.height())
             active = abs(self._pos - index) < 0.5
@@ -168,10 +248,27 @@ class SegmentedControl(QWidget):
                 color = qcolor_from_token(theme_manager.palette["text_soft"])
             if not enabled:
                 color.setAlpha(110)
+            label = self._labels.get(key, key)
+            if not extent:
+                painter.setPen(color)
+                painter.drawText(seg_rect, Qt.AlignCenter, label)
+                continue
+            text_w = self.fontMetrics().horizontalAdvance(label)
+            content_left = seg_rect.center().x() - (extent + text_w) / 2.0
+            icon_rect = QRectF(
+                content_left, seg_rect.center().y() - icon_h / 2.0, float(icon_w), float(icon_h)
+            )
+            painter.save()
+            self._icon_painter(painter, icon_rect, key, active, enabled)
+            painter.restore()
             painter.setPen(color)
-            painter.drawText(seg_rect, Qt.AlignCenter, self._labels.get(key, key))
+            painter.drawText(
+                QRectF(content_left + extent, seg_rect.top(), float(text_w), seg_rect.height()),
+                Qt.AlignVCenter | Qt.AlignLeft,
+                label,
+            )
 
-        if self.hasFocus():
+        if self._show_focus_ring:
             # Drawn around the whole track: the group is one tab stop, so the
             # ring belongs to the group and not to whichever segment is current.
             focus = QPainterPath()
