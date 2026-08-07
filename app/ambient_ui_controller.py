@@ -27,7 +27,7 @@ class AmbientUiController:
         host = self._host
         host.ambient_toggle_button.clicked.connect(self._toggle)
         host.ambient_profile_segment.selected.connect(lambda _key: self._on_options_changed())
-        host.ambient_region_combo.currentIndexChanged.connect(self._on_options_changed)
+        host.ambient_area_selector.selected.connect(lambda _region: self._on_options_changed())
         host.ambient_saturation_slider.valueChanged.connect(self._on_options_changed)
         host.ambient_smoothing_slider.valueChanged.connect(self._on_options_changed)
         if host.ambient_monitor_combo is not None:
@@ -61,7 +61,7 @@ class AmbientUiController:
             lock_label.setVisible(not unlocked)
         for widget in (
             host.ambient_profile_segment,
-            host.ambient_region_combo,
+            host.ambient_area_selector,
             host.ambient_saturation_slider,
             host.ambient_smoothing_slider,
             host.ambient_preview,
@@ -82,10 +82,9 @@ class AmbientUiController:
         host.ambient_smoothing_slider.jump_to(smoothing)
         host.ambient_profile_segment.set_current(profile, animate=False)
 
-        index = host.ambient_region_combo.findData(region)
-        host.ambient_region_combo.blockSignals(True)
-        host.ambient_region_combo.setCurrentIndex(index if index >= 0 else 0)
-        host.ambient_region_combo.blockSignals(False)
+        host.ambient_area_selector.blockSignals(True)
+        host.ambient_area_selector.set_current_region(region, animate=False)
+        host.ambient_area_selector.blockSignals(False)
 
         if host.ambient_monitor_combo is not None:
             monitor = int(saved.get("monitor", _DEFAULTS["monitor"]))
@@ -201,6 +200,9 @@ class AmbientUiController:
         was_running = self._ambient.is_running()
         self._ambient.stop()
         host.ambient_preview.clear()
+        # Left glowing, the diagram would claim the strip is still showing a
+        # colour it stopped showing.
+        host.ambient_area_selector.set_result_color(None)
         self._set_manual_controls_enabled(True)
         host.ambient_toggle_button.setChecked(False)
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_off"))
@@ -218,7 +220,7 @@ class AmbientUiController:
             profile_id=host.ambient_profile_segment.current_key(),
             intensity=int(host.ambient_saturation_slider.value()),
             smoothness=int(host.ambient_smoothing_slider.value()),
-            region=str(host.ambient_region_combo.currentData() or "full"),
+            region=host.ambient_area_selector.current_region(),
             monitor_index=self._selected_monitor(),
         )
 
@@ -260,7 +262,7 @@ class AmbientUiController:
         if not isinstance(host._settings, dict):
             return
         host._settings["ambient"] = {
-            "region": str(host.ambient_region_combo.currentData() or "full"),
+            "region": host.ambient_area_selector.current_region(),
             "saturation": int(host.ambient_saturation_slider.value()),
             "smoothing": int(host.ambient_smoothing_slider.value()),
             "monitor": self._selected_monitor(),
@@ -271,6 +273,8 @@ class AmbientUiController:
     def _update_preview(self, raw_r: int, raw_g: int, raw_b: int, r: int, g: int, b: int) -> None:
         host = self._host
         host.ambient_preview.set_colors((raw_r, raw_g, raw_b), (r, g, b))
+        # The diagram's wash is the atmosphere; the figures stay in the preview.
+        host.ambient_area_selector.set_result_color((r, g, b))
         # Live capture rate: count frames sampled in the last second.
         now = time.monotonic()
         self._frame_times.append(now)

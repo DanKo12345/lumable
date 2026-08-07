@@ -141,7 +141,7 @@ class _StartHost:
         self.ambient_profile_segment = _Segment("desktop")
         self.ambient_saturation_slider = _Slider(55)
         self.ambient_smoothing_slider = _Slider(65)
-        self.ambient_region_combo = type("C", (), {"currentData": lambda self: "full"})()
+        self.ambient_area_selector = type("A", (), {"current_region": lambda self: "full"})()
         self.ambient_monitor_combo = None
         self.ambient_toggle_button = _Btn(True)
         self.ambient_status_label = None

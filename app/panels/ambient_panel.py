@@ -4,15 +4,16 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QHBoxLayout, QLabel
 
+from app.capture_regions import REGION_IDS
 from app.panels.card_header import add_pro_badge
 from app.panels.list_rows import divider, list_container, list_row
 from app.panels.types import PanelHost
 from app.screen_profiles import PROFILE_IDS
 from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.ambient_preview import AmbientPreview
+from app.widgets.capture_area_selector import CaptureAreaSelector
 from app.widgets.segmented_control import SegmentedControl
 
-_REGIONS = ("full", "center", "bottom", "top")
 _SYNC_TINT = "#8fbfff"
 _PROFILE_TINT = "#b6a3ff"
 
@@ -85,17 +86,22 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
         )
     )
 
-    # Secondary capture params kept below: region and (if any) monitor.
+    # A dropdown reading "Full screen" explains nothing; the picture does. Kept
+    # deliberately compact so the profile above stays the card's main choice.
+    host.ambient_area_selector = CaptureAreaSelector(
+        {region: host._tr(f"ambient.region.{region}") for region in REGION_IDS}
+    )
+    host.ambient_area_selector.set_texts(
+        title=host._tr("ambient.area_title"),
+        help_text=host._tr("ambient.area_help"),
+        labels={region: host._tr(f"ambient.region.{region}") for region in REGION_IDS},
+    )
+    host.ambient_card.content_layout.addWidget(host.ambient_area_selector)
+
+    # Secondary capture params kept below: the monitor, if there is a choice.
     extra = QHBoxLayout()
     extra.setSpacing(10)
     extra.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-    host.ambient_region_combo = StaticPopupComboBox(lambda: host._theme_tokens, lambda: host._is_dark)
-    host.ambient_region_combo.setMinimumHeight(host._control_height)
-    host.ambient_region_combo.setMinimumWidth(150)
-    for region in _REGIONS:
-        host.ambient_region_combo.addItem(host._tr(f"ambient.region.{region}"), region)
-    extra.addWidget(host.ambient_region_combo)
-
     host.ambient_monitor_combo = None
     screens = QGuiApplication.screens()
     if len(screens) > 1:

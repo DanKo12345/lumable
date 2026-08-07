@@ -690,6 +690,8 @@
         "ambient.region.center": "Center",
         "ambient.region.bottom": "Bottom",
         "ambient.region.top": "Top",
+        "ambient.area_title": "Capture area",
+        "ambient.area_help": "The highlighted part sets the colour. The rest is not counted.",
         "ambient.monitor": "Display",
         "ambient.saturation": "Saturation",
         "ambient.smoothing": "Smoothing",

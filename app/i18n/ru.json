@@ -690,6 +690,8 @@
         "ambient.region.center": "Центр",
         "ambient.region.bottom": "Низ",
         "ambient.region.top": "Верх",
+        "ambient.area_title": "Область захвата",
+        "ambient.area_help": "Цвет задаёт выделенная часть. Остальное не учитывается.",
         "ambient.monitor": "Экран",
         "ambient.saturation": "Насыщенность",
         "ambient.smoothing": "Плавность",

@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from PySide6.QtCore import QObject, Signal
 
 from app.ambient_color import shape_color
+from app.capture_regions import region_for_monitor
 from app.color_stream import ColorStreamEngine
 from app.live_sync_metrics import LiveSyncMetrics, LiveSyncReport
 from app.screen_profiles import get_profile, resolve_configs
@@ -44,22 +45,9 @@ class _CaptureError(Exception):
 
 
 def _region_for(monitor: dict, region: str) -> dict:
-    left = int(monitor["left"])
-    top = int(monitor["top"])
-    width = int(monitor["width"])
-    height = int(monitor["height"])
-    if region == "center":
-        return {
-            "left": left + width // 4,
-            "top": top + height // 4,
-            "width": max(1, width // 2),
-            "height": max(1, height // 2),
-        }
-    if region == "bottom":
-        return {"left": left, "top": top + (height * 2) // 3, "width": width, "height": max(1, height // 3)}
-    if region == "top":
-        return {"left": left, "top": top, "width": width, "height": max(1, height // 3)}
-    return {"left": left, "top": top, "width": width, "height": height}
+    # Shared with the picker that draws this rectangle, so the diagram cannot
+    # describe a crop the loop does not take.
+    return region_for_monitor(monitor, region)
 
 
 class AmbientController(QObject):

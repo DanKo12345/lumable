@@ -27,6 +27,10 @@ class SegmentedControl(QWidget):
         self.setMinimumHeight(38)
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # One stop in the tab order for the whole group, with the arrows moving
+        # inside it — the same bargain a radio group makes. Without this the
+        # control was reachable only by mouse.
+        self.setFocusPolicy(Qt.StrongFocus)
 
     # ── api ───────────────────────────────────────────────────────────
     def set_labels(self, labels: dict[str, str]) -> None:
@@ -72,6 +76,36 @@ class SegmentedControl(QWidget):
         seg = self.width() / len(self._keys)
         index = int(max(0, min(len(self._keys) - 1, event.position().x() // seg)))
         key = self._keys[index]
+        if key != self._current:
+            self.set_current(key)
+            self.selected.emit(key)
+        self.setFocus(Qt.MouseFocusReason)
+        event.accept()
+
+    def keyPressEvent(self, event) -> None:
+        """Arrows move the selection; Home and End jump to the ends.
+
+        Moving the selection rather than a separate focus cursor is what a radio
+        group does, and it is what makes the choice reachable without a mouse at
+        all — the effect is applied as you arrow across, and arrowing back undoes
+        it, so nothing is committed that cannot be seen.
+        """
+        if not self._keys:
+            super().keyPressEvent(event)
+            return
+        index = self._keys.index(self._current) if self._current in self._keys else 0
+        if event.key() in (Qt.Key_Left, Qt.Key_Up):
+            target = max(0, index - 1)
+        elif event.key() in (Qt.Key_Right, Qt.Key_Down):
+            target = min(len(self._keys) - 1, index + 1)
+        elif event.key() == Qt.Key_Home:
+            target = 0
+        elif event.key() == Qt.Key_End:
+            target = len(self._keys) - 1
+        else:
+            super().keyPressEvent(event)
+            return
+        key = self._keys[target]
         if key != self._current:
             self.set_current(key)
             self.selected.emit(key)
@@ -136,3 +170,11 @@ class SegmentedControl(QWidget):
                 color.setAlpha(110)
             painter.setPen(color)
             painter.drawText(seg_rect, Qt.AlignCenter, self._labels.get(key, key))
+
+        if self.hasFocus():
+            # Drawn around the whole track: the group is one tab stop, so the
+            # ring belongs to the group and not to whichever segment is current.
+            focus = QPainterPath()
+            focus.addRoundedRect(rect.adjusted(-0.5, -0.5, 0.5, 0.5), radius + 1.0, radius + 1.0)
+            painter.setPen(QPen(qcolor_from_token(theme_manager.palette["accent_start"]), 2.0))
+            painter.drawPath(focus)

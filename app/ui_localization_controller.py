@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.capture_regions import REGION_IDS
 from app.feature_gate import is_pro
 from app.localization import localization_manager
 from app.motion_policy import DEFAULT_MOTION_MODE, normalize_motion_mode
@@ -303,15 +304,11 @@ class UiLocalizationController:
             host.ambient_lock_label.setToolTip(host._tr("ambient.pro_locked"))
         host._ambient_ui.refresh_lock()
 
-        combo = host.ambient_region_combo
-        current = combo.currentData()
-        combo.blockSignals(True)
-        combo.clear()
-        for region in ("full", "center", "bottom", "top"):
-            combo.addItem(host._tr(f"ambient.region.{region}"), region)
-        index = combo.findData(current)
-        combo.setCurrentIndex(index if index >= 0 else 0)
-        combo.blockSignals(False)
+        host.ambient_area_selector.set_texts(
+            title=host._tr("ambient.area_title"),
+            help_text=host._tr("ambient.area_help"),
+            labels={region: host._tr(f"ambient.region.{region}") for region in REGION_IDS},
+        )
 
         if host.ambient_monitor_combo is not None:
             from PySide6.QtGui import QGuiApplication

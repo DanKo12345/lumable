@@ -16,6 +16,7 @@ from app.widgets import (
     TimeButton,
     ValueChip,
 )
+from app.widgets.capture_area_selector import CaptureAreaSelector
 
 
 class PanelHost(Protocol):
@@ -125,7 +126,7 @@ class PanelHost(Protocol):
 
     ambient_card: GlassCard
     ambient_toggle_button: LiquidButton
-    ambient_region_combo: StaticPopupComboBox
+    ambient_area_selector: CaptureAreaSelector
     ambient_monitor_combo: object
     ambient_preview: object
     ambient_saturation_slider: LiquidSlider

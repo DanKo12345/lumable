@@ -690,6 +690,8 @@
         "ambient.region.center": "中心",
         "ambient.region.bottom": "底部",
         "ambient.region.top": "顶部",
+        "ambient.area_title": "捕捉区域",
+        "ambient.area_help": "高亮部分决定颜色，其余部分不计入。",
         "ambient.monitor": "屏幕",
         "ambient.saturation": "饱和度",
         "ambient.smoothing": "平滑",

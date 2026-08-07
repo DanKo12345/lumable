@@ -690,6 +690,8 @@
         "ambient.region.center": "Centro",
         "ambient.region.bottom": "Abajo",
         "ambient.region.top": "Arriba",
+        "ambient.area_title": "Área de captura",
+        "ambient.area_help": "La parte resaltada define el color. El resto no se tiene en cuenta.",
         "ambient.monitor": "Pantalla",
         "ambient.saturation": "Saturación",
         "ambient.smoothing": "Suavizado",
