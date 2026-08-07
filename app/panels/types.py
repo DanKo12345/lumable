@@ -145,7 +145,6 @@ class PanelHost(Protocol):
     music_status_label: QLabel
     music_source_label: QLabel
     music_source_description: QLabel
-    music_device_label: QLabel
     music_reaction_label: QLabel
     music_colors_label: QLabel
     music_toggle_button: LiquidButton

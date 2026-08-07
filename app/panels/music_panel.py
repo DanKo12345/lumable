@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from app.panels.card_header import add_pro_badge
-from app.panels.list_rows import Hairline, divider, list_container, list_row, plain_row
+from app.panels.list_rows import Hairline, divider, list_container, list_row
 from app.panels.types import PanelHost
 from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.ambient_preview import AmbientPreview
@@ -59,16 +59,15 @@ def build_music_section(host: PanelHost) -> GlassCard:
     )
     assert host.music_source_description is not None
     host.music_source_description.setText(host._tr("music.source_system_desc"))
-    source_layout.addWidget(host.music_source_segment, 0, Qt.AlignVCenter)
+    source_controls = QWidget()
+    source_controls.setFixedWidth(host._sz(258))
+    source_controls_layout = QVBoxLayout(source_controls)
+    source_controls_layout.setContentsMargins(0, 0, 0, 0)
+    source_controls_layout.setSpacing(host._sz(5))
+    source_controls_layout.addWidget(host.music_source_segment)
+    source_controls_layout.addWidget(host.music_source_combo)
+    source_layout.addWidget(source_controls, 0, Qt.AlignVCenter)
     source_list_layout.addWidget(source_row)
-    source_list_layout.addWidget(divider(host))
-
-    device_row, device_layout, host.music_device_label = plain_row(
-        host, host._tr("music.device_title")
-    )
-    host.music_source_combo.setMinimumWidth(host._sz(244))
-    device_layout.addWidget(host.music_source_combo, 0, Qt.AlignVCenter)
-    source_list_layout.addWidget(device_row)
     host.music_card.content_layout.addWidget(source_list)
 
     # Live swatch showing the colour currently sent to the strip (same widget as
@@ -83,7 +82,7 @@ def build_music_section(host: PanelHost) -> GlassCard:
     host.music_controls = QWidget()
     controls = QVBoxLayout(host.music_controls)
     controls.setContentsMargins(0, 0, 0, 0)
-    controls.setSpacing(host._sz(12))
+    controls.setSpacing(host._sz(8))
 
     reaction, reaction_layout, host.music_reaction_label = _section(
         host, host._tr("music.reaction_title")
@@ -172,12 +171,12 @@ def build_music_section(host: PanelHost) -> GlassCard:
         item.setObjectName("settingsRow")
         item.setAttribute(Qt.WA_StyledBackground, True)
         pair = QHBoxLayout(item)
-        pair.setContentsMargins(host._sz(12), host._sz(7), host._sz(10), host._sz(7))
+        pair.setContentsMargins(host._sz(10), host._sz(4), host._sz(10), host._sz(4))
         pair.setSpacing(host._sz(8))
         caption = QLabel(host._tr(label_key))
         caption.setObjectName("settingsRowTitle")
         swatch = ColorSwatch(lambda: host._theme_tokens)
-        swatch.setFixedSize(host._sz(36), host._sz(36))
+        swatch.setFixedSize(host._sz(32), host._sz(32))
         setattr(host, f"music_{band}_swatch", swatch)
         host.music_band_captions[band] = caption
         pair.addStretch(1)
@@ -196,8 +195,8 @@ def _section(host: PanelHost, title: str) -> tuple[QWidget, QVBoxLayout, QLabel]
     section = QWidget()
     section.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
     layout = QVBoxLayout(section)
-    layout.setContentsMargins(host._sz(2), host._sz(2), host._sz(2), host._sz(2))
-    layout.setSpacing(host._sz(8))
+    layout.setContentsMargins(host._sz(2), 0, host._sz(2), 0)
+    layout.setSpacing(host._sz(5))
     heading = QLabel(title)
     heading.setObjectName("sceneFormHeading")
     layout.addWidget(heading)

@@ -277,8 +277,8 @@ def _apply_music_demo(window) -> None:
     if effect is not None:
         effect.setOpacity(1.0)
     window.music_preview.setVisible(True)
-    window.music_preview.setMinimumHeight(window._sz(52))
-    window.music_preview.setMaximumHeight(window._sz(52))
+    window.music_preview.setMinimumHeight(window._sz(40))
+    window.music_preview.setMaximumHeight(window._sz(40))
     preview_effect = getattr(window._music_ui, "_preview_effect", None)
     if preview_effect is not None:
         preview_effect.setOpacity(1.0)

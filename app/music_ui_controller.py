@@ -115,7 +115,7 @@ class MusicUiController:
         preview = getattr(host, "music_preview", None)
         if preview is None:
             return
-        self._preview_height = host._sz(52)
+        self._preview_height = host._sz(40)
         # Start fully collapsed and transparent. Driving both min and max height
         # (plus opacity) makes the reveal exact regardless of size policy.
         preview.setMinimumHeight(0)

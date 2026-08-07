@@ -349,7 +349,6 @@ class UiLocalizationController:
         host._set_slider_label_text("music.gate", host._tr("music.gate"))
         host.music_mode_label.setText(host._tr("music.mode_title"))
         host.music_source_label.setText(host._tr("music.source_title"))
-        host.music_device_label.setText(host._tr("music.device_title"))
         host.music_reaction_label.setText(host._tr("music.reaction_title"))
         host.music_colors_label.setText(host._tr("music.colors_title"))
         source_segment = getattr(host, "music_source_segment", None)

@@ -281,10 +281,35 @@ def test_the_refreshed_music_card_keeps_its_grid_at_the_minimum_window() -> None
             gap = swatch.geometry().left() - caption.geometry().right() - 1
             assert 0 <= gap <= window._sz(10), "a band colour is detached from its label"
         assert window.music_reaction_label.height() == window.music_colors_label.height()
+        assert window.music_source_segment.parentWidget() is window.music_source_combo.parentWidget()
+        assert window.music_source_segment.geometry().bottom() < window.music_source_combo.geometry().top()
 
         window._music_ui._source = "mic"
         window._music_ui._refresh_source_description()
         assert window.music_source_description.text() == window._tr("music.source_mic_desc")
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
+def test_the_active_music_card_fits_without_an_extra_scroll_on_a_regular_window() -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window.show()
+        window.resize(1280, 860)
+        select_section(window, "music")
+        window.music_controls.setEnabled(True)
+        window.music_preview.setVisible(True)
+        window.music_preview.setMinimumHeight(window._sz(40))
+        window.music_preview.setMaximumHeight(window._sz(40))
+        window.body_scroll.widget().adjustSize()
+        app.processEvents()
+
+        viewport = window.body_scroll.viewport()
+        card_bottom = window.music_card.mapTo(viewport, window.music_card.rect().bottomLeft()).y()
+        assert card_bottom <= viewport.height(), "the active music card requires an unnecessary scroll"
     finally:
         window._ble.shutdown()
         window.close()
