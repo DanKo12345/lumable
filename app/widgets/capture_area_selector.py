@@ -18,7 +18,7 @@ in the per-option tooltip, where a number can actually be read.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
@@ -48,21 +48,26 @@ def paint_region_glyph(
         fill_alpha = 60
         outline.setAlpha(45)
 
+    frame_rect = rect.adjusted(0.5, 0.5, -0.5, -0.5)
     frame = QPainterPath()
-    frame.addRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 2.0, 2.0)
+    frame.addRoundedRect(frame_rect, 2.0, 2.0)
+    box = region_box(region)
+    sampled = QRectF(
+        frame_rect.left() + frame_rect.width() * box.left,
+        frame_rect.top() + frame_rect.height() * box.top,
+        frame_rect.width() * box.width,
+        frame_rect.height() * box.height,
+    )
+    # The sample and the outline are one screen, not two stacked shapes. Clip
+    # the colour to the same rounded body, then draw its rim on top: full-width
+    # regions reach both edges without square corners protruding past the frame.
+    painter.save()
+    painter.setClipPath(frame)
+    painter.fillRect(sampled, QColor(accent.red(), accent.green(), accent.blue(), fill_alpha))
+    painter.restore()
     painter.setPen(outline)
     painter.setBrush(Qt.NoBrush)
     painter.drawPath(frame)
-
-    box = region_box(region)
-    area = rect.adjusted(1.0, 1.0, -1.0, -1.0)
-    painter.fillRect(
-        area.left() + area.width() * box.left,
-        area.top() + area.height() * box.top,
-        area.width() * box.width,
-        area.height() * box.height,
-        QColor(accent.red(), accent.green(), accent.blue(), fill_alpha),
-    )
 
 
 class CaptureAreaSelector(QWidget):

@@ -108,14 +108,24 @@ class SegmentedControl(QWidget):
     def _label_width(self, label: str, *, active: bool) -> int:
         return QFontMetrics(self._label_font(active=active)).horizontalAdvance(label)
 
+    def _label_paint_width(self, label: str, *, active: bool) -> int:
+        """Width of the visible glyphs, including their right-side overhang.
+
+        ``horizontalAdvance()`` is the distance to the next glyph, not a paint
+        boundary. Cyrillic letters in the selected DemiBold font can extend a
+        pixel beyond it, which clipped the last letter only after selection.
+        """
+        metrics = QFontMetrics(self._label_font(active=active))
+        return max(metrics.horizontalAdvance(label), metrics.boundingRect(label).width()) + 2
+
     def _segment_width(self) -> float:
         # The selected label is DemiBold. Measuring only the resting Medium
         # state makes the last glyph disappear as soon as the pill reaches it.
         widest = max(
             (
                 max(
-                    self._label_width(label, active=False),
-                    self._label_width(label, active=True),
+                    self._label_paint_width(label, active=False),
+                    self._label_paint_width(label, active=True),
                 )
                 for label in self._labels.values()
             ),
@@ -270,7 +280,7 @@ class SegmentedControl(QWidget):
                 painter.setPen(color)
                 painter.drawText(seg_rect, Qt.AlignCenter, label)
                 continue
-            text_w = self._label_width(label, active=active)
+            text_w = self._label_paint_width(label, active=active)
             content_left = seg_rect.center().x() - (extent + text_w) / 2.0
             icon_rect = QRectF(
                 content_left, seg_rect.center().y() - icon_h / 2.0, float(icon_w), float(icon_h)

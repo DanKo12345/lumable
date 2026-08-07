@@ -310,10 +310,52 @@ def test_every_selected_label_is_measured_in_its_bold_font() -> None:
     for key in REGION_IDS:
         label = segments._labels[key]
         bold_width = QFontMetrics(segments._label_font(active=True)).horizontalAdvance(label)
-        resting_width = QFontMetrics(segments._label_font(active=False)).horizontalAdvance(label)
 
         assert segments._label_width(label, active=True) == bold_width
-        assert segments._segment_width() >= max(bold_width, resting_width) + segments._icon_extent()
+        painted_width = segments._label_paint_width(label, active=True)
+        assert painted_width >= QFontMetrics(
+            segments._label_font(active=True)
+        ).boundingRect(label).width() + 2
+        assert segments._segment_width() >= max(
+            painted_width,
+            segments._label_paint_width(label, active=False),
+        ) + segments._icon_extent()
+
+
+@pytest.mark.parametrize("region", ("full", "top"))
+def test_the_sample_fill_is_clipped_into_the_screen_shape(region: str) -> None:
+    """The blue sample is part of the tiny screen, not a square laid over it.
+
+    Full-width regions must reach both sides, while the rounded outside corners
+    remain free of blue. Otherwise the sample either leaves a dark stripe at
+    the right or visibly protrudes above the screen outline.
+    """
+    from PySide6.QtGui import QImage, QPainter
+
+    from app.widgets.capture_area_selector import ICON_HEIGHT, ICON_WIDTH, paint_region_glyph
+
+    image = QImage(ICON_WIDTH, ICON_HEIGHT, QImage.Format_ARGB32)
+    image.fill(0)
+    painter = QPainter(image)
+    paint_region_glyph(painter, QRectF(0, 0, ICON_WIDTH, ICON_HEIGHT), region, True)
+    painter.end()
+
+    def is_accent(x: int, y: int) -> bool:
+        color = QColor(image.pixel(x, y))
+        return bool(color.alpha() and color.blue() - color.red() > 40)
+
+    sample_y = 2 if region == "top" else ICON_HEIGHT // 2
+    assert is_accent(1, sample_y), "the sample leaves an unfilled strip on the left"
+    assert is_accent(ICON_WIDTH - 2, sample_y), "the sample leaves an unfilled strip on the right"
+    assert not any(
+        is_accent(x, y)
+        for x, y in (
+            (0, 0),
+            (ICON_WIDTH - 1, 0),
+            (0, ICON_HEIGHT - 1),
+            (ICON_WIDTH - 1, ICON_HEIGHT - 1),
+        )
+    ), "the blue sample protrudes through a rounded corner"
 
 
 def test_the_option_explains_itself_to_a_screen_reader_too() -> None:
