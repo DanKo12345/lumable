@@ -295,6 +295,27 @@ def test_the_picker_fits_the_card_in_the_smallest_window() -> None:
         window.close()
 
 
+def test_every_selected_label_is_measured_in_its_bold_font() -> None:
+    """Selection changes Medium text to DemiBold. The control used to reserve
+    and paint only the Medium width, clipping the last letter exactly when a
+    region became active."""
+    from PySide6.QtGui import QFontMetrics
+
+    selector = _selector()
+    segments = selector.segments
+    segments.set_labels(
+        {"full": "Весь", "center": "Центр", "top": "Верх", "bottom": "Низ"}
+    )
+
+    for key in REGION_IDS:
+        label = segments._labels[key]
+        bold_width = QFontMetrics(segments._label_font(active=True)).horizontalAdvance(label)
+        resting_width = QFontMetrics(segments._label_font(active=False)).horizontalAdvance(label)
+
+        assert segments._label_width(label, active=True) == bold_width
+        assert segments._segment_width() >= max(bold_width, resting_width) + segments._icon_extent()
+
+
 def test_the_option_explains_itself_to_a_screen_reader_too() -> None:
     """A tooltip needs a pointer. Without this, someone on a screen reader
     hears the general sentence and never "the central quarter of the screen" —

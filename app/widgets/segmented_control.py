@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Property, QEasingCurve, QEvent, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
 from app.theme import qcolor_from_token, theme_manager
@@ -100,9 +100,27 @@ class SegmentedControl(QWidget):
     def _icon_extent(self) -> int:
         return (self._icon_size[0] + self._icon_gap) if self._icon_painter else 0
 
+    def _label_font(self, *, active: bool) -> QFont:
+        font = QFont(self.font())
+        font.setWeight(QFont.Weight.DemiBold if active else QFont.Weight.Medium)
+        return font
+
+    def _label_width(self, label: str, *, active: bool) -> int:
+        return QFontMetrics(self._label_font(active=active)).horizontalAdvance(label)
+
     def _segment_width(self) -> float:
-        metrics = self.fontMetrics()
-        widest = max((metrics.horizontalAdvance(label) for label in self._labels.values()), default=40)
+        # The selected label is DemiBold. Measuring only the resting Medium
+        # state makes the last glyph disappear as soon as the pill reaches it.
+        widest = max(
+            (
+                max(
+                    self._label_width(label, active=False),
+                    self._label_width(label, active=True),
+                )
+                for label in self._labels.values()
+            ),
+            default=40,
+        )
         return float(widest + self._icon_extent() + self._pad * 2)
 
     def _segment_index_at(self, x: float) -> int:
@@ -233,13 +251,12 @@ class SegmentedControl(QWidget):
         painter.drawPath(pill_path)
 
         # labels, with the optional glyph and the label centred together
-        font = self.font()
         icon_w, icon_h = self._icon_size
         extent = self._icon_extent()
         for index, key in enumerate(self._keys):
             seg_rect = QRectF(rect.left() + index * seg_w, rect.top(), seg_w, rect.height())
             active = abs(self._pos - index) < 0.5
-            font.setWeight(QFont.Weight.DemiBold if active else QFont.Weight.Medium)
+            font = self._label_font(active=active)
             painter.setFont(font)
             if active:
                 # On the pale pill in light mode the label must be dark to read.
@@ -253,7 +270,7 @@ class SegmentedControl(QWidget):
                 painter.setPen(color)
                 painter.drawText(seg_rect, Qt.AlignCenter, label)
                 continue
-            text_w = self.fontMetrics().horizontalAdvance(label)
+            text_w = self._label_width(label, active=active)
             content_left = seg_rect.center().x() - (extent + text_w) / 2.0
             icon_rect = QRectF(
                 content_left, seg_rect.center().y() - icon_h / 2.0, float(icon_w), float(icon_h)
