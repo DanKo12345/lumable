@@ -2,6 +2,30 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.3.8] - 2026-08-07
+
+Live Sync and visual consistency: Screen Sync now explains how it is performing and which frame produced its last colour, while the app's main editing cards share one clearer layout.
+
+### Added
+- Live Sync diagnostics for the complete session and the last 30 seconds, including capture rate, processing time, displaced frames, command outcomes, BLE link rejections and reconnects.
+- The last Screen Sync sample now records its monitor, region, response profile, intensity, smoothness and detected-to-final RGB pair.
+- A command-line frame analyser for comparing every response profile and capture region against a supplied image without running BLE.
+- A visual capture-area selector whose Full, Centre, Top and Bottom drawings use the same geometry as the actual screen crop.
+
+### Changed
+- Screen capture schedules against an absolute frame deadline, so processing time no longer silently lowers the requested capture rate.
+- Busy BLE writes are measured as back-pressure rather than failures, and refused colours remain pending for a later retry.
+- Colour controls, the RGB picker, Profiles, Music reaction and Strip Groups now use the same section hierarchy, compact actions and spacing system.
+- Screen Sync area selection and other segmented controls now support arrow keys, Home/End and keyboard-only focus rings.
+- The README leads with the controller names people see on their strips and in companion apps.
+
+### Fixed
+- Late frames from a previous Screen Sync session can no longer update the current strip or its metrics.
+- Concurrent BLE callbacks remain attached to the command that produced them; an immediate result cannot appear before its submission.
+- Repeated or displaced frames are counted once and inside the same time window as their originating frame.
+- Selected Cyrillic labels no longer clip their last glyph, and capture-area drawings stay inside their rounded icon frames.
+- The RGB picker cursor remains inside the colour plane at every edge and corner.
+
 ## [0.3.7] - 2026-08-02
 
 Controller compatibility: LumaBLE can now say what it found, what it cannot drive and why — and hand you a file that makes support possible for a controller nobody here owns.

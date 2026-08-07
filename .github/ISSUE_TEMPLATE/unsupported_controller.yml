@@ -20,7 +20,7 @@ body:
     attributes:
       label: LumaBLE version
       description: Please try the newest release before reporting the controller.
-      placeholder: "For example: 0.3.7 beta"
+      placeholder: "For example: 0.3.8 beta"
     validations:
       required: true
   - type: input
