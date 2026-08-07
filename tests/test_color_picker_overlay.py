@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QLineEdit
 from app.localization import localization_manager
 from app.theme import theme_manager
 from app.widgets.color_picker_overlay import (
+    COLOR_CURSOR_MARGIN,
     COLOR_PLANE_HEIGHT,
     COLOR_PLANE_WIDTH,
     LABEL_WIDTH,
@@ -16,6 +17,7 @@ from app.widgets.color_picker_overlay import (
     ROW_SIDE_MARGIN,
     VALUE_WIDTH,
     ColorPickerOverlay,
+    _ColorPlane,
 )
 from app.widgets.liquid_slider import LiquidSlider
 
@@ -76,6 +78,23 @@ def test_color_picker_compact_height_without_history() -> None:
         assert picker._panel.maximumHeight() == PANEL_HEIGHT_COMPACT
     finally:
         picker.deleteLater()
+        app.processEvents()
+
+
+def test_color_plane_cursor_stays_inside_at_every_extreme() -> None:
+    app = QApplication.instance() or QApplication([])
+    plane = _ColorPlane(QColor.fromHsv(0, 0, 0))
+    try:
+        bounds = plane.rect().adjusted(1, 1, -1, -1)
+        for saturation in (0, 255):
+            for value in (0, 255):
+                plane.set_color(QColor.fromHsv(0, saturation, value))
+                cursor = plane._cursor_rect().adjusted(-1.0, -1.0, 1.0, 1.0)
+                assert bounds.contains(cursor.toAlignedRect())
+
+        assert COLOR_CURSOR_MARGIN > 6.0
+    finally:
+        plane.deleteLater()
         app.processEvents()
 
 

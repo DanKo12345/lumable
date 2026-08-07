@@ -29,6 +29,8 @@ PICKER_SPACING = 12
 PICKER_SURFACE_INSET = 10
 COLOR_PLANE_WIDTH = PICKER_WIDTH - (PICKER_SURFACE_INSET * 2) - HUE_BAR_WIDTH - PICKER_SPACING
 COLOR_PLANE_HEIGHT = 168
+COLOR_CURSOR_RADIUS = 6.0
+COLOR_CURSOR_MARGIN = 16.0
 
 
 class _ColorPreview(QFrame):
@@ -100,20 +102,17 @@ class _ColorPlane(QFrame):
         black.setColorAt(0.0, QColor(0, 0, 0, 0))
         black.setColorAt(1.0, QColor(0, 0, 0, 255))
         painter.fillRect(rect, black)
-        painter.setClipping(False)
-
         border = qcolor_from_token(theme_manager.palette["surface_border"])
         border.setAlpha(120)
         painter.setPen(QPen(border, 1.0))
         painter.drawPath(path)
 
-        x = rect.left() + rect.width() * (self._sat / 255.0)
-        y = rect.top() + rect.height() * (1.0 - self._val / 255.0)
-        cursor_rect = QRectF(x - 6.0, y - 6.0, 12.0, 12.0)
+        cursor_rect = self._cursor_rect()
         painter.setPen(QPen(QColor(0, 0, 0, 100), 3.0))
         painter.drawEllipse(cursor_rect.adjusted(-1.0, -1.0, 1.0, 1.0))
         painter.setPen(QPen(QColor(255, 255, 255), 2.0))
         painter.drawEllipse(cursor_rect)
+        painter.setClipping(False)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
@@ -132,6 +131,15 @@ class _ColorPlane(QFrame):
         color = QColor.fromHsv(self._hue, self._sat, self._val)
         self.update()
         self.colorChanged.emit(color)
+
+    def _cursor_rect(self) -> QRectF:
+        plane = QRectF(self.rect()).adjusted(1.0, 1.0, -1.0, -1.0)
+        x = plane.left() + plane.width() * (self._sat / 255.0)
+        y = plane.top() + plane.height() * (1.0 - self._val / 255.0)
+        x = max(plane.left() + COLOR_CURSOR_MARGIN, min(plane.right() - COLOR_CURSOR_MARGIN, x))
+        y = max(plane.top() + COLOR_CURSOR_MARGIN, min(plane.bottom() - COLOR_CURSOR_MARGIN, y))
+        diameter = COLOR_CURSOR_RADIUS * 2.0
+        return QRectF(x - COLOR_CURSOR_RADIUS, y - COLOR_CURSOR_RADIUS, diameter, diameter)
 
 
 class _HueBar(QFrame):
