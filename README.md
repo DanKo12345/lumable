@@ -31,7 +31,7 @@
 
 ![LumaBLE colour and brightness controls](docs/images/lumable-color-0.3.8-dark.png)
 
-Those £8 Bluetooth LED strips — **ELK-BLEDOM**, **Triones** / Happy Lighting, **Magic Home**,
+Inexpensive Bluetooth LED strips — **ELK-BLEDOM**, **Triones** / Happy Lighting, **Magic Home**,
 **BanlanX SP61x / SP62x** — normally come with a phone app and nothing else. LumaBLE gives them a
 real Windows application: the strip follows what is on your screen, reacts to whatever the PC is
 playing, and switches scenes by itself when you open a game.
