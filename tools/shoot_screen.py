@@ -285,6 +285,25 @@ def _apply_music_demo(window) -> None:
     window.music_preview.set_color(225, 84, 142)
 
 
+def _apply_groups_demo(window) -> None:
+    """Connected strips plus one saved group for reviewing both card sections."""
+    from PySide6.QtWidgets import QApplication
+
+    _show_showcase_connection(window)
+    window._settings["device_groups"] = [
+        {
+            "group_id": "group-desk",
+            "name": "Desk lights",
+            "members": ["AA:BB:CC:DD:EE:FF", "11:22:33:44:55:66"],
+        }
+    ]
+    window._scene_ui.refresh()
+    app = QApplication.instance()
+    for _ in range(6):
+        app.processEvents()
+    window.body_scroll.ensureWidgetVisible(window.groups_card, 0, 20)
+
+
 DEMOS = {
     "automations": _apply_automations_demo,
     "journal": _apply_journal_demo,
@@ -297,6 +316,7 @@ DEMOS = {
     "readme-automations": _apply_readme_automations_demo,
     "readme-ambient": _apply_readme_ambient_demo,
     "music": _apply_music_demo,
+    "groups": _apply_groups_demo,
 }
 
 

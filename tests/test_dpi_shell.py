@@ -316,6 +316,51 @@ def test_the_active_music_card_fits_without_an_extra_scroll_on_a_regular_window(
         app.processEvents()
 
 
+def test_the_refreshed_groups_card_uses_a_compact_two_column_grid() -> None:
+    from app.scene_store import save_group
+
+    class _GroupsBackend:
+        def devices(self):
+            return [
+                {"name": "Desk edge", "address": "AA:BB"},
+                {"name": "Monitor back", "address": "CC:DD"},
+                {"name": "Shelf", "address": "EE:FF"},
+            ]
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window._scene_ui._backend = _GroupsBackend()
+        save_group(window._settings, "Desk lights", ["AA:BB", "CC:DD"])
+        window._scene_ui.refresh()
+        window.show()
+        window.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        select_section(window, "scenes")
+        window.body_scroll.widget().adjustSize()
+        app.processEvents()
+
+        chips = [chip for _address, chip in window._scene_ui._member_chips]
+        assert len(chips) == 3
+        assert chips[0].geometry().top() == chips[1].geometry().top()
+        assert abs(chips[0].width() - chips[1].width()) <= 1
+        assert chips[2].geometry().top() > chips[0].geometry().bottom()
+        for widget in (
+            *chips,
+            window.groups_name_field,
+            window.groups_create_button,
+            window.groups_combo,
+            window.groups_delete_button,
+        ):
+            assert _fits_horizontally(widget, window.groups_card)
+        assert window.groups_manage_row.isVisibleTo(window.groups_card)
+        assert not window.groups_saved_empty.isVisibleTo(window.groups_card)
+        assert window.body_scroll.horizontalScrollBar().maximum() == 0
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def _automation_page_is_intact(window) -> None:
     """Every card fits the page's width, and no row's control is cut off.
 

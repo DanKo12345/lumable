@@ -73,7 +73,10 @@ class SceneUiController:
                 continue
             chip = host._button(str(device.get("name") or address), "ghost")
             chip.setCheckable(True)
-            layout.addWidget(chip)
+            chip.set_icon_kind("bluetooth")
+            chip.setToolTip(str(device.get("name") or address))
+            index = len(self._member_chips)
+            layout.addWidget(chip, index // 2, index % 2)
             self._member_chips.append((address, chip))
         has_strips = bool(self._member_chips)
         host.groups_members_container.setVisible(has_strips)
@@ -95,6 +98,8 @@ class SceneUiController:
         has_groups = bool(groups)
         combo.setEnabled(has_groups)
         host.groups_delete_button.setEnabled(has_groups)
+        host.groups_manage_row.setVisible(has_groups)
+        host.groups_saved_empty.setVisible(not has_groups)
 
     def _create_group(self) -> None:
         host = self._host
@@ -127,8 +132,12 @@ class SceneUiController:
         host.scenes_hint.setText(host._tr("scenes.hint"))
         host.groups_name_field.setPlaceholderText(host._tr("groups.name_placeholder"))
         host.groups_create_button.setText(host._tr("groups.create"))
-        host.groups_delete_button.setText(host._tr("groups.delete"))
+        host.groups_create_heading.setText(host._tr("groups.create_section"))
+        host.groups_saved_heading.setText(host._tr("groups.saved_section"))
+        host.groups_delete_button.setAccessibleName(host._tr("groups.delete"))
+        host.groups_delete_button.setToolTip(host._tr("groups.delete"))
         host.groups_empty_label.setText(host._tr("groups.no_strips"))
+        host.groups_saved_empty.setText(host._tr("groups.empty"))
         host.groups_hint.setText(host._tr("groups.hint"))
         self._refresh_targets()  # the built-in target names are translated too
         self._refresh_scenes_grid()  # tile target labels are translated too
