@@ -333,6 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     width, _, height = args.size.partition("x")
     _isolated_data_dir(args.theme, args.language)
 
+    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
 
     from app.main_layout import select_section
@@ -352,6 +353,10 @@ def main(argv: list[str] | None = None) -> int:
             demo(window)
         for _ in range(8):
             app.processEvents()
+        # Public snapshots should show the settled interface, not a frame from a
+        # value or geometry transition that happened while the demo was applied.
+        QTest.qWait(300)
+        app.processEvents()
 
         # Named after the demo when there is one, so an overlay's snapshot does not
         # overwrite the screen's underneath it.
