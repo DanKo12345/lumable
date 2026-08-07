@@ -282,7 +282,7 @@ def test_the_refreshed_music_card_keeps_its_grid_at_the_minimum_window() -> None
             assert 0 <= gap <= window._sz(10), "a band colour is detached from its label"
         assert window.music_reaction_label.height() == window.music_colors_label.height()
         assert window.music_source_segment.parentWidget() is window.music_source_combo.parentWidget()
-        assert window.music_source_segment.geometry().bottom() < window.music_source_combo.geometry().top()
+        assert window.music_source_segment.geometry().right() < window.music_source_combo.geometry().left()
 
         window._music_ui._source = "mic"
         window._music_ui._refresh_source_description()

@@ -36,6 +36,7 @@ def build_music_section(host: PanelHost) -> GlassCard:
         ("system", host._tr("music.source_system")),
         ("mic", host._tr("music.source_mic")),
     ])
+    host.music_source_segment.set_metrics(pad=host._sz(12))
 
     # Which device to capture. Populated by the controller based on the source;
     # the first item is always that source's system default.
@@ -60,12 +61,11 @@ def build_music_section(host: PanelHost) -> GlassCard:
     assert host.music_source_description is not None
     host.music_source_description.setText(host._tr("music.source_system_desc"))
     source_controls = QWidget()
-    source_controls.setFixedWidth(host._sz(258))
-    source_controls_layout = QVBoxLayout(source_controls)
+    source_controls_layout = QHBoxLayout(source_controls)
     source_controls_layout.setContentsMargins(0, 0, 0, 0)
-    source_controls_layout.setSpacing(host._sz(5))
+    source_controls_layout.setSpacing(host._sz(8))
     source_controls_layout.addWidget(host.music_source_segment)
-    source_controls_layout.addWidget(host.music_source_combo)
+    source_controls_layout.addWidget(host.music_source_combo, 1)
     source_layout.addWidget(source_controls, 0, Qt.AlignVCenter)
     source_list_layout.addWidget(source_row)
     host.music_card.content_layout.addWidget(source_list)
