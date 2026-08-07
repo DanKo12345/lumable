@@ -715,7 +715,7 @@ def test_color_picker_fits_and_scrolls_at_minimum_window() -> None:
     from PySide6.QtGui import QColor
     from PySide6.QtWidgets import QApplication, QWidget
 
-    from app.widgets.color_picker_overlay import PANEL_HEIGHT_WITH_HISTORY, ColorPickerOverlay
+    from app.widgets.color_picker_overlay import COLOR_PLANE_HEIGHT, PANEL_HEIGHT_WITH_HISTORY, ColorPickerOverlay
 
     labels = {
         "hex": "HEX", "red": "Красный", "green": "Зелёный", "blue": "Синий",
@@ -732,16 +732,19 @@ def test_color_picker_fits_and_scrolls_at_minimum_window() -> None:
     try:
         # Panel fits; pinned OK/Cancel stay inside it; the middle controls scroll.
         assert _panel_fits(picker, parent)
+        assert _inside_panel(picker._close_button, picker._panel)
         assert _inside_panel(picker._ok_button, picker._panel)
         assert _inside_panel(picker._cancel_button, picker._panel)
         assert picker._scroll.verticalScrollBar().maximum() > 0
+        assert picker._scroll.horizontalScrollBar().maximum() == 0
         # The colour plane keeps its full precision height.
-        assert picker.color_plane.height() == 145
+        assert picker.color_plane.height() == COLOR_PLANE_HEIGHT
         # Growing the window restores the preferred (with-history) height.
         parent.resize(1320, 860)
         picker._fit_to_parent()
         app.processEvents()
         assert picker._panel.maximumHeight() == PANEL_HEIGHT_WITH_HISTORY
+        assert picker._scroll.verticalScrollBar().maximum() == 0
     finally:
         picker.reject()
         parent.deleteLater()

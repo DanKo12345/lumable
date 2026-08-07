@@ -6,10 +6,12 @@ from PySide6.QtWidgets import QApplication, QLabel, QLineEdit
 from app.localization import localization_manager
 from app.theme import theme_manager
 from app.widgets.color_picker_overlay import (
+    COLOR_PLANE_HEIGHT,
     COLOR_PLANE_WIDTH,
     LABEL_WIDTH,
     PANEL_HEIGHT_COMPACT,
     PANEL_HEIGHT_WITH_HISTORY,
+    PICKER_SURFACE_INSET,
     PICKER_WIDTH,
     ROW_SIDE_MARGIN,
     VALUE_WIDTH,
@@ -41,7 +43,15 @@ def test_color_picker_uses_consistent_grid_with_history() -> None:
     try:
         assert picker.findChild(QLineEdit, "colorPickerHexInput") is not None
         assert picker.color_plane.width() == COLOR_PLANE_WIDTH
-        assert picker.color_plane.width() + picker.hue_bar.width() + 12 == PICKER_WIDTH
+        assert (
+            picker.color_plane.width()
+            + picker.hue_bar.width()
+            + 12
+            + (PICKER_SURFACE_INSET * 2)
+            == PICKER_WIDTH
+        )
+        assert picker.color_plane.height() == COLOR_PLANE_HEIGHT
+        assert picker._close_button.accessibleName() == localization_manager.t("dialog.cancel")
 
         labels = picker.findChildren(QLabel, "colorPickerLabel")
         values = picker.findChildren(QLabel, "colorPickerValue")
@@ -53,7 +63,7 @@ def test_color_picker_uses_consistent_grid_with_history() -> None:
         # The panel's preferred (max) height is the with-history height; on a
         # short window it can shrink below this and the centre scrolls.
         assert picker._panel.maximumHeight() == PANEL_HEIGHT_WITH_HISTORY
-        assert ROW_SIDE_MARGIN == 14
+        assert ROW_SIDE_MARGIN == 0
     finally:
         picker.deleteLater()
         app.processEvents()

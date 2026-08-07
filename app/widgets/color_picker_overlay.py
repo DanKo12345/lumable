@@ -5,34 +5,37 @@ from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
+from app.widgets.clickable_label import ClickableLabel
 from app.widgets.color_swatch import ColorSwatch
 from app.widgets.liquid_button import LiquidButton
 from app.widgets.liquid_slider import LiquidSlider
 from app.widgets.themed_line_edit import ThemedLineEdit
 
-PANEL_WIDTH = 500
-PANEL_HEIGHT_WITH_HISTORY = 560
-PANEL_HEIGHT_COMPACT = 520
-PANEL_MARGIN_X = 30
-PANEL_MARGIN_TOP = 22
-PANEL_MARGIN_BOTTOM = 24
-ROW_SIDE_MARGIN = 14
-ROW_SPACING = 10
-LABEL_WIDTH = 84
+PANEL_WIDTH = 540
+PANEL_HEIGHT_WITH_HISTORY = 632
+PANEL_HEIGHT_COMPACT = 584
+PANEL_MARGIN_X = 24
+PANEL_MARGIN_TOP = 20
+PANEL_MARGIN_BOTTOM = 20
+ROW_SIDE_MARGIN = 0
+ROW_SPACING = 12
+LABEL_WIDTH = 72
 VALUE_WIDTH = 54
 VALUE_HEIGHT = 36
-PICKER_WIDTH = PANEL_WIDTH - (PANEL_MARGIN_X * 2) - (ROW_SIDE_MARGIN * 2)
-HUE_BAR_WIDTH = 30
+SCROLLBAR_GUTTER = 16
+PICKER_WIDTH = PANEL_WIDTH - (PANEL_MARGIN_X * 2) - (ROW_SIDE_MARGIN * 2) - SCROLLBAR_GUTTER
+HUE_BAR_WIDTH = 28
 PICKER_SPACING = 12
-COLOR_PLANE_WIDTH = PICKER_WIDTH - HUE_BAR_WIDTH - PICKER_SPACING
-COLOR_PLANE_HEIGHT = 145
+PICKER_SURFACE_INSET = 10
+COLOR_PLANE_WIDTH = PICKER_WIDTH - (PICKER_SURFACE_INSET * 2) - HUE_BAR_WIDTH - PICKER_SPACING
+COLOR_PLANE_HEIGHT = 168
 
 
 class _ColorPreview(QFrame):
     def __init__(self, color: QColor, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._color = QColor(color)
-        self.setFixedSize(36, 36)
+        self.setFixedSize(44, 44)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
     def set_color(self, color: QColor) -> None:
@@ -45,18 +48,8 @@ class _ColorPreview(QFrame):
         painter.setRenderHint(QPainter.Antialiasing)
         rect = QRectF(self.rect()).adjusted(1.0, 1.0, -1.0, -1.0)
         path = QPainterPath()
-        path.addRoundedRect(rect, 10.0, 10.0)
-
-        fill = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
-        fill.setColorAt(0.0, self._color.lighter(128))
-        fill.setColorAt(0.42, self._color)
-        fill.setColorAt(1.0, self._color.darker(128))
-        painter.fillPath(path, fill)
-
-        shine = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.top() + rect.height() * 0.45)
-        shine.setColorAt(0.0, QColor(255, 255, 255, 58))
-        shine.setColorAt(1.0, QColor(255, 255, 255, 0))
-        painter.fillPath(path, shine)
+        path.addRoundedRect(rect, 9.0, 9.0)
+        painter.fillPath(path, self._color)
 
         border = qcolor_from_token(theme_manager.palette["surface_border"])
         border.setAlpha(112 if theme_manager.is_dark else 150)
@@ -276,13 +269,27 @@ class ColorPickerOverlay(QWidget):
 
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(PANEL_MARGIN_X, PANEL_MARGIN_TOP, PANEL_MARGIN_X, PANEL_MARGIN_BOTTOM)
-        panel_layout.setSpacing(10)
+        panel_layout.setSpacing(12)
 
         # --- Pinned title ---
+        header = QHBoxLayout()
+        header.setContentsMargins(2, 0, 0, 0)
+        header.setSpacing(12)
         title_label = QLabel(title, panel)
         title_label.setObjectName("colorPickerTitle")
-        title_label.setAlignment(Qt.AlignCenter)
-        panel_layout.addWidget(title_label)
+        title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        header.addWidget(title_label, 1)
+        close_button = ClickableLabel("✕", panel)
+        close_button.setObjectName("colorPickerClose")
+        close_button.setFixedSize(32, 32)
+        close_button.setAlignment(Qt.AlignCenter)
+        close_button.setCursor(Qt.PointingHandCursor)
+        close_button.setAccessibleName(labels["cancel"])
+        close_button.setToolTip(labels["cancel"])
+        close_button.clicked.connect(self.reject)
+        self._close_button = close_button
+        header.addWidget(close_button, 0, Qt.AlignVCenter)
+        panel_layout.addLayout(header)
 
         # --- Scrollable centre: plane + hue, HEX, RGB sliders, history. On a
         # short window this yields height while the title and actions stay put.
@@ -299,11 +306,16 @@ class ColorPickerOverlay(QWidget):
         centre.setObjectName("colorPickerScrollContent")
         centre_layout = QVBoxLayout(centre)
         centre_layout.setContentsMargins(0, 0, 0, 0)
-        centre_layout.setSpacing(10)
+        centre_layout.setSpacing(12)
 
+        picker_surface = QFrame(centre)
+        picker_surface.setObjectName("colorPickerSurface")
         picker_row = QHBoxLayout()
-        picker_row.setContentsMargins(ROW_SIDE_MARGIN, 0, ROW_SIDE_MARGIN, 0)
+        picker_row.setContentsMargins(
+            PICKER_SURFACE_INSET, PICKER_SURFACE_INSET, PICKER_SURFACE_INSET, PICKER_SURFACE_INSET
+        )
         picker_row.setSpacing(PICKER_SPACING)
+        picker_surface.setLayout(picker_row)
         hue = max(0, self._color.hue())
         self.color_plane = _ColorPlane(self._color, panel)
         self.hue_bar = _HueBar(hue, panel)
@@ -311,7 +323,7 @@ class ColorPickerOverlay(QWidget):
         self.hue_bar.hueChanged.connect(self._set_hue_from_picker)
         picker_row.addWidget(self.color_plane, 1)
         picker_row.addWidget(self.hue_bar)
-        centre_layout.addLayout(picker_row)
+        centre_layout.addWidget(picker_surface)
 
         hex_row = self._control_row(labels["hex"])
         self.hex_input = ThemedLineEdit(panel)
@@ -336,7 +348,7 @@ class ColorPickerOverlay(QWidget):
             for item in history_items[:8]:
                 color_item = QColor(item["r"], item["g"], item["b"])
                 swatch = ColorSwatch(lambda: theme_manager.palette, panel)
-                swatch.setFixedSize(32, 32)
+                swatch.setFixedSize(34, 34)
                 swatch.set_color(color_item)
                 swatch.clicked.connect(lambda picked=color_item: self._set_color(picked, sync_hue=True))
                 swatches.addWidget(swatch)
@@ -352,19 +364,22 @@ class ColorPickerOverlay(QWidget):
         panel_layout.addWidget(self._scroll, 1)
 
         # --- Pinned actions ---
+        footer_line = QFrame(panel)
+        footer_line.setObjectName("colorPickerDivider")
+        footer_line.setFixedHeight(1)
+        panel_layout.addWidget(footer_line)
         actions = QHBoxLayout()
-        actions.setContentsMargins(ROW_SIDE_MARGIN, 2, ROW_SIDE_MARGIN, 0)
-        actions.setSpacing(12)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(10)
         cancel_button = LiquidButton(labels["cancel"], "ghost", panel)
-        ok_button = LiquidButton(labels["ok"], "accent", panel)
-        cancel_button.setFixedHeight(42)
-        ok_button.setFixedHeight(42)
-        cancel_button.setFixedWidth(180)
-        ok_button.setFixedWidth(180)
+        ok_button = LiquidButton(labels["ok"], "accent_soft", panel)
+        cancel_button.setFixedSize(132, 42)
+        ok_button.setFixedSize(152, 42)
         cancel_button.clicked.connect(self.reject)
         ok_button.clicked.connect(self.accept)
         self._cancel_button = cancel_button
         self._ok_button = ok_button
+        actions.addStretch(1)
         actions.addWidget(cancel_button)
         actions.addWidget(ok_button)
         panel_layout.addLayout(actions)
@@ -546,8 +561,23 @@ class ColorPickerOverlay(QWidget):
             }}
             #colorPickerTitle {{
                 color: {palette["text"]};
-                font-size: 18px;
+                font-size: 20px;
                 font-weight: 700;
+            }}
+            #colorPickerClose {{
+                color: {palette["text_soft"]};
+                font-size: 19px;
+                font-weight: 500;
+            }}
+            #colorPickerClose:hover {{ color: {palette["text"]}; }}
+            #colorPickerSurface {{
+                background: {palette["field_alt"]};
+                border: 1px solid {palette["field_border"]};
+                border-radius: 16px;
+            }}
+            #colorPickerDivider {{
+                background: {palette["field_border"]};
+                border: none;
             }}
             #colorPickerLabel {{
                 color: {palette["text_soft"]};
@@ -557,7 +587,7 @@ class ColorPickerOverlay(QWidget):
             #colorPickerValue {{
                 background: {palette["chip"]};
                 border: 1px solid {palette["chip_border"]};
-                border-radius: 14px;
+                border-radius: 10px;
                 color: {palette["text"]};
                 font-size: 12px;
                 font-weight: 700;
@@ -565,7 +595,7 @@ class ColorPickerOverlay(QWidget):
             #colorPickerHexInput {{
                 background: {palette["chip"]};
                 border: 1px solid {palette["chip_border"]};
-                border-radius: 16px;
+                border-radius: 10px;
                 color: {palette["text"]};
                 min-height: 36px;
                 padding: 0 14px;
