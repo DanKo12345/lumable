@@ -266,6 +266,25 @@ def _apply_readme_ambient_demo(window) -> None:
     _show_showcase_connection(window)
 
 
+def _apply_music_demo(window) -> None:
+    """Show the music card in its active visual state without opening audio."""
+    _show_showcase_connection(window)
+    window.music_toggle_button.setChecked(True)
+    window.music_toggle_button.setText(window._tr("music.toggle_on"))
+    window.music_status_label.setText(window._tr("music.listening"))
+    window.music_controls.setEnabled(True)
+    effect = getattr(window._music_ui, "_controls_effect", None)
+    if effect is not None:
+        effect.setOpacity(1.0)
+    window.music_preview.setVisible(True)
+    window.music_preview.setMinimumHeight(window._sz(52))
+    window.music_preview.setMaximumHeight(window._sz(52))
+    preview_effect = getattr(window._music_ui, "_preview_effect", None)
+    if preview_effect is not None:
+        preview_effect.setOpacity(1.0)
+    window.music_preview.set_color(225, 84, 142)
+
+
 DEMOS = {
     "automations": _apply_automations_demo,
     "journal": _apply_journal_demo,
@@ -277,6 +296,7 @@ DEMOS = {
     "readme-color": _apply_readme_color_demo,
     "readme-automations": _apply_readme_automations_demo,
     "readme-ambient": _apply_readme_ambient_demo,
+    "music": _apply_music_demo,
 }
 
 

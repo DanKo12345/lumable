@@ -140,6 +140,19 @@ class PanelHost(Protocol):
     ambient_smoothing_slider: LiquidSlider
     ambient_smoothing_value: ValueChip
 
+    music_card: GlassCard
+    music_mode_label: QLabel
+    music_status_label: QLabel
+    music_source_label: QLabel
+    music_source_description: QLabel
+    music_device_label: QLabel
+    music_reaction_label: QLabel
+    music_colors_label: QLabel
+    music_toggle_button: LiquidButton
+    music_source_combo: StaticPopupComboBox
+    music_controls: QWidget
+    music_band_captions: dict[str, QLabel]
+
     def _tr(self, key: str, **kwargs: object) -> str: ...
 
     def _card(self, title: str, subtitle: str | None = None, icon: str | None = None) -> GlassCard: ...

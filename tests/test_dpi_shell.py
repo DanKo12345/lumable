@@ -245,6 +245,52 @@ def test_the_refreshed_color_card_keeps_its_grid_at_the_minimum_window() -> None
         app.processEvents()
 
 
+def test_the_refreshed_music_card_keeps_its_grid_at_the_minimum_window() -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window.show()
+        window.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        select_section(window, "music")
+        app.processEvents()
+        window.body_scroll.widget().adjustSize()
+        app.processEvents()
+
+        assert window.body_scroll.verticalScrollBar().maximum() > 0
+        assert window.body_scroll.horizontalScrollBar().maximum() == 0
+        for widget in (
+            window.music_toggle_button,
+            window.music_source_segment,
+            window.music_source_combo,
+            window.music_bass_swatch,
+            window.music_mid_swatch,
+            window.music_treble_swatch,
+        ):
+            assert _fits_horizontally(widget, window.music_card)
+
+        band_items = [
+            window.music_bass_swatch.parentWidget(),
+            window.music_mid_swatch.parentWidget(),
+            window.music_treble_swatch.parentWidget(),
+        ]
+        band_widths = [item.width() for item in band_items]
+        assert max(band_widths) - min(band_widths) <= 1
+        for band in ("bass", "mid", "treble"):
+            caption = window.music_band_captions[band]
+            swatch = getattr(window, f"music_{band}_swatch")
+            gap = swatch.geometry().left() - caption.geometry().right() - 1
+            assert 0 <= gap <= window._sz(10), "a band colour is detached from its label"
+        assert window.music_reaction_label.height() == window.music_colors_label.height()
+
+        window._music_ui._source = "mic"
+        window._music_ui._refresh_source_description()
+        assert window.music_source_description.text() == window._tr("music.source_mic_desc")
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def _automation_page_is_intact(window) -> None:
     """Every card fits the page's width, and no row's control is cut off.
 

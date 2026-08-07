@@ -347,6 +347,11 @@ class UiLocalizationController:
         host._set_slider_label_text("music.speed", host._tr("music.speed"))
         host._set_slider_label_text("music.beat", host._tr("music.beat"))
         host._set_slider_label_text("music.gate", host._tr("music.gate"))
+        host.music_mode_label.setText(host._tr("music.mode_title"))
+        host.music_source_label.setText(host._tr("music.source_title"))
+        host.music_device_label.setText(host._tr("music.device_title"))
+        host.music_reaction_label.setText(host._tr("music.reaction_title"))
+        host.music_colors_label.setText(host._tr("music.colors_title"))
         source_segment = getattr(host, "music_source_segment", None)
         is_mic = getattr(host._music_ui, "_source", "system") == "mic"
         if source_segment is not None:
@@ -365,8 +370,13 @@ class UiLocalizationController:
         if getattr(host, "music_lock_label", None) is not None:
             host.music_lock_label.setText(host._tr("common.pro_badge"))
             host.music_lock_label.setToolTip(host._tr("music.pro_locked"))
-        if running and getattr(host, "music_status_label", None) is not None:
-            host.music_status_label.setText(host._tr("music.listening"))
+        if getattr(host, "music_status_label", None) is not None:
+            host.music_status_label.setText(
+                host._tr("music.listening" if running else "music.status_off")
+            )
+        host.music_source_description.setText(
+            host._tr("music.source_mic_desc" if is_mic else "music.source_system_desc")
+        )
         captions = getattr(host, "music_band_captions", {})
         for band, label_key in (("bass", "music.band_bass"), ("mid", "music.band_mid"), ("treble", "music.band_treble")):
             caption = captions.get(band)

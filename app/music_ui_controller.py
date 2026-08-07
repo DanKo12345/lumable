@@ -226,6 +226,7 @@ class MusicUiController:
         if segment is not None:
             segment.set_current(self._source, animate=False)
         self._set_gate_visible_instant(self._source == "mic")
+        self._refresh_source_description()
         self._populate_sources()
         combo = getattr(host, "music_source_combo", None)
         if combo is not None:
@@ -266,6 +267,7 @@ class MusicUiController:
 
     def _on_source_type_changed(self, key: str) -> None:
         self._source = "mic" if key == "mic" else "system"
+        self._refresh_source_description()
         self._animate_gate(opening=self._source == "mic")
         self._populate_sources()
         # Re-select the device previously chosen for this source, if any.
@@ -280,6 +282,12 @@ class MusicUiController:
         self._persist()
         if self._music.is_running():
             self._restart_capture()
+
+    def _refresh_source_description(self) -> None:
+        label = getattr(self._host, "music_source_description", None)
+        if label is not None:
+            key = "music.source_mic_desc" if self._source == "mic" else "music.source_system_desc"
+            label.setText(self._host._tr(key))
 
     def _on_source_changed(self) -> None:
         self._persist()
@@ -426,7 +434,8 @@ class MusicUiController:
         host.music_toggle_button.setText(host._tr("music.toggle_off"))
         status = getattr(host, "music_status_label", None)
         if status is not None:
-            status.setVisible(False)
+            status.setText(host._tr("music.status_off"))
+            status.setVisible(True)
         if was_running:
             host._log(host._tr("music.stopped_log"))
 
