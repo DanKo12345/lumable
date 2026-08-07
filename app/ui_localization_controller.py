@@ -156,11 +156,20 @@ class UiLocalizationController:
         host.configs_card.title_label.setText(host._tr("configs.title"))
         if host.configs_card.subtitle_label is not None:
             host.configs_card.subtitle_label.setText(host._tr("configs.subtitle"))
+        host.configs_library_label.setText(host._tr("configs.library_title"))
+        host.configs_library_hint.setText(host._tr("configs.library_hint"))
+        host.configs_saved_label.setText(host._tr("configs.saved_title"))
+        host.configs_saved_hint.setText(host._tr("configs.saved_hint"))
         host.profile_name.setPlaceholderText(host._tr("configs.placeholder"))
         host.save_profile_button.setText(host._tr("configs.save"))
-        host.import_profiles_button.setToolTip(host._tr("configs.import_tooltip"))
-        host.export_profiles_button.setToolTip(host._tr("configs.export_tooltip"))
-        host.configs_menu_button.setToolTip(host._tr("configs.menu"))
+        for button, key in (
+            (host.import_profiles_button, "configs.import_tooltip"),
+            (host.export_profiles_button, "configs.export_tooltip"),
+            (host.configs_menu_button, "configs.menu"),
+        ):
+            label = host._tr(key)
+            button.setToolTip(label)
+            button.setAccessibleName(label)
         host.reset_profiles_action.setText(host._tr("configs.menu_reset"))
 
     def _apply_schedule_texts(self) -> None:

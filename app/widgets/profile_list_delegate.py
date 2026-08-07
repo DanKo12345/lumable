@@ -32,7 +32,7 @@ class ProfileListDelegate(QStyledItemDelegate):
         hovered = bool(option.state & QStyle.State_MouseOver)
 
         row = QRectF(option.rect).adjusted(6.0, 5.0, -8.0, -5.0)
-        radius = 13.0
+        radius = 8.0
         row_path = QPainterPath()
         row_path.addRoundedRect(row, radius, radius)
 

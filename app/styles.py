@@ -386,9 +386,12 @@ def _form_styles(T: dict, is_dark: bool) -> str:
             font-weight: 500;
         }}
         #profileList {{
-            background: {T["field_alt"]};
-            border: 1px solid {T["field_border"]};
+            background: transparent;
+            border: 0;
+            border-radius: 0;
+            padding: 0;
         }}
+        #profileList:focus {{ border: 0; }}
         QLineEdit, QTimeEdit {{
             min-height: 44px;
         }}

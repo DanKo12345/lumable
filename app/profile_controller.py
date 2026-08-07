@@ -24,9 +24,9 @@ class ProfileController:
 
     def refresh_list(self, profile_list: QListWidget) -> None:
         profile_list.clear()
-        for index, profile in enumerate(self._profiles, start=1):
+        for profile in self._profiles:
             display_name = localization_manager.profile_name(profile)
-            item = QListWidgetItem(f"{index}. {display_name}")
+            item = QListWidgetItem(display_name)
             item.setData(Qt.UserRole, profile)
             profile_list.addItem(item)
 

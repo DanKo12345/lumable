@@ -30,7 +30,11 @@ def _collect_state(name: str) -> _FakeState:
 
 class _MockListWidgetItem:
     def __init__(self, text: str = "", *args) -> None:
+        self._text = text
         self._data: dict = {}
+
+    def text(self) -> str:
+        return self._text
 
     def setData(self, role, value) -> None:
         self._data[role] = value
@@ -72,6 +76,16 @@ def _make_controller(*profile_names: str) -> ProfileController:
     profiles = [{"name": n, "power": True, "brightness": 80, "speed": 60,
                  "effect_code": 0, "color": {"r": 10, "g": 20, "b": 30}} for n in profile_names]
     return ProfileController(profiles)
+
+
+def test_refresh_list_keeps_profile_names_unumbered(monkeypatch) -> None:
+    _patch_qt(monkeypatch)
+    ctrl = _make_controller("Laser Dream", "Neon Sunset")
+    widget = _list_widget()
+
+    ctrl.refresh_list(widget)
+
+    assert [item.text() for item in widget._items] == ["Laser Dream", "Neon Sunset"]
 
 
 # ── save_profile ──────────────────────────────────────────────────────

@@ -86,6 +86,10 @@ class PanelHost(Protocol):
     speed_value: ValueChip
 
     configs_card: GlassCard
+    configs_library_label: QLabel
+    configs_library_hint: QLabel
+    configs_saved_label: QLabel
+    configs_saved_hint: QLabel
     profile_name: object
     save_profile_button: LiquidButton
     profile_list: object
