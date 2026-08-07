@@ -76,6 +76,8 @@ class PanelHost(Protocol):
     brightness_value: ValueChip
     color_history_label: QLabel
     color_history_buttons: list
+    color_channels_label: QLabel
+    color_light_label: QLabel
     pick_color_button: LiquidButton
     power_button: LiquidButton
 

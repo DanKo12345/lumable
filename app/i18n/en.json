@@ -108,6 +108,8 @@
         "color.subtitle": "Sliders apply color and brightness automatically.",
         "color.recent": "Recent",
         "color.pick": "Pick color",
+        "color.channels": "RGB channels",
+        "color.light": "Light output",
         "presets.applied": "Scene applied: {name}.",
         "app_triggers.title": "Auto-scenes",
         "app_triggers.subtitle": "The strip switches scene to match the active app or game.",

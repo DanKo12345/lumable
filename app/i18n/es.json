@@ -108,6 +108,8 @@
         "color.subtitle": "Los controles aplican el color y el brillo automáticamente.",
         "color.recent": "Recientes",
         "color.pick": "Elegir color",
+        "color.channels": "Canales RGB",
+        "color.light": "Luz",
         "presets.applied": "Escena aplicada: {name}.",
         "app_triggers.title": "Escenas automáticas",
         "app_triggers.subtitle": "La tira cambia de escena según la app o el juego activo.",

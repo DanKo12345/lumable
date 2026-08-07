@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from app.constants import ACTION_SPACING, SLIDER_LABEL_WIDTH, SLIDER_ROW_MARGINS, SLIDER_ROW_SPACING
+from app.panels.list_rows import Hairline
 from app.panels.types import PanelHost
 from app.widgets import ColorSwatch, GlassCard
 
@@ -11,6 +11,10 @@ from app.widgets import ColorSwatch, GlassCard
 def build_color_section(host: PanelHost) -> GlassCard:
     host.color_card = host._card(host._tr("color.title"), host._tr("color.subtitle"), icon="color")
     host.color_card.setMinimumHeight(host._sz(360))
+    host.color_card.subtitle_label.setMinimumHeight(0)
+    host.color_card.subtitle_label.setContentsMargins(0, 0, 0, 0)
+    host.color_card.content_layout.setContentsMargins(0, host._sz(8), 0, 0)
+    host.color_card.content_layout.setSpacing(host._sz(12))
     # The live-light preview now lives in the persistent top region.
 
     # Create the colour sliders + value chips (added below the recent row).
@@ -37,46 +41,74 @@ def build_color_section(host: PanelHost) -> GlassCard:
     host.temperature_value = host._pill("4500K")
 
     # Recent colours first — quick one-tap re-pick (fast on top, fine-tune below).
-    history_row = QHBoxLayout()
-    history_row.setSpacing(SLIDER_ROW_SPACING)
-    history_row.setContentsMargins(*SLIDER_ROW_MARGINS)
+    quick_section, quick_layout, _quick_heading = _section(host)
+    quick_section.setObjectName("colorQuickSection")
+    history_header = QHBoxLayout()
+    history_header.setContentsMargins(0, 0, 0, 0)
+    history_header.setSpacing(host._sz(8))
     host.color_history_label = QLabel(host._tr("color.recent"))
-    host.color_history_label.setObjectName("sliderLabel")
-    host.color_history_label.setFixedWidth(SLIDER_LABEL_WIDTH)
+    host.color_history_label.setObjectName("sceneFormHeading")
     host.color_history_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-    history_row.addWidget(host.color_history_label)
+    history_header.addWidget(host.color_history_label)
+    history_header.addStretch(1)
+    host.pick_color_button = host._button(host._tr("color.pick"), "accent_soft")
+    host.pick_color_button.set_icon_kind("color")
+    host.pick_color_button.setMinimumWidth(host._sz(156))
+    history_header.addWidget(host.pick_color_button, 0, Qt.AlignVCenter)
+    quick_layout.addLayout(history_header)
+
+    history_row = QHBoxLayout()
+    history_row.setSpacing(host._sz(8))
+    history_row.setContentsMargins(0, 0, 0, 0)
     host.color_history_buttons = []
     for _index in range(12):
         swatch = ColorSwatch(lambda: host._theme_tokens)
-        swatch_size = host._control_height - 4
+        swatch_size = host._control_height - 8
         swatch.setFixedSize(swatch_size, swatch_size)  # square → perfectly round
         swatch.hide()
         host.color_history_buttons.append(swatch)
         history_row.addWidget(swatch)
     history_row.addStretch(1)
-    host.color_card.content_layout.addLayout(history_row)
+    quick_layout.addLayout(history_row)
+    host.color_card.content_layout.addWidget(quick_section)
+    host.color_card.content_layout.addWidget(Hairline())
 
     # Sliders below — precise manual control.
-    host.color_card.content_layout.addLayout(
+    channels, channels_layout, host.color_channels_label = _section(host, host._tr("color.channels"))
+    channels.setObjectName("colorChannelsSection")
+    channels_layout.addLayout(
         host._slider_row(host._tr("slider.red"), host.red_slider, host.red_value, "slider.red")
     )
-    host.color_card.content_layout.addLayout(
+    channels_layout.addLayout(
         host._slider_row(host._tr("slider.green"), host.green_slider, host.green_value, "slider.green")
     )
-    host.color_card.content_layout.addLayout(
+    channels_layout.addLayout(
         host._slider_row(host._tr("slider.blue"), host.blue_slider, host.blue_value, "slider.blue")
     )
-    host.color_card.content_layout.addLayout(
+    host.color_card.content_layout.addWidget(channels)
+    host.color_card.content_layout.addWidget(Hairline())
+
+    light, light_layout, host.color_light_label = _section(host, host._tr("color.light"))
+    light.setObjectName("colorLightSection")
+    light_layout.addLayout(
         host._slider_row(host._tr("slider.brightness"), host.brightness_slider, host.brightness_value, "slider.brightness")
     )
-    host.color_card.content_layout.addLayout(
+    light_layout.addLayout(
         host._slider_row(host._tr("slider.temperature"), host.temperature_slider, host.temperature_value, "slider.temperature")
     )
-
-    color_actions = QHBoxLayout()
-    color_actions.setSpacing(ACTION_SPACING)
-    # Power lives in the persistent top region now; the card keeps colour picking.
-    host.pick_color_button = host._button(host._tr("color.pick"), "accent_soft")
-    color_actions.addWidget(host.pick_color_button, 1)
-    host.color_card.content_layout.addLayout(color_actions)
+    host.color_card.content_layout.addWidget(light)
     return host.color_card
+
+
+def _section(host: PanelHost, title: str | None = None) -> tuple[QWidget, QVBoxLayout, QLabel | None]:
+    section = QWidget()
+    section.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+    layout = QVBoxLayout(section)
+    layout.setContentsMargins(host._sz(2), host._sz(2), host._sz(2), host._sz(2))
+    layout.setSpacing(host._sz(8))
+    heading = None
+    if title is not None:
+        heading = QLabel(title)
+        heading.setObjectName("sceneFormHeading")
+        layout.addWidget(heading)
+    return section, layout, heading

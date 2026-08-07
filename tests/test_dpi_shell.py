@@ -212,6 +212,39 @@ def _fits_horizontally(widget, parent) -> bool:
     return left >= 0 and right <= parent.width()
 
 
+def test_the_refreshed_color_card_keeps_its_grid_at_the_minimum_window() -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window._settings["color_history"] = [
+            {"r": index * 30, "g": 255 - index * 20, "b": 80 + index * 10}
+            for index in range(12)
+        ]
+        window._refresh_color_history()
+        window.show()
+        window.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        select_section(window, "color")
+        app.processEvents()
+        window.body_scroll.widget().adjustSize()
+        app.processEvents()
+
+        visible_swatches = [button for button in window.color_history_buttons if button.isVisible()]
+        assert visible_swatches, "the populated recent-colour row is hidden"
+        assert all(_fits_horizontally(button, window.color_card) for button in visible_swatches)
+        assert _fits_horizontally(window.pick_color_button, window.color_card)
+        assert window.body_scroll.horizontalScrollBar().maximum() == 0
+        history_top = window.color_history_label.mapTo(
+            window.color_card, window.color_history_label.rect().topLeft()
+        ).y()
+        red_top = window.red_slider.mapTo(window.color_card, window.red_slider.rect().topLeft()).y()
+        assert history_top < red_top
+        assert window.color_channels_label.height() == window.color_light_label.height()
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+
+
 def _automation_page_is_intact(window) -> None:
     """Every card fits the page's width, and no row's control is cut off.
 

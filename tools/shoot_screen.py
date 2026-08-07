@@ -230,6 +230,24 @@ def _show_showcase_connection(window) -> None:
 def _apply_readme_color_demo(window) -> None:
     """The main colour surface in a credible, connected showcase state."""
     _show_showcase_connection(window)
+    window._settings["color_history"] = [
+        {"r": red, "g": green, "b": blue}
+        for red, green, blue in (
+            (255, 92, 116),
+            (255, 168, 88),
+            (255, 216, 102),
+            (92, 214, 174),
+            (84, 174, 255),
+            (116, 102, 255),
+            (196, 92, 255),
+            (255, 102, 196),
+            (255, 238, 214),
+            (116, 138, 168),
+            (54, 72, 102),
+            (28, 32, 42),
+        )
+    ]
+    window._refresh_color_history()
 
 
 def _apply_readme_automations_demo(window) -> None:

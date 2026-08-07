@@ -101,6 +101,8 @@
         "color.subtitle": "Ползунки сразу меняют цвет и яркость на ленте.",
         "color.recent": "Последние",
         "color.pick": "Выбрать цвет",
+        "color.channels": "Каналы RGB",
+        "color.light": "Свет",
         "presets.applied": "Сцена применена: {name}.",
         "app_triggers.title": "Авто-сцены",
         "app_triggers.subtitle": "Лента сама меняет сцену под активное приложение или игру.",

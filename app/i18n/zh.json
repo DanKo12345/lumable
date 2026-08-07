@@ -101,6 +101,8 @@
         "color.subtitle": "滑块会自动应用颜色和亮度。",
         "color.recent": "最近",
         "color.pick": "选择颜色",
+        "color.channels": "RGB 通道",
+        "color.light": "灯光",
         "presets.applied": "已应用场景：{name}。",
         "app_triggers.title": "自动场景",
         "app_triggers.subtitle": "灯带根据当前应用或游戏自动切换场景。",

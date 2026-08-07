@@ -137,6 +137,8 @@ class UiLocalizationController:
             host.color_card.subtitle_label.setText(host._tr("color.subtitle"))
         host.pick_color_button.setText(host._tr("color.pick"))
         host.color_history_label.setText(host._tr("color.recent"))
+        host.color_channels_label.setText(host._tr("color.channels"))
+        host.color_light_label.setText(host._tr("color.light"))
         host._sync_power_button()
         host._set_slider_label_text("slider.red", host._tr("slider.red"))
         host._set_slider_label_text("slider.green", host._tr("slider.green"))
