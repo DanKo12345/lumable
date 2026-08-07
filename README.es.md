@@ -24,7 +24,7 @@ Otros idiomas:
 - [Русский](README.ru.md)
 - [中文](README.zh.md)
 
-![Controles de color y brillo de LumaBLE](docs/images/lumable-color-dark.png)
+![Controles de color y brillo de LumaBLE](docs/images/lumable-color-0.3.8-dark.png)
 
 ## Funciones principales
 

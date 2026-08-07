@@ -29,7 +29,7 @@
   </sub>
 </p>
 
-![LumaBLE colour and brightness controls](docs/images/lumable-color-dark.png)
+![LumaBLE colour and brightness controls](docs/images/lumable-color-0.3.8-dark.png)
 
 Those £8 Bluetooth LED strips — **ELK-BLEDOM**, **Triones** / Happy Lighting, **Magic Home**,
 **BanlanX SP61x / SP62x** — normally come with a phone app and nothing else. LumaBLE gives them a
@@ -57,7 +57,7 @@ No hub, no bridge, no account. The controller you already own, driven from the d
 
 | Automation rules | Screen sync |
 | --- | --- |
-| ![Automation rules in LumaBLE](docs/images/lumable-automations-dark.png) | ![Screen sync controls in LumaBLE](docs/images/lumable-screen-sync-dark.png) |
+| ![Automation rules in LumaBLE](docs/images/lumable-automations-dark.png) | ![Screen sync controls in LumaBLE](docs/images/lumable-screen-sync-0.3.8-dark.png) |
 
 ## Download And Start
 
