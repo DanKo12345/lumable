@@ -42,6 +42,29 @@ def build_diagnostics_section(host: PanelHost) -> GlassCard:
     report_header.addWidget(host.report_device_button, 0, Qt.AlignVCenter)
     host.diagnostics_card.content_layout.addLayout(report_header)
 
+    # Moving to another PC, or keeping what you built before reinstalling. Next
+    # to the diagnostics export because both are "get something out of the app",
+    # and both open the same kind of file dialog.
+    backup_row = QHBoxLayout()
+    backup_row.setSpacing(8)
+    host.backup_label = QLabel(host._tr("backup.title"))
+    host.backup_label.setObjectName("sceneFormHeading")
+    host.backup_hint_label = QLabel(host._tr("backup.subtitle"))
+    host.backup_hint_label.setObjectName("sliderLabel")
+    host.backup_hint_label.setWordWrap(True)
+    host.export_backup_button = host._button(host._tr("backup.export_action"), "ghost")
+    host.export_backup_button.set_icon_kind("upload")
+    host.import_backup_button = host._button(host._tr("backup.import_action"), "ghost")
+    host.import_backup_button.set_icon_kind("download")
+    _prepare_text_action(host.export_backup_button)
+    _prepare_text_action(host.import_backup_button)
+    backup_row.addWidget(host.backup_label, 0, Qt.AlignVCenter)
+    backup_row.addStretch(1)
+    backup_row.addWidget(host.export_backup_button, 0, Qt.AlignVCenter)
+    backup_row.addWidget(host.import_backup_button, 0, Qt.AlignVCenter)
+    host.diagnostics_card.content_layout.addLayout(backup_row)
+    host.diagnostics_card.content_layout.addWidget(host.backup_hint_label)
+
     host.diagnostics_output = QTextEdit()
     host.diagnostics_output.setObjectName("diagnosticsOutput")
     host.diagnostics_output.setReadOnly(True)

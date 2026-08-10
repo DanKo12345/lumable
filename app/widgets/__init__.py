@@ -2,6 +2,7 @@ from .about_overlay import AboutOverlay
 from .accent_preview import AccentPreview
 from .aurora_background import AuroraBackground
 from .author_signature import AuthorSignatureMark
+from .backup_restore_result_overlay import BackupRestoreResultOverlay
 from .clickable_label import ClickableLabel
 from .color_picker_overlay import ColorPickerOverlay
 from .color_swatch import ColorSwatch
@@ -28,6 +29,7 @@ __all__ = [
     "AccentPreview",
     "AuroraBackground",
     "AuthorSignatureMark",
+    "BackupRestoreResultOverlay",
     "ClickableLabel",
     "ColorPickerOverlay",
     "ColorSwatch",

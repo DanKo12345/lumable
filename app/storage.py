@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -1024,7 +1025,56 @@ def load_settings() -> dict[str, Any]:
     return settings
 
 
+# Set once a restore has replaced the settings file. Every ordinary write is a
+# snapshot of the world that existed before the restore, and this process is on
+# its way out — the shutdown path alone saves settings from three different
+# controllers, any one of which would put the old scenes back. A flag on the
+# window would not stop them; it has to live where the writing happens.
+_writes_frozen = False
+
+
+def freeze_settings_writes() -> None:
+    """Refuse further ordinary writes for the rest of this process."""
+    global _writes_frozen
+    _writes_frozen = True
+
+
+def settings_writes_frozen() -> bool:
+    return _writes_frozen
+
+
+def restore_settings_file(payload: dict[str, Any]) -> Path | None:
+    """Replace the settings file with a restored one, then freeze writing.
+
+    The safety copy, the replacement and the freeze all happen inside one hold
+    of the settings lock, so nothing in this process can write between them —
+    a second handle on that lock waits for the one already held. Returns where
+    the previous settings were kept, or ``None`` if there were none.
+
+    This is the one path that writes while frozen; it is what does the freezing.
+    """
+    global _writes_frozen
+    with file_lock(_settings_lock_path(), timeout=SETTINGS_LOCK_TIMEOUT_SECONDS) as locked:
+        if not locked:
+            raise TimeoutError("settings file is busy")
+        kept: Path | None = None
+        if SETTINGS_PATH.exists():
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            kept = SETTINGS_PATH.with_name(f"settings-before-restore-{stamp}.json")
+            shutil.copy2(SETTINGS_PATH, kept)
+        # If this raises, the freeze below never happens and the app carries on
+        # with what it had — which is the whole point of doing it in this order.
+        _write_json(SETTINGS_PATH, json.loads(json.dumps(payload)))
+        _writes_frozen = True
+        return kept
+
+
 def save_settings(settings: dict[str, Any]) -> None:
+    if _writes_frozen:
+        # A restore has already replaced the file. This snapshot describes the
+        # world before it, and writing it back is exactly the accident the
+        # freeze exists to prevent.
+        return
     with file_lock(_settings_lock_path(), timeout=SETTINGS_LOCK_TIMEOUT_SECONDS) as locked:
         if not locked:
             raise TimeoutError("settings file is busy")
@@ -1053,6 +1103,8 @@ def update_settings(mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
     ``load_settings``/``save_settings``: those take the same lock, and a second
     handle on it in this process would wait for the one we are already holding.
     """
+    if _writes_frozen:
+        return validate_settings(_read_json(SETTINGS_PATH, DEFAULT_SETTINGS))
     with file_lock(_settings_lock_path(), timeout=SETTINGS_LOCK_TIMEOUT_SECONDS) as locked:
         if not locked:
             raise TimeoutError("settings file is busy")

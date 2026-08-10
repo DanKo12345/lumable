@@ -32,6 +32,7 @@ from app.app_trigger_controller import AppTriggerController
 from app.app_trigger_ui_controller import AppTriggerUiController
 from app.automation.controller import AutomationController, schedule_first_sync
 from app.automation_ui_controller import AutomationUiController
+from app.backup_controller import BackupController
 from app.ble import BleController
 from app.ble_event_handler import BleEventHandler
 from app.color_controller import ColorController
@@ -88,6 +89,7 @@ from app.update_checker import UpdateResult
 from app.update_controller import UpdateController
 from app.widgets import (
     AuroraBackground,
+    BackupRestoreResultOverlay,
     ColorPickerOverlay,
     GlassCard,
     LiquidButton,
@@ -241,6 +243,7 @@ class MainWindow(QMainWindow):
         self._hotkey_ui = HotkeyUiController(self)
         self._window_state = WindowStateController(self)
         self._diagnostics_ctrl = DiagnosticsController(self)
+        self._backup_ctrl = BackupController(self)
         self._reconnect_ctrl = ReconnectController(self)
         self._local_api = LocalApiController(self)
         self._color_ctrl = ColorController(self)
@@ -349,6 +352,33 @@ class MainWindow(QMainWindow):
         overlay.confirmed.connect(lambda a=address, d=driver_id: self._try_forced_driver(a, d))
         overlay.closed.connect(lambda: setattr(self, "_protocol_offer_overlay", None))
         overlay.open()
+
+    def _confirm_restore(self, title: str, body: str, proceed) -> None:
+        """Ask before a restore, which is the last moment anything can be
+        cancelled — afterwards the settings file has already been replaced."""
+        labels = {
+            "title": title,
+            "message": body,
+            "cancel": self._tr("dialog.cancel"),
+            "confirm": self._tr("backup.confirm_action"),
+        }
+        overlay = ProfileConfirmOverlay(labels, self)
+        overlay.confirmed.connect(proceed)
+        overlay.open()
+
+    def _show_backup_done(self, labels: dict) -> None:
+        """The result of a restore. Every way of dismissing it closes the app:
+        what is still in memory describes settings that no longer exist."""
+        overlay = BackupRestoreResultOverlay(labels, self)
+        overlay.close_requested.connect(self._quit_after_restore)
+        overlay.open()
+
+    def _quit_after_restore(self) -> None:
+        # The ordinary shutdown — BLE, the API and the automations all stop the
+        # way they always do. Only the saving is gone, and that is refused in
+        # the storage layer rather than here, where a controller could miss it.
+        self._force_quit_requested = True
+        self.close()
 
     def _try_forced_driver(self, address: str, driver_id: str) -> None:
         self._log(self._tr("protocol.trying_log"))
@@ -790,6 +820,8 @@ class MainWindow(QMainWindow):
         self.report_device_button.clicked.connect(self._report_unsupported_device)
         self.export_diagnostics_button.clicked.connect(self._export_diagnostics_report)
         self.export_scan_button.clicked.connect(self._diagnostics_ctrl.export_scan_snapshot)
+        self.export_backup_button.clicked.connect(self._backup_ctrl.export_backup)
+        self.import_backup_button.clicked.connect(self._backup_ctrl.import_backup)
         self.show_logs_button.clicked.connect(self._show_logs_overlay)
 
     def _wire_schedule_events(self):
