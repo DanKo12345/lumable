@@ -29,6 +29,10 @@ TRIGGER_APP_FOREGROUND = "app_foreground"  # stateful: that app is in front
 TRIGGER_NO_INPUT = "no_input"  # stateful: no keyboard/mouse input for N minutes
 TRIGGER_LUMABLE_START = "lumable_start"  # edge: the app launched
 TRIGGER_STRIP_CONNECTED = "strip_connected"  # edge: the main strip connected
+TRIGGER_WINDOWS_LOCKED = "windows_locked"  # edge: the workstation was locked
+TRIGGER_WINDOWS_UNLOCKED = "windows_unlocked"  # edge: it was unlocked
+TRIGGER_WINDOWS_SLEEP = "windows_sleep"  # edge: the machine is going to sleep
+TRIGGER_WINDOWS_WAKE = "windows_wake"  # edge: it came back
 TRIGGER_ALWAYS = "always"  # stateful: always true — the App Trigger fallback
 
 TRIGGER_KINDS = (
@@ -37,6 +41,10 @@ TRIGGER_KINDS = (
     TRIGGER_NO_INPUT,
     TRIGGER_LUMABLE_START,
     TRIGGER_STRIP_CONNECTED,
+    TRIGGER_WINDOWS_LOCKED,
+    TRIGGER_WINDOWS_UNLOCKED,
+    TRIGGER_WINDOWS_SLEEP,
+    TRIGGER_WINDOWS_WAKE,
     TRIGGER_ALWAYS,
 )
 
@@ -45,7 +53,18 @@ TRIGGER_KINDS = (
 # spot. Mixing the two was the flaw in the on_exit design: leaving app A and
 # entering app B would have applied A's exit scene before B's scene.
 STATEFUL_TRIGGERS = (TRIGGER_APP_FOREGROUND, TRIGGER_NO_INPUT, TRIGGER_ALWAYS)
-EDGE_TRIGGERS = (TRIGGER_TIME, TRIGGER_LUMABLE_START, TRIGGER_STRIP_CONNECTED)
+EDGE_TRIGGERS = (
+    TRIGGER_TIME,
+    TRIGGER_LUMABLE_START,
+    TRIGGER_STRIP_CONNECTED,
+    # The machine tells us these happened; there is no state to poll for. Sleep
+    # in particular is a moment, not a condition — by the time it could be
+    # observed as one, nothing is running to observe it.
+    TRIGGER_WINDOWS_LOCKED,
+    TRIGGER_WINDOWS_UNLOCKED,
+    TRIGGER_WINDOWS_SLEEP,
+    TRIGGER_WINDOWS_WAKE,
+)
 
 # ── actions ───────────────────────────────────────────────────────────────
 ACTION_APPLY_SCENE = "apply_scene"

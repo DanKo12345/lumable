@@ -46,6 +46,10 @@ from app.automation.controller import (
     TRIGGER_NO_INPUT,
     TRIGGER_STRIP_CONNECTED,
     TRIGGER_TIME,
+    TRIGGER_WINDOWS_LOCKED,
+    TRIGGER_WINDOWS_SLEEP,
+    TRIGGER_WINDOWS_UNLOCKED,
+    TRIGGER_WINDOWS_WAKE,
     Rule,
 )
 from app.automation_rule_form import (
@@ -82,6 +86,10 @@ _TRIGGER_CHOICE_KEYS = (
     (TRIGGER_NO_INPUT, "idle"),
     (TRIGGER_LUMABLE_START, "start"),
     (TRIGGER_STRIP_CONNECTED, "connected"),
+    (TRIGGER_WINDOWS_LOCKED, "windows_locked"),
+    (TRIGGER_WINDOWS_UNLOCKED, "windows_unlocked"),
+    (TRIGGER_WINDOWS_SLEEP, "windows_sleep"),
+    (TRIGGER_WINDOWS_WAKE, "windows_wake"),
     (TRIGGER_ALWAYS, "always"),
 )
 
@@ -93,9 +101,23 @@ _TRIGGER_TILES = {
     TRIGGER_NO_INPUT: ("moon", "#8f9bff"),
     TRIGGER_LUMABLE_START: ("power", "#72c7b7"),
     TRIGGER_STRIP_CONNECTED: ("device", "#72c7b7"),
+    TRIGGER_WINDOWS_LOCKED: ("lock", "#8f9bff"),
+    TRIGGER_WINDOWS_UNLOCKED: ("lock-open", "#8fbfff"),
+    TRIGGER_WINDOWS_SLEEP: ("moon", "#8f9bff"),
+    TRIGGER_WINDOWS_WAKE: ("sunrise", "#ffb066"),
     TRIGGER_ALWAYS: ("circle-dot", "#a9b0bd"),
 }
 _FALLBACK_TILE = ("workflow", "#a9b0bd")
+
+# The Windows session events read as sentences of their own; keeping them in a
+# map rather than four more branches keeps trigger_text a list of special cases
+# that is actually special.
+_WINDOWS_TRIGGER_TEXT = {
+    TRIGGER_WINDOWS_LOCKED: "automations.trigger_windows_locked",
+    TRIGGER_WINDOWS_UNLOCKED: "automations.trigger_windows_unlocked",
+    TRIGGER_WINDOWS_SLEEP: "automations.trigger_windows_sleep",
+    TRIGGER_WINDOWS_WAKE: "automations.trigger_windows_wake",
+}
 
 # How many journal entries the card shows. The file keeps 300; a screen that listed
 # them all would be a log viewer, and the question this card answers — "what did it
@@ -137,6 +159,8 @@ def trigger_text(rule: Rule, tr: Any) -> str:
         return tr("automations.trigger_start")
     if trigger.kind == TRIGGER_STRIP_CONNECTED:
         return tr("automations.trigger_connected")
+    if trigger.kind in _WINDOWS_TRIGGER_TEXT:
+        return tr(_WINDOWS_TRIGGER_TEXT[trigger.kind])
     return tr("automations.trigger_always")
 
 

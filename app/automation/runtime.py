@@ -94,6 +94,22 @@ BACKGROUND_TIMEOUT_MS = 45_000
 # Edge events the engine understands, raised by the app rather than polled.
 EVENT_APP_START = "lumable_start"
 EVENT_STRIP_CONNECTED = "strip_connected"
+# Raised by the Windows session listener. Same shape as the two above: a moment
+# the app is told about, queued for the next tick rather than acted on inline.
+EVENT_WINDOWS_LOCKED = "windows_locked"
+EVENT_WINDOWS_UNLOCKED = "windows_unlocked"
+EVENT_WINDOWS_SLEEP = "windows_sleep"
+EVENT_WINDOWS_WAKE = "windows_wake"
+# How long a wake event waits for Bluetooth to come back before it is dropped.
+# Long enough for a normal reconnect, short enough that the light never comes on
+# by itself well after the person has settled in.
+WAKE_GRACE_SECONDS = 45.0
+WINDOWS_EVENTS = (
+    EVENT_WINDOWS_LOCKED,
+    EVENT_WINDOWS_UNLOCKED,
+    EVENT_WINDOWS_SLEEP,
+    EVENT_WINDOWS_WAKE,
+)
 
 # What the pause looks like from outside. "Pending" and "ending" are the states
 # where this app and the machine disagree, and a UI that collapses them into
@@ -187,6 +203,7 @@ class AutomationRuntime(QObject):
         self._dispatcher = AutomationDispatcher(self._engine, self, self._journal)
         self._idle_provider = idle_provider or idle_seconds
         self._pending: list[str] = []
+        self._held_wake_since: float | None = None
         # What the rules were last tick. The engine remembers which stateful rule is
         # in force, and that memory is about a rule as it was — see _note_rules.
         self._known: tuple[Rule, ...] | None = None
@@ -242,6 +259,20 @@ class AutomationRuntime(QObject):
         """
         if connected:
             self._pending.append(EVENT_STRIP_CONNECTED)
+
+    def note_windows_event(self, event: str) -> bool:
+        """The workstation locked, unlocked, slept or woke.
+
+        Queued like every other edge event rather than acted on where it
+        arrives: it comes in on a native message, and running a rule from there
+        would put BLE work inside a Windows message handler. Returns whether the
+        event was one we know — an unknown name is dropped rather than queued,
+        so a typo cannot sit in the queue forever.
+        """
+        if event not in WINDOWS_EVENTS:
+            return False
+        self._pending.append(event)
+        return True
 
     def pause(self, seconds: int = 3600) -> bool:
         """The user took over by hand; hold the automations off for a while.
@@ -350,14 +381,51 @@ class AutomationRuntime(QObject):
             return
         rules = self._runtime_rules(automations)
         events: list[Event] = [
-            Event(kind=kind, occurred_at=datetime.now()) for kind in self._pending
+            Event(kind=kind, occurred_at=datetime.now()) for kind in self._take_pending()
         ]
-        self._pending.clear()
         if rules:
             self._dispatcher.tick(
                 rules, self._snapshot(settings), events, monotonic_now=monotonic()
             )
         self._tick_background(settings, automations)
+
+    def _take_pending(self) -> list[str]:
+        """The edge events to act on now, holding back a wake the link cannot serve.
+
+        Waking is the one case where the event and the ability to act on it are
+        seconds apart: Windows says "awake" while Bluetooth is still coming back,
+        and a rule fired there would be skipped as disconnected and never run —
+        which for "restore my light when I wake" is the whole feature missing.
+        So a wake waits for the strip, but not forever: past the deadline it is
+        dropped, because a scene applied two minutes after someone sat down is a
+        light turning on by itself.
+        """
+        pending, self._pending = self._pending, []
+        if self._connected():
+            self._held_wake_since = None
+            return pending
+
+        now = monotonic()
+        deliver: list[str] = []
+        held: list[str] = []
+        for kind in pending:
+            if kind != EVENT_WINDOWS_WAKE:
+                # Locking and sleeping usually turn the light off, and holding
+                # those until a strip that is going away comes back would leave
+                # it on all night.
+                deliver.append(kind)
+                continue
+            if self._held_wake_since is None:
+                self._held_wake_since = now
+            if now - self._held_wake_since <= WAKE_GRACE_SECONDS:
+                held.append(kind)
+            else:
+                # Let go rather than delivered: past the deadline this would be
+                # a rule firing at a strip that is still not there, and the next
+                # wake deserves its own grace rather than this one's leftovers.
+                self._held_wake_since = None
+        self._pending.extend(held)
+        return deliver
 
     def _note_rules(self, rules: tuple[Rule, ...] | None) -> None:
         """Notice that the rules are not the ones the engine has been reasoning about.
@@ -574,12 +642,15 @@ class AutomationRuntime(QObject):
         finally:
             run.lock.release()
 
+    def _connected(self) -> bool:
+        return bool(getattr(self._host, "_is_connected", False))
+
     def _snapshot(self, settings: dict[str, Any]) -> Snapshot:
         return Snapshot(
             now=datetime.now(),
             foreground_app=self._foreground(),
             idle_seconds=self._idle(),
-            connected=bool(getattr(self._host, "_is_connected", False)),
+            connected=self._connected(),
             # Checked, so a rule pointing at a deleted scene is reported as such
             # rather than tried and failed.
             available_scene_ids=frozenset(

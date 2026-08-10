@@ -53,6 +53,10 @@ from app.automation.rules import (
     TRIGGER_NO_INPUT,
     TRIGGER_STRIP_CONNECTED,
     TRIGGER_TIME,
+    TRIGGER_WINDOWS_LOCKED,
+    TRIGGER_WINDOWS_SLEEP,
+    TRIGGER_WINDOWS_UNLOCKED,
+    TRIGGER_WINDOWS_WAKE,
     Rule,
     rule_to_dict,
     validate_rule,
@@ -95,6 +99,10 @@ __all__ = [
     "TRIGGER_NO_INPUT",
     "TRIGGER_STRIP_CONNECTED",
     "TRIGGER_TIME",
+    "TRIGGER_WINDOWS_LOCKED",
+    "TRIGGER_WINDOWS_SLEEP",
+    "TRIGGER_WINDOWS_UNLOCKED",
+    "TRIGGER_WINDOWS_WAKE",
     "AppliedState",
     "AutomationController",
     "HandoffResult",
@@ -190,6 +198,17 @@ class AutomationController(QObject):
         """The main strip connected. Passed along as an edge the engine can use."""
         if self._runtime is not None:
             self._runtime.note_connected(connected)
+
+    def note_windows_event(self, event: str) -> bool:
+        """The workstation locked, unlocked, slept or woke.
+
+        Dropped when the engine is not running: there is nothing to hold it for,
+        and a queue that outlived the engine would replay yesterday's wake at
+        the next start.
+        """
+        if self._runtime is None:
+            return False
+        return self._runtime.note_windows_event(event)
 
     def is_running(self) -> bool:
         return self._runtime is not None

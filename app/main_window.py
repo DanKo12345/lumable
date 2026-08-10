@@ -102,6 +102,7 @@ from app.widgets.onboarding_overlay import OnboardingOverlay
 from app.widgets.styled_tooltip import TooltipManager
 from app.window_state_controller import WindowStateController
 from app.windows_motion import windows_motion_reduced
+from app.windows_session_controller import WindowsSessionController
 
 
 def _startup_services_disabled() -> bool:
@@ -249,6 +250,10 @@ class MainWindow(QMainWindow):
         # the Windows tasks and the journal. The window asks it for what it needs and
         # is told when something has been applied.
         self._automations = AutomationController(self, lambda: self._local_api.backend(), parent=self)
+        # Its own listener and its own registration, kept apart from the hotkey
+        # one on purpose: Qt calls every native filter in turn, so two cost
+        # nothing, while one shared owner would put a bug in either into both.
+        self._windows_session = WindowsSessionController(self)
         self._automations.applied.connect(self._reflect_automation_state)
         self._automation_ui = AutomationUiController(self)
         self._aurora = AuroraBackground(self)
@@ -1486,10 +1491,19 @@ class MainWindow(QMainWindow):
         self._ble.connected_changed.connect(
             lambda connected, _address: self._automations.note_connected(connected)
         )
+        # Locking, unlocking, sleeping and waking arrive on a native message and
+        # are queued for the engine's next tick — never acted on where they
+        # arrive, which would put BLE work inside a Windows message handler.
+        self._windows_session.session_event.connect(self._automations.note_windows_event)
+        self._windows_session.start()
         schedule_first_sync(self._automations)
 
     def _stop_automations(self) -> None:
         """Stop the engine, once, however many times a close is attempted."""
+        # Hand the session registration back first: past this point the window is
+        # going away, and a notification delivered to a dead handle is the kind
+        # of thing that only shows up on someone else's machine.
+        self._windows_session.stop()
         self._automation_ui.stop()
         try:
             self._automations.stop()
