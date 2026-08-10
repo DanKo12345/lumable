@@ -12,6 +12,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QAbstractNativeEventFilter
 from PySide6.QtWidgets import QApplication, QWidget
 
 from app.automation.runtime import (
@@ -29,6 +30,11 @@ from app.windows_session import (
     WTS_SESSION_UNLOCK,
 )
 from app.windows_session_controller import WindowsSessionController
+
+
+def test_native_filter_base_is_first_in_the_mro() -> None:
+    """PySide6 silently skips filters whose QObject base comes first."""
+    assert WindowsSessionController.__bases__[0] is QAbstractNativeEventFilter
 
 
 def _require_real_window(controller) -> None:

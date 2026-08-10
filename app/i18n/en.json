@@ -951,7 +951,7 @@
         "automations.action_scene": "Apply “{scene}”",
         "automations.action_scene_missing": "Apply a scene that no longer exists",
         "automations.tasks_ok": "Windows wake-ups are up to date.",
-        "automations.tasks_none": "No background rules, so Windows has nothing to wake for.",
+        "automations.tasks_none": "Rules run while LumaBLE is open.",
         "automations.tasks_error": "Windows refused a wake-up task: {detail}",
         "automations.tasks_unavailable": "Windows tasks are unavailable on this machine.",
         "automations.bridge_title": "Older schedule tasks",

@@ -24,6 +24,12 @@ from PySide6.QtGui import QAccessible
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from app.automation.rules import (
+    TRIGGER_WINDOWS_LOCKED,
+    TRIGGER_WINDOWS_SLEEP,
+    TRIGGER_WINDOWS_UNLOCKED,
+    TRIGGER_WINDOWS_WAKE,
+)
 from app.automation_rule_form import (
     CHOICE_POWER_OFF,
     CHOICE_SCENE,
@@ -112,6 +118,22 @@ def test_stopping_the_automation_ui_closes_its_editor(screen) -> None:
 
     assert editor.isHidden()
     assert host._automation_ui._editor is None
+
+
+def test_windows_events_are_offered_in_the_real_trigger_combo(screen) -> None:
+    """A trigger supported by the engine is unusable until the editor offers it."""
+    host, _controller = screen
+    host.automations_add_button.click()
+    _pump()
+    combo = _editor(host).trigger_combo
+
+    offered = {combo.itemData(index) for index in range(combo.count())}
+    assert {
+        TRIGGER_WINDOWS_LOCKED,
+        TRIGGER_WINDOWS_UNLOCKED,
+        TRIGGER_WINDOWS_SLEEP,
+        TRIGGER_WINDOWS_WAKE,
+    } <= offered
 
 
 def test_editing_a_rule_loads_it(screen) -> None:

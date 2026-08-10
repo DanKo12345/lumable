@@ -30,7 +30,7 @@ from app.windows_session import (
 _NOTIFY_FOR_THIS_SESSION = 0
 
 
-class WindowsSessionController(QObject, QAbstractNativeEventFilter):
+class WindowsSessionController(QAbstractNativeEventFilter, QObject):
     """Emits one signal per session event, at most once per event per moment."""
 
     locked = Signal()
@@ -42,7 +42,12 @@ class WindowsSessionController(QObject, QAbstractNativeEventFilter):
     session_event = Signal(str)
 
     def __init__(self, host: Any) -> None:
-        super().__init__(host)
+        # PySide6 only dispatches native messages when the event-filter base is
+        # first in the MRO. QObject first installs successfully but is never
+        # called, which makes WTS registration look healthy while every real
+        # lock, unlock, sleep and wake event disappears.
+        QAbstractNativeEventFilter.__init__(self)
+        QObject.__init__(self, host)
         self._host = host
         self._events = SessionEvents()
         self._registered_hwnd: int | None = None

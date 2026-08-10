@@ -951,7 +951,7 @@
         "automations.action_scene": "应用“{scene}”",
         "automations.action_scene_missing": "应用一个已不存在的场景",
         "automations.tasks_ok": "Windows 唤醒任务已是最新。",
-        "automations.tasks_none": "没有后台规则，Windows 无需唤醒。",
+        "automations.tasks_none": "规则会在 LumaBLE 运行时执行。",
         "automations.tasks_error": "Windows 拒绝了唤醒任务：{detail}",
         "automations.tasks_unavailable": "此电脑上无法使用 Windows 任务。",
         "automations.bridge_title": "旧的定时任务",

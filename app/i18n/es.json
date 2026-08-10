@@ -951,7 +951,7 @@
         "automations.action_scene": "Aplicar «{scene}»",
         "automations.action_scene_missing": "Aplicar una escena que ya no existe",
         "automations.tasks_ok": "Las tareas de Windows están al día.",
-        "automations.tasks_none": "Sin reglas en segundo plano, Windows no tiene nada que despertar.",
+        "automations.tasks_none": "Las reglas se ejecutan mientras LumaBLE está abierto.",
         "automations.tasks_error": "Windows rechazó una tarea: {detail}",
         "automations.tasks_unavailable": "Las tareas de Windows no están disponibles en este equipo.",
         "automations.bridge_title": "Tareas de horario anteriores",

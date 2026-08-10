@@ -951,7 +951,7 @@
         "automations.action_scene": "Применить «{scene}»",
         "automations.action_scene_missing": "Применить сцену, которой больше нет",
         "automations.tasks_ok": "Задачи Windows в порядке.",
-        "automations.tasks_none": "Фоновых правил нет — будить Windows незачем.",
+        "automations.tasks_none": "Правила выполняются, пока LumaBLE запущена.",
         "automations.tasks_error": "Windows отказал в задаче: {detail}",
         "automations.tasks_unavailable": "Задачи Windows на этом компьютере недоступны.",
         "automations.bridge_title": "Прежние задачи расписания",
