@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from app import scene_store
 from app.app_info import APP_NAME
 from app.feature_gate import can_use
-from app.localization import localization_manager
 
 if TYPE_CHECKING:
     from app.main_window import MainWindow
@@ -92,13 +92,82 @@ class TrayController:
             self._quick_menu.addAction(unlock)
             return
 
+        # Read from the app, never remembered: the menu is rebuilt on every open
+        # precisely so it cannot show a state the strip left behind.
+        self._quick_menu.addAction(self._status_action())
+        self._quick_menu.addSeparator()
+
+        connected = bool(self._host._is_connected)
         power_text = self._host._tr("color.power_off") if self._host.power_button.isChecked() else self._host._tr("color.power_on")
         power_action = QAction(power_text, self._quick_menu)
+        power_action.setEnabled(connected)
         power_action.triggered.connect(self.toggle_power)
         self._quick_menu.addAction(power_action)
         self._quick_menu.addMenu(self._brightness_menu())
+        self._quick_menu.addSeparator()
+        self._quick_menu.addAction(self._mode_action("ambient_sync", "tray.screen_sync", self._host._ambient_ui))
+        self._quick_menu.addAction(self._mode_action("music_sync", "tray.music", self._host._music_ui))
+        self._quick_menu.addSeparator()
+        self._quick_menu.addMenu(self._scenes_menu())
         self._quick_menu.addMenu(self._recent_colors_menu())
-        self._quick_menu.addMenu(self._profiles_menu())
+
+    def _status_action(self) -> QAction:
+        """The connection, as the app currently understands it."""
+        host = self._host
+        if host._is_connected:
+            key = "tray.status_connected"
+        elif getattr(host, "_reconnecting", False) or getattr(host, "_connect_in_progress", False):
+            key = "tray.status_connecting"
+        else:
+            key = "tray.status_disconnected"
+        action = QAction(host._tr(key), self._quick_menu)
+        action.setEnabled(False)
+        return action
+
+    def _mode_action(self, feature: str, label_key: str, owner) -> QAction:
+        """One of the two streaming modes, checked when it is actually running.
+
+        Nothing is set optimistically: the tick comes from the owner's
+        ``is_running`` at the moment the menu is built, so a start that a licence
+        or a missing connection refused never leaves a tick behind. The reason a
+        mode is unavailable is named — but "the other mode is on" is not one of
+        them, because switching between them is allowed and the owners already
+        stop each other.
+        """
+        host = self._host
+        action = QAction(host._tr(label_key), self._quick_menu)
+        action.setCheckable(True)
+        action.setChecked(bool(owner.is_running()))
+        if not can_use(feature):
+            action.setEnabled(False)
+            action.setToolTip(host._tr("tray.reason_pro"))
+        elif not host._is_connected and not owner.is_running():
+            action.setEnabled(False)
+            action.setToolTip(host._tr("tray.reason_disconnected"))
+        action.triggered.connect(lambda _checked=False, target=owner: target.toggle())
+        return action
+
+    def _scenes_menu(self) -> QMenu:
+        host = self._host
+        menu = QMenu(host._tr("tray.scenes"), self._quick_menu)
+        settings = host._settings if isinstance(host._settings, dict) else {}
+        scenes = scene_store.recent_scenes(settings, limit=6)
+        if not scenes:
+            empty = QAction(host._tr("tray.empty"), menu)
+            empty.setEnabled(False)
+            menu.addAction(empty)
+            return menu
+        for scene in scenes:
+            action = QAction(str(scene.get("name") or ""), menu)
+            action.setEnabled(bool(host._is_connected))
+            action.triggered.connect(
+                lambda _checked=False, scene_id=scene["scene_id"]: self.apply_scene(scene_id)
+            )
+            menu.addAction(action)
+        return menu
+
+    def apply_scene(self, scene_id: str) -> None:
+        self._host._scene_ui.apply_scene(scene_id)
 
     def _brightness_menu(self) -> QMenu:
         menu = QMenu(self._host._tr("tray.brightness"), self._quick_menu)
@@ -124,20 +193,6 @@ class TrayController:
             action.triggered.connect(
                 lambda _checked=False, r=red, g=green, b=blue: self.apply_color(r, g, b)
             )
-            menu.addAction(action)
-        return menu
-
-    def _profiles_menu(self) -> QMenu:
-        menu = QMenu(self._host._tr("tray.profiles"), self._quick_menu)
-        profiles = list(self._host._profile_controller.profiles)[:10]
-        if not profiles:
-            empty = QAction(self._host._tr("tray.empty"), menu)
-            empty.setEnabled(False)
-            menu.addAction(empty)
-            return menu
-        for profile in profiles:
-            action = QAction(localization_manager.profile_name(profile), menu)
-            action.triggered.connect(lambda _checked=False, payload=profile: self.apply_profile(payload))
             menu.addAction(action)
         return menu
 
@@ -179,9 +234,6 @@ class TrayController:
             self._host.green_slider.setValue(green)
             self._host.blue_slider.setValue(blue)
         self._host._apply_current_color()
-
-    def apply_profile(self, profile: dict) -> None:
-        self._host._profile_actions.apply_profile_payload(profile, announce_load=True)
 
     def quit_app(self) -> None:
         self._host._force_quit_requested = True

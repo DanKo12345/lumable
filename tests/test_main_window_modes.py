@@ -655,7 +655,10 @@ def test_tray_quick_controls_show_pro_actions(monkeypatch) -> None:
         assert window._tr("color.power_off") in texts
         assert window._tr("tray.brightness") in texts
         assert window._tr("tray.recent_colors") in texts
-        assert window._tr("tray.profiles") in texts
+        # Scenes rather than colour profiles: a scene is what the user builds
+        # and names, and it is what the tray is asked for away from the window.
+        assert window._tr("tray.scenes") in texts
+        assert window._tr("tray.profiles") not in texts
     finally:
         window._ble.shutdown()
         window.close()

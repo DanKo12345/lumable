@@ -138,6 +138,19 @@ class AmbientUiController:
         self._toggle()
         return self.is_running()
 
+    def toggle(self) -> bool:
+        """Start if stopped, stop if running. Returns whether it now runs.
+
+        The one place that decision lives, so the tray menu and a global hotkey
+        cannot drift apart from each other or from the card's own button — and
+        neither of them has to know about the licence gate, the connection or
+        the other modes, all of which ``activate`` already handles.
+        """
+        if self.is_running():
+            self.stop_if_running()
+            return False
+        return self.activate()
+
     def shutdown(self) -> None:
         self._ambient.stop()
 

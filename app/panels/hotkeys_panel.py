@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from app.hotkeys import ACTIONS
+from app.hotkeys import ACTIONS, SUGGESTED_HOTKEYS
 from app.panels.list_rows import BTN_H, BTN_W, divider, list_container, list_row, plain_row
 from app.panels.types import PanelHost
 from app.widgets import GlassCard
@@ -34,6 +34,7 @@ def build_hotkeys_section(host: PanelHost) -> GlassCard:
     controls.setSpacing(0)
     host.hotkey_inputs = {}
     host.hotkey_action_labels = {}
+    host.hotkey_error_labels = {}
     for action in ACTIONS:
         row, row_layout, label = plain_row(host, host._tr(f"hotkeys.action.{action}"))
         field = HotkeyCaptureEdit()
@@ -41,10 +42,33 @@ def build_hotkeys_section(host: PanelHost) -> GlassCard:
         field.setMinimumHeight(host._control_height)
         field.setMinimumWidth(host._sz(250))
         field.setMaximumWidth(host._sz(420))
-        field.setPlaceholderText(host._tr("hotkeys.capture_hint"))
+        # A suggestion for an action that ships unassigned, shown the way every
+        # placeholder is — greyed and gone the moment anything is typed, so it
+        # cannot be mistaken for a combination the app has actually claimed.
+        field.setPlaceholderText(
+            SUGGESTED_HOTKEYS.get(action) or host._tr("hotkeys.capture_hint")
+        )
         host.hotkey_inputs[action] = field
+
+        # The message sits under its own field. A shared line, or a dialog,
+        # would make one bad combination look like a problem with all of them —
+        # and only this row changes height when something is wrong.
+        error = QLabel()
+        error.setObjectName("hotkeyError")
+        error.setProperty("state", "error")
+        error.setWordWrap(True)
+        error.setMaximumWidth(host._sz(420))
+        error.setVisible(False)
+        host.hotkey_error_labels[action] = error
+
+        column = QVBoxLayout()
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(host._sz(4))
+        column.addWidget(field)
+        column.addWidget(error)
+
         host.hotkey_action_labels[action] = label
-        row_layout.addWidget(field, 0, Qt.AlignVCenter)
+        row_layout.addLayout(column)
         controls.addWidget(row)
         if action != ACTIONS[-1]:
             controls.addWidget(divider(host))

@@ -14,6 +14,8 @@ ACTIONS: tuple[str, ...] = (
     "brightness_down",
     "next_scene",
     "prev_scene",
+    "toggle_screen_sync",
+    "toggle_music",
 )
 
 # Sensible defaults — short two-key combos (one modifier) for convenience.
@@ -24,6 +26,19 @@ DEFAULT_HOTKEYS: dict[str, str] = {
     "brightness_down": "Alt+PageDown",
     "next_scene": "Alt+N",
     "prev_scene": "Alt+B",
+    # Deliberately unassigned. A global hotkey is taken from the whole system,
+    # so shipping a default here would seize a common combination from whatever
+    # the user already uses it for — silently, on upgrade. Suggested combos are
+    # offered in the UI; nothing is claimed until the user says so.
+    "toggle_screen_sync": "",
+    "toggle_music": "",
+}
+
+# Shown as a hint next to an unassigned action, never applied on the user's
+# behalf.
+SUGGESTED_HOTKEYS: dict[str, str] = {
+    "toggle_screen_sync": "Ctrl+Alt+S",
+    "toggle_music": "Ctrl+Alt+M",
 }
 
 # Windows RegisterHotKey modifier flags.
@@ -118,3 +133,40 @@ def format_hotkey(hotkey: Hotkey) -> str:
     ordered = [_MOD_LABEL[m] for m in _MOD_ORDER if m in hotkey.mods]
     ordered.append(hotkey.key if len(hotkey.key) == 1 or hotkey.key.startswith("F") else hotkey.key.title())
     return "+".join(ordered)
+
+
+def registrable(bindings: dict[str, str]) -> list[tuple[str, str, int, int]]:
+    """The bindings that can actually be registered, as (action, spec, mods, vk).
+
+    Unassigned and unparseable specs are dropped here rather than at the call
+    site, so "empty means no global hotkey" is a property of the model and not
+    of one loop in the Windows layer.
+    """
+    plan: list[tuple[str, str, int, int]] = []
+    for action, spec in bindings.items():
+        hotkey = parse_hotkey(spec)
+        if hotkey is None:
+            continue
+        vk = key_to_vk(hotkey.key)
+        if vk is None:
+            continue
+        plan.append((action, spec, to_win_modifiers(hotkey.mods), vk))
+    return plan
+
+
+def resolve_binding(saved: dict, action: str) -> str:
+    """The combination an action should have, given what was saved.
+
+    Three states that must stay apart, because the difference between the last
+    two is the difference between a preference and a bug:
+
+    * the action is **absent** — nothing was ever decided, so the default
+      applies. This is what an upgrade from an older settings file looks like.
+    * the action is present and **empty** — the user turned it off. Restoring the
+      default here would hand a global combination back to an app that was told
+      to let go of it, and the next migration would do it again.
+    * the action is present and set — that is the answer.
+    """
+    if not isinstance(saved, dict) or action not in saved:
+        return DEFAULT_HOTKEYS.get(action, "")
+    return str(saved.get(action) or "").strip()

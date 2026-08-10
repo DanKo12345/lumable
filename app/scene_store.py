@@ -16,8 +16,14 @@ from app.scenes import new_scene_id, normalize_scene, unwrap_scene, wrap_scene
 
 SCENES_KEY = "scenes"
 GROUPS_KEY = "device_groups"
+# Recency is kept beside the scenes rather than inside them: a scene record is a
+# versioned, checksummed envelope, so adding a "last applied" field to it would
+# mean a schema change and a migration for something that is not part of what a
+# scene *is*. A list of ids costs nothing and travels with the settings.
+RECENT_SCENES_KEY = "recent_scene_ids"
 _MAX_GROUP_NAME = 40
 MAX_SCENES = 50  # a generous cap so a profile can't grow unbounded
+MAX_RECENT_SCENES = 8
 
 
 # ── scenes ────────────────────────────────────────────────────────────────
@@ -87,7 +93,45 @@ def delete_scene(settings: dict[str, Any], scene_id: str) -> bool:
     entries = _stored_list(settings, SCENES_KEY)
     kept = [e for e in entries if (_read_scene(e) or {}).get("scene_id") != scene_id]
     settings[SCENES_KEY] = kept
+    # A deleted scene must not linger in the recent list: a tray menu offering a
+    # scene that no longer exists is worse than a shorter menu.
+    remaining = [
+        recent for recent in _stored_list(settings, RECENT_SCENES_KEY) if recent != scene_id
+    ]
+    settings[RECENT_SCENES_KEY] = remaining
     return len(kept) != len(entries)
+
+
+# ── recently applied ──────────────────────────────────────────────────────
+def note_scene_applied(settings: dict[str, Any], scene_id: str) -> None:
+    """Move a scene to the front of the recent list.
+
+    Most recent first, no duplicates, bounded. Applying the same scene twice
+    must not push everything else out of a menu that only shows a handful.
+    """
+    scene_id = str(scene_id or "").strip()
+    if not scene_id:
+        return
+    order = [str(item) for item in _stored_list(settings, RECENT_SCENES_KEY) if str(item).strip()]
+    order = [item for item in order if item != scene_id]
+    order.insert(0, scene_id)
+    settings[RECENT_SCENES_KEY] = order[:MAX_RECENT_SCENES]
+
+
+def recent_scenes(settings: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+    """The most recently applied scenes that still exist, newest first.
+
+    Falls back to the saved order when nothing has been applied yet, so the menu
+    is useful on a fresh install rather than empty.
+    """
+    scenes = {scene["scene_id"]: scene for scene in list_scenes(settings)}
+    ordered: list[dict[str, Any]] = []
+    for scene_id in _stored_list(settings, RECENT_SCENES_KEY):
+        scene = scenes.pop(str(scene_id), None)
+        if scene is not None:
+            ordered.append(scene)
+    ordered.extend(scenes.values())
+    return ordered[: max(0, int(limit))]
 
 
 # ── groups ──────────────────────────────────────────────────────────────

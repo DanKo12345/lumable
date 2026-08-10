@@ -189,6 +189,14 @@ class SceneUiController:
             host._log(host._tr("scenes.saved_log", name=name))
             self.refresh()
 
+    def apply_scene(self, scene_id: str) -> None:
+        """Apply a saved scene from outside the card — the tray uses this.
+
+        A narrow door onto the same path the tiles take, so targeting, the
+        report and the recent list cannot start differing between the two.
+        """
+        self._apply_scene(scene_id)
+
     def _apply_scene(self, scene_id: str) -> None:
         scene_id = str(scene_id or "")
         if not scene_id:
@@ -208,6 +216,11 @@ class SceneUiController:
         reached = report.get("targets") or []
         if reached:
             self._set_active_scene(scene_id)
+            # Recorded only when the scene actually reached a strip: a menu of
+            # "recent" scenes that lists ones which failed would be a list of
+            # disappointments.
+            scene_store.note_scene_applied(self._settings(), scene_id)
+            save_settings(self._settings())
             host._log(host._tr("scenes.applied_to_log", name=name, targets=", ".join(reached)))
             return
         # The scene points at a group whose strips are gone or offline — say so

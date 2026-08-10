@@ -6,7 +6,7 @@ from typing import Any
 from PySide6.QtCore import QAbstractNativeEventFilter, QObject
 from PySide6.QtWidgets import QApplication
 
-from app.hotkeys import key_to_vk, parse_hotkey, to_win_modifiers
+from app.hotkeys import registrable
 from app.quick_modes import QUICK_MODES
 
 WM_HOTKEY = 0x0312
@@ -30,6 +30,7 @@ class HotkeyController(QAbstractNativeEventFilter, QObject):
         QObject.__init__(self, host)
         self._host = host
         self._registered: dict[int, str] = {}  # RegisterHotKey id -> action
+        self._failed: dict[str, str] = {}  # action -> the spec the system refused
         self._installed = False
         self._next_id = _FIRST_HOTKEY_ID
 
@@ -40,6 +41,7 @@ class HotkeyController(QAbstractNativeEventFilter, QObject):
     def apply(self, bindings: dict[str, str], *, enabled: bool) -> None:
         """Re-register the action→spec bindings, or clear them when disabled."""
         self.unregister_all()
+        self._failed = {}
         if not enabled or not self.is_supported():
             return
         hwnd = self._hwnd()
@@ -53,23 +55,27 @@ class HotkeyController(QAbstractNativeEventFilter, QObject):
             if app is not None:
                 app.installNativeEventFilter(self)
                 self._installed = True
-        failures: list[str] = []
-        for action, spec in bindings.items():
-            hotkey = parse_hotkey(spec)
-            if hotkey is None:
-                continue
-            vk = key_to_vk(hotkey.key)
-            if vk is None:
-                continue
-            mods = to_win_modifiers(hotkey.mods) | MOD_NOREPEAT
+        failures: list[tuple[str, str]] = []
+        for action, spec, modifiers, vk in registrable(bindings):
+            mods = modifiers | MOD_NOREPEAT
             hotkey_id = self._next_id
             self._next_id += 1
             if user32.RegisterHotKey(ctypes.c_void_p(hwnd), hotkey_id, mods, vk):
                 self._registered[hotkey_id] = action
             else:
-                failures.append(spec)
+                failures.append((action, spec))
+        self._failed = dict(failures)
         if failures:
-            self._log_conflicts(failures)
+            self._log_conflicts([spec for _action, spec in failures])
+
+    def failed_bindings(self) -> dict[str, str]:
+        """Actions whose combination the system refused, action -> spec.
+
+        Kept so the panel can put the message beside the field it belongs to
+        rather than in a log nobody reads, and so a conflict on one action says
+        nothing about the others — which did register and do work.
+        """
+        return dict(self._failed)
 
     def _log_conflicts(self, specs: list[str]) -> None:
         host = self._host
@@ -133,6 +139,13 @@ class HotkeyController(QAbstractNativeEventFilter, QObject):
                 self._cycle_scene(1)
             elif action == "prev_scene":
                 self._cycle_scene(-1)
+            elif action == "toggle_screen_sync":
+                # Through the mode's own toggle, so the licence gate, the
+                # connection check and stopping the other stream all stay in the
+                # one place that already owns them.
+                host._ambient_ui.toggle()
+            elif action == "toggle_music":
+                host._music_ui.toggle()
         except Exception:
             # A hotkey must never crash the app.
             pass
