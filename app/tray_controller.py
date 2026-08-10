@@ -103,13 +103,19 @@ class TrayController:
         power_action.setEnabled(connected)
         power_action.triggered.connect(self.toggle_power)
         self._quick_menu.addAction(power_action)
-        self._quick_menu.addMenu(self._brightness_menu())
+        # Brightness and a recent colour are writes to the strip like any other:
+        # offering them with nothing connected invites a click that does nothing
+        # and says nothing, which reads as the app being broken.
+        brightness = self._quick_menu.addMenu(self._brightness_menu())
+        brightness.setEnabled(connected)
         self._quick_menu.addSeparator()
         self._quick_menu.addAction(self._mode_action("ambient_sync", "tray.screen_sync", self._host._ambient_ui))
         self._quick_menu.addAction(self._mode_action("music_sync", "tray.music", self._host._music_ui))
         self._quick_menu.addSeparator()
-        self._quick_menu.addMenu(self._scenes_menu())
-        self._quick_menu.addMenu(self._recent_colors_menu())
+        scenes = self._quick_menu.addMenu(self._scenes_menu())
+        scenes.setEnabled(connected)
+        colors = self._quick_menu.addMenu(self._recent_colors_menu())
+        colors.setEnabled(connected)
 
     def _status_action(self) -> QAction:
         """The connection, as the app currently understands it."""
@@ -159,7 +165,6 @@ class TrayController:
             return menu
         for scene in scenes:
             action = QAction(str(scene.get("name") or ""), menu)
-            action.setEnabled(bool(host._is_connected))
             action.triggered.connect(
                 lambda _checked=False, scene_id=scene["scene_id"]: self.apply_scene(scene_id)
             )

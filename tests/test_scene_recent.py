@@ -7,6 +7,8 @@ is. Adding a field there would mean a schema change and a migration.
 
 from __future__ import annotations
 
+import pathlib
+
 from app import scene_store
 from app.scenes import make_scene
 
@@ -87,8 +89,8 @@ def test_junk_in_the_stored_list_is_ignored() -> None:
 
 def test_only_a_scene_that_reached_a_strip_becomes_recent(monkeypatch) -> None:
     """A list of "recent" scenes that includes the ones which failed is a list
-    of disappointments. Recording happens on the app's single apply path, so
-    the tray, the tiles and an automation cannot disagree about it."""
+    of disappointments. Recording happens where a person applies a scene — the
+    tiles and the tray share that path, so those two cannot disagree."""
     import pytest
 
     pytest.importorskip("PySide6")
@@ -123,3 +125,20 @@ def test_only_a_scene_that_reached_a_strip_becomes_recent(monkeypatch) -> None:
         window._ble.shutdown()
         window.close()
         app.processEvents()
+
+
+def test_an_automation_does_not_rewrite_the_user_s_recent_list() -> None:
+    """A deliberate decision, not an oversight.
+
+    Automations apply scenes through their own executor, which writes to the
+    strips directly. Wiring them into this list would mean a rule firing every
+    evening pushes out what the person actually chose — and the list exists to
+    answer "what did I use recently", not "what happened recently". The guard is
+    structural because the two paths are separate on purpose: if someone later
+    routes automations through the interactive path, this fails and the decision
+    gets made again rather than by accident.
+    """
+    executor = pathlib.Path("app/automation/ble_executor.py").read_text(encoding="utf-8")
+
+    assert "note_scene_applied" not in executor
+    assert "scene_ui_controller" not in executor

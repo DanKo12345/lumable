@@ -144,9 +144,33 @@ def test_the_scenes_offered_are_the_ones_last_used(window) -> None:
 
 
 def test_scenes_are_not_offered_without_a_strip_to_apply_them_to(window) -> None:
+    """The submenu carries the state: greying every name inside it instead
+    makes the user open a list to find out nothing in it works."""
     scene_store.save_scene(window._settings, make_scene("Read", {"power": True}))
 
     actions = _rebuild(window, connected=False)
-    scenes = _find(actions, window._tr("tray.scenes")).menu()
 
-    assert all(not action.isEnabled() for action in scenes.actions())
+    assert not _find(actions, window._tr("tray.scenes")).isEnabled()
+
+
+def test_nothing_that_writes_to_the_strip_is_offered_without_one(window) -> None:
+    """A click that quietly does nothing reads as the app being broken. Power
+    and scenes already refused; brightness and a saved colour are writes too."""
+    actions = _rebuild(window, connected=False)
+
+    for title in ("tray.brightness", "tray.recent_colors", "tray.scenes"):
+        entry = _find(actions, window._tr(title))
+        assert entry is not None, title
+        assert not entry.isEnabled(), title
+    # The power item is labelled by what the click would do, so look for either.
+    power = _find(actions, window._tr("color.power_on")) or _find(
+        actions, window._tr("color.power_off")
+    )
+    assert power is not None and not power.isEnabled()
+
+
+def test_everything_comes_back_once_a_strip_is_there(window) -> None:
+    actions = _rebuild(window, connected=True)
+
+    for title in ("tray.brightness", "tray.recent_colors"):
+        assert _find(actions, window._tr(title)).isEnabled(), title
