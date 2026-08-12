@@ -1,5 +1,5 @@
 #define MyAppName "LumaBLE"
-#define MyAppVersion "0.3.8"
+#define MyAppVersion "0.3.9"
 #define MyAppPublisher "dollza"
 #define MyAppExeName "LumaBLE.exe"
 

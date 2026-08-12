@@ -14,27 +14,27 @@ def test_report_lists_every_strip_with_its_role_and_state() -> None:
     localization_manager.set_language("en")
     snapshot = {
         "connected": True,
-        "device": {"name": "ELK-BLEDOM 8E", "address": "BE:68:46:09:19:00"},
+        "device": {"name": "Main demo strip", "address": "AA:BB:CC:DD:EE:01"},
         "strips": [
-            {"role": "primary", "name": "ELK-BLEDOM 8E", "address": "BE:68:46:09:19:00", "connected": True},
-            {"role": "extra", "name": "ELK-BLEDOM CE", "address": "BE:68:3D:0C:5C:03", "connected": False},
+            {"role": "primary", "name": "Main demo strip", "address": "AA:BB:CC:DD:EE:01", "connected": True},
+            {"role": "extra", "name": "Extra demo strip", "address": "AA:BB:CC:DD:EE:02", "connected": False},
         ],
     }
 
     report = build_diagnostics_report(snapshot, [], include_crashes=False)
 
     assert "Strips" in report
-    assert "Main: ELK-BLEDOM 8E (BE:68:46:09:19:00) — connected" in report
-    assert "Extra: ELK-BLEDOM CE (BE:68:3D:0C:5C:03) — unavailable" in report
+    assert "Main: Main demo strip (AA:BB:CC:DD:EE:01) — connected" in report
+    assert "Extra: Extra demo strip (AA:BB:CC:DD:EE:02) — unavailable" in report
 
 
 def test_report_omits_the_strips_block_for_a_single_strip() -> None:
     localization_manager.set_language("en")
     snapshot = {
         "connected": True,
-        "device": {"name": "ELK-BLEDOM 8E", "address": "BE:68:46:09:19:00"},
+        "device": {"name": "Main demo strip", "address": "AA:BB:CC:DD:EE:01"},
         "strips": [
-            {"role": "primary", "name": "ELK-BLEDOM 8E", "address": "BE:68:46:09:19:00", "connected": True}
+            {"role": "primary", "name": "Main demo strip", "address": "AA:BB:CC:DD:EE:01", "connected": True}
         ],
     }
 
@@ -297,7 +297,7 @@ def test_diagnostics_report_uses_current_language_for_report_labels() -> None:
         include_crashes=False,
     )
 
-    assert "Версия: 0.3.8" in report
+    assert "Версия: 0.3.9" in report
     assert "Устройство" in report
     assert "Подключено: да" in report
     assert "Поддерживаемые команды" in report

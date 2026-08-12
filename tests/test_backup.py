@@ -23,10 +23,10 @@ from app.backup import (
 _SECRETS = {
     "license": {"license_key": "LUMA-XXXX-YYYY", "license_id": "abc"},
     "api": {"enabled": True, "token": "s3cr3t", "port": 7345},
-    "last_device_address": "BE:68:46:09:19:00",
-    "last_device_name": "ELK-BLEDOM 8E",
+    "last_device_address": "AA:BB:CC:DD:EE:01",
+    "last_device_name": "Demo strip",
     "extra_device_addresses": ["AA:BB:CC:DD:EE:FF"],
-    "device_names": {"BE:68:46:09:19:00": "Desk"},
+    "device_names": {"AA:BB:CC:DD:EE:01": "Desk"},
     "last_state": {"power": True},
     "capture_compatibility": {"probed": True},
     "window_width": 1280,
@@ -40,7 +40,7 @@ def _settings(**extra) -> dict:
         "scenes": [{"scene_id": "s1", "name": "Read"}],
         "automations": {"enabled": True, "rules": [{"id": "r1"}]},
         "device_groups": [
-            {"group_id": "g1", "name": "Desk", "members": ["BE:68:46:09:19:00"]}
+            {"group_id": "g1", "name": "Desk", "members": ["AA:BB:CC:DD:EE:01"]}
         ],
         "hotkeys": {"enabled": True, "bindings": {"toggle_power": "Alt+L"}},
         "theme_mode": "dark",
@@ -59,7 +59,7 @@ def test_no_secret_or_machine_detail_reaches_the_file() -> None:
 
     for key in WITHHELD_KEYS:
         assert key not in document["data"], key
-    for secret in ("LUMA-XXXX-YYYY", "s3cr3t", "BE:68:46:09:19:00", "ELK-BLEDOM 8E"):
+    for secret in ("LUMA-XXXX-YYYY", "s3cr3t", "AA:BB:CC:DD:EE:01", "Demo strip"):
         assert secret not in text, secret
 
 

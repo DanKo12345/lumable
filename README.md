@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/DanKo12345/lumable/releases">
-    <img alt="Download LumaBLE 0.3.8 beta for Windows" src="https://img.shields.io/badge/Download_for_Windows-0.3.8_beta-2f78d4?style=for-the-badge&logo=windows11&logoColor=white">
+    <img alt="Download LumaBLE 0.3.9 beta for Windows" src="https://img.shields.io/badge/Download_for_Windows-0.3.9_beta-2f78d4?style=for-the-badge&logo=windows11&logoColor=white">
   </a>
 </p>
 
@@ -46,9 +46,11 @@ No hub, no bridge, no account. The controller you already own, driven from the d
 - **Direct light control** — RGB, brightness, colour temperature, power and a HEX/HSV picker.
 - **Scenes and effects** — reusable scenes, quick modes, controller effects and app-rendered animations.
 - **Screen and audio sync** — make the strip follow desktop content or music in real time.
-- **Automations** — react to time, foreground apps, idle time, LumaBLE startup or strip connection.
+- **Automations** — react to time, foreground apps, idle time, strip connection and Windows lock or sleep.
+- **Windows shortcuts** — use tray actions and optional global hotkeys without opening the main window.
 - **Background schedules** — Pro power rules can run through Windows even while LumaBLE is closed.
 - **Local API** — pair a phone on the same network and control lights from a mobile browser.
+- **Portable backup** — move scenes, rules, groups and settings without exporting device addresses or secrets.
 - **Diagnostics** — export controller, protocol and BLE details without digging through log files.
 - **Accessible desktop UI** — keyboard navigation, reduced-motion support, light and dark themes.
 - **Four interface languages** — English, Russian, Spanish and Chinese, detected on first launch.
@@ -139,4 +141,4 @@ support.
 
 Author: `dollza`
 
-Current release: `0.3.8 beta`
+Current release: `0.3.9 beta`

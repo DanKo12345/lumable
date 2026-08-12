@@ -2,6 +2,30 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.3.9] - 2026-08-12
+
+Windows integration and portability: everyday controls now stay close at hand, automations understand the PC's session state, settings can move safely between installations, and Music Sync learns the room instead of reacting to a fixed noise threshold.
+
+### Added
+- Tray actions for connection status, recent scenes, Screen Sync and Music Sync, refreshed immediately before the menu opens.
+- Optional global hotkeys for Screen Sync and Music Sync, with visible invalid or conflicting bindings and no new shortcuts claimed automatically after an update.
+- Automation triggers for Windows lock, unlock, sleep and wake, including a bounded wait for Bluetooth to return after resume.
+- A versioned full backup for portable scenes, rules, groups and settings, with validation, an automatic copy of the current configuration and atomic restoration.
+- Music Sync diagnostics for source, session duration, learned noise floor, detected beats, suppressed blocks and peak level.
+
+### Changed
+- Music Sync now uses an adaptive noise floor with hysteresis, a time-based beat cooldown and bass-share analysis that is less sensitive to changes in overall volume.
+- The existing Beat control keeps its original meaning: it changes flash depth, while sensitivity adapts automatically.
+- Recent scenes record only successful manual applications; recurring automations do not displace the user's choices.
+- Backup and automation messages were simplified and reviewed across English, Russian, Spanish and Chinese.
+
+### Fixed
+- Clearing a global hotkey now leaves it unassigned instead of silently restoring its default.
+- Invalid hotkey input no longer overwrites or re-registers working bindings, and common Screen Sync or Music combinations are suggestions rather than automatic defaults.
+- Windows session events now reach the automation engine through Qt's native event dispatch, and lock/unlock trigger icons are present instead of blank placeholders.
+- Music Sync resets its learned state when the source changes, a session restarts or audio capture fails, and old beat envelopes continue to decay in silence.
+- Restoring a backup freezes every settings writer before shutdown, preventing live controllers from overwriting the restored file.
+
 ## [0.3.8] - 2026-08-07
 
 Live Sync and visual consistency: Screen Sync now explains how it is performing and which frame produced its last colour, while the app's main editing cards share one clearer layout.

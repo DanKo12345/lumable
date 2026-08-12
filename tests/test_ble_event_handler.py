@@ -372,7 +372,7 @@ def test_populate_devices_autoconnects_single_supported_among_unknowns() -> None
     devices = [
         {"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF", "rssi": -50, "supported": True},
         {"name": "Unknown BLE Device", "address": "11:22:33:44:55:66", "rssi": -70, "supported": False},
-        {"name": "net", "address": "AC:93:C4:1B:B9:1D", "rssi": -90, "supported": False},
+        {"name": "net", "address": "AA:BB:CC:DD:EE:03", "rssi": -90, "supported": False},
     ]
 
     handler.populate_devices(devices)

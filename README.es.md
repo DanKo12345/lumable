@@ -10,7 +10,7 @@ avanzadas.
 
 Autor: `dollza`
 
-Versión: `0.3.8 beta`
+Versión: `0.3.9 beta`
 
 Descarga la última build para Windows desde la página de
 [Releases](https://github.com/DanKo12345/lumable/releases).
@@ -32,7 +32,9 @@ Otros idiomas:
 - Efectos BLE integrados con control de velocidad cuando el protocolo lo permite.
 - Perfiles de iluminación reutilizables y modos rápidos.
 - Sincronización con pantalla / Ambient para ajustar la tira al color promedio de la pantalla.
-- Automatizaciones por hora, aplicación en primer plano, inactividad, inicio y conexión de la tira.
+- Automatizaciones por hora, aplicación en primer plano, inactividad, conexión de la tira y eventos de Windows.
+- Acciones rápidas en la bandeja y atajos globales opcionales.
+- Copia portátil de escenas, reglas, grupos y ajustes sin direcciones de dispositivos ni secretos.
 - Reglas Pro de encendido que pueden ejecutarse mediante Windows con LumaBLE cerrado.
 - API local para controlar las luces desde un teléfono en la misma red.
 - Protección de instancia única: una segunda apertura trae la ventana existente al frente.
