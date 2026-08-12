@@ -11,65 +11,6 @@ def _clamp8(value: float) -> int:
     return max(0, min(255, round(value)))
 
 
-def normalize_level(rms: float, *, noise_floor: float = 0.0025, ceiling: float = 0.25) -> float:
-    """Map a raw RMS amplitude to a perceptual 0..1 loudness level.
-
-    Pure (no numpy) so it can be unit-tested. ``rms`` is the root-mean-square of
-    the audio block (roughly 0..1). Below ``noise_floor`` the result is 0
-    (treated as silence); at/above ``ceiling`` it saturates at 1. A square-root
-    curve keeps quiet passages visible without loud ones clipping everything.
-    """
-    if rms <= noise_floor:
-        return 0.0
-    span = max(1e-6, ceiling - noise_floor)
-    linear = min(1.0, (rms - noise_floor) / span)
-    return linear**0.5
-
-
-def gate_level(level: float, gate: float) -> float:
-    """Apply a noise gate to a 0..1 loudness level.
-
-    ``gate`` (0..1) is the threshold as a fraction of full level: anything at or
-    below it becomes 0 (the strip stays at its floor, so faint room noise / hiss
-    doesn't make it react), and the range above the gate is rescaled back to
-    0..1 so real sound still drives the full brightness. Pure and unit-testable.
-    """
-    gate = max(0.0, min(0.95, gate))
-    level = max(0.0, min(1.0, level))
-    if gate <= 0.0:
-        return level
-    if level <= gate:
-        return 0.0
-    return min(1.0, (level - gate) / (1.0 - gate))
-
-
-def update_beat(
-    energy: float,
-    avg: float,
-    env: float,
-    *,
-    sensitivity: float = 1.3,
-    avg_rate: float = 0.1,
-    decay: float = 0.82,
-) -> tuple[float, float, bool]:
-    """Update a simple bass-energy beat detector.
-
-    Tracks a slow running average of the bass energy and fires a beat when a
-    block jumps well above it. Returns ``(new_avg, new_env, is_beat)`` where
-    ``env`` is a 0..1 envelope that snaps to 1 on a beat and decays each call —
-    multiply brightness by it to pulse the strip. The first call just seeds the
-    average (no beat), and a beat won't retrigger until the envelope has faded,
-    so sustained loud bass doesn't strobe. Pure, so it's unit-testable.
-    """
-    if avg <= 0.0:
-        # Warm-up: seed the average from the first reading, never fire on it.
-        return (energy, max(0.0, env * decay), False)
-    is_beat = energy > avg * sensitivity and env < 0.35
-    new_avg = avg + (energy - avg) * avg_rate
-    new_env = 1.0 if is_beat else max(0.0, env * decay)
-    return (new_avg, new_env, is_beat)
-
-
 def bands_to_rgb(
     bass: float,
     mid: float,

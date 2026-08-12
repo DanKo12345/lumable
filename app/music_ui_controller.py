@@ -363,6 +363,9 @@ class MusicUiController:
             "running": self._music.is_running(),
             "errors": self._music.stream_error_count(),
             "last_error": self._music.last_stream_error(),
+            # Survives the stop, so a report exported after switching music off
+            # still describes the run being asked about.
+            "music_sync": self._music.music_report(),
         }
 
     def stop_if_running(self) -> None:

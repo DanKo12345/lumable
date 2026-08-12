@@ -4,11 +4,13 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import lru_cache
+from time import monotonic
 
 from PySide6.QtCore import QObject, Signal
 
 from app.color_stream import ColorStreamEngine
-from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb, gate_level, normalize_level, update_beat
+from app.music_analysis import MusicAnalyzer, MusicSyncReport
+from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb
 
 
 @lru_cache(maxsize=8)
@@ -147,18 +149,38 @@ class MusicController(QObject):
         self._stop = threading.Event()
         self._band_peak = 1e-6
         self._ema: list[float] | None = None
-        # Beat detector state (running bass average + decaying pulse envelope).
-        self._bass_avg = 0.0
-        self._beat_env = 0.0
+        # One source's idea of silence and of a beat. Reset whenever the source
+        # changes or capture restarts — see _reset_analysis.
+        self._analyzer = MusicAnalyzer()
+        self._started_at: float | None = None
+        self._stopped_at: float | None = None
         self.color_sampled.connect(self._engine.set_target)
 
     def options(self) -> MusicOptions:
         return self._options
 
     def configure(self, **changes) -> None:
+        previous = self._options
         self._options = replace(self._options, **changes)
+        if self._options.source != previous.source or self._options.device_name != previous.device_name:
+            # A microphone's floor describes a room and a loopback's a silent
+            # digital line. Carrying one into the other leaves the strip either
+            # deaf or twitching, so the history goes with the source.
+            self._reset_analysis()
         if "smoothing" in changes:
             self._engine.set_smoothing(self._options.smoothing)
+
+    def _reset_analysis(self) -> None:
+        """Forget everything learned about the signal.
+
+        Called on every start and on a capture failure, and by the UI when the
+        source changes: a microphone's floor describes a room and a loopback's
+        describes a silent digital line, so carrying one into the other leaves
+        the strip either deaf or twitching.
+        """
+        self._band_peak = 1e-6
+        self._ema = None
+        self._analyzer.reset()
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -166,10 +188,9 @@ class MusicController(QObject):
     def start(self, sink: Callable[[int, int, int], None]) -> None:
         if self.is_running():
             return
-        self._band_peak = 1e-6
-        self._ema = None
-        self._bass_avg = 0.0
-        self._beat_env = 0.0
+        self._reset_analysis()
+        self._started_at = monotonic()
+        self._stopped_at = None
         self._engine.set_smoothing(self._options.smoothing)
         self._engine.start(sink, initial=(0, 0, 0))
         self._stop.clear()
@@ -178,12 +199,34 @@ class MusicController(QObject):
         thread.start()
 
     def stop(self) -> None:
+        # Noted before the thread is asked to stop, so the reported length is
+        # the run rather than however long the join took.
+        self._stopped_at = monotonic()
         self._stop.set()
         thread = self._thread
         self._thread = None
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1.5)
         self._engine.stop()
+
+    def music_report(self) -> MusicSyncReport:
+        """Numbers for the diagnostics block. No audio, no device names.
+
+        Survives a stop the way the Live Sync report does, so a report exported
+        after switching music off still describes the run being asked about.
+        """
+        stats = self._analyzer.stats
+        started = self._started_at
+        ended = self._stopped_at if self._stopped_at is not None else monotonic()
+        return MusicSyncReport(
+            source=self._options.source,
+            seconds=round(max(0.0, ended - started), 1) if started is not None else 0.0,
+            noise_floor=round(stats.noise_floor, 5),
+            beats=stats.beats,
+            silent_blocks=stats.silent_blocks,
+            blocks=stats.blocks,
+            peak_level=round(stats.peak_level, 3),
+        )
 
     def stream_error_count(self) -> int:
         return self._engine.error_count()
@@ -347,11 +390,16 @@ class MusicController(QObject):
 
     def _process_block(self, block, samplerate: int, options: MusicOptions) -> tuple[int, int, int]:
         bass, mid, treble, rms = analyze_block(block, samplerate)
-        # Detect beats from the *raw* bass (before smoothing) so the transient
-        # survives; the envelope pulses brightness below.
-        self._bass_avg, self._beat_env, _is_beat = update_beat(
-            bass, self._bass_avg, self._beat_env,
-            sensitivity=options.beat_sensitivity, decay=options.beat_decay,
+        # Silence and onsets are judged on the raw block: a transient does not
+        # survive smoothing, and a floor learned from smoothed values would
+        # chase the music instead of the room.
+        reading = self._analyzer.feed(
+            bass=bass,
+            mid=mid,
+            treble=treble,
+            rms=rms,
+            now_ms=monotonic() * 1000.0,
+            manual_gate=self._manual_gate(options),
         )
         # Ease the raw energies toward each reading (EMA) so the colour glides;
         # the factor is the user's "speed": low = calm, high = snappy.
@@ -361,12 +409,10 @@ class MusicController(QObject):
         else:
             for i, value in enumerate((bass, mid, treble, rms)):
                 self._ema[i] += (value - self._ema[i]) * factor
-        bass, mid, treble, rms = self._ema
-        # Noise gate first, so faint sound reads as silence (floor) and doesn't
-        # even get a beat pop; real sound above the gate still drives full range.
-        level = gate_level(normalize_level(rms), options.noise_gate)
+        bass, mid, treble, smooth_rms = self._ema
+        level = self._analyzer.level_for(smooth_rms, self._manual_gate(options))
         if options.beat_strength > 0.0 and level > 0.0:
-            level = min(1.0, level + self._beat_env * options.beat_strength)
+            level = min(1.0, level + reading.envelope * options.beat_strength)
         # Auto-gain the bands against a slowly decaying running peak so the hue
         # reflects the *balance* of frequencies, not absolute volume.
         current = max(bass, mid, treble, 1e-6)
@@ -378,6 +424,15 @@ class MusicController(QObject):
             floor_brightness=options.floor_brightness,
         )
 
+    @staticmethod
+    def _manual_gate(options: MusicOptions) -> float:
+        """The microphone slider as an RMS rather than a fraction.
+
+        Kept in the units the analyser thinks in, and scaled by the same ceiling
+        the loudness curve uses, so a saved 40% still means what it meant.
+        """
+        return max(0.0, min(0.95, options.noise_gate)) * 0.25
+
     def _run(self) -> None:
         try:
             options = self._options
@@ -386,6 +441,9 @@ class MusicController(QObject):
             else:
                 read, close, samplerate = self._open_loopback_reader(options)
         except Exception as exc:
+            # The device never opened, so whatever was learned came from a
+            # different one. Same reasoning as a failure mid-run.
+            self._reset_analysis()
             self.failed.emit(self._capture_error_reason(exc))
             return
         try:
@@ -395,6 +453,9 @@ class MusicController(QObject):
                 red, green, blue = self._process_block(block, samplerate, options)
                 self.color_sampled.emit(red, green, blue)
         except Exception as exc:  # audio device/driver failure — report and stop cleanly.
+            # Whatever was learned came from a device that has just gone wrong;
+            # the next attempt starts from nothing rather than from that.
+            self._reset_analysis()
             self.failed.emit(self._capture_error_reason(exc))
         finally:
             close()

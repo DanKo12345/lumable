@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import pytest
-
-from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb, gate_level, normalize_level, update_beat
+from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb
 
 
 def test_custom_band_colors_recolor_bands() -> None:
@@ -20,14 +18,6 @@ def test_default_colors_are_valid_rgb_triples() -> None:
     for color in DEFAULT_BAND_COLORS:
         assert len(color) == 3
         assert all(0 <= channel <= 255 for channel in color)
-
-
-def test_normalize_level_silence_and_saturation() -> None:
-    assert normalize_level(0.0) == 0.0
-    assert normalize_level(0.001) == 0.0  # below noise floor
-    assert normalize_level(1.0) == 1.0  # well above ceiling -> saturates
-    # Monotonic between floor and ceiling.
-    assert normalize_level(0.05) < normalize_level(0.15)
 
 
 def test_bands_to_rgb_dominant_band_sets_hue() -> None:
@@ -66,47 +56,3 @@ def test_bands_to_rgb_always_clamped() -> None:
             assert 0 <= channel <= 255
 
 
-def test_gate_zero_is_passthrough() -> None:
-    assert gate_level(0.5, 0.0) == 0.5
-    assert gate_level(1.0, 0.0) == 1.0
-
-
-def test_gate_silences_at_or_below_threshold() -> None:
-    assert gate_level(0.05, 0.1) == 0.0
-    assert gate_level(0.10, 0.1) == 0.0
-
-
-def test_gate_rescales_above_threshold() -> None:
-    assert gate_level(0.55, 0.1) == pytest.approx(0.5)  # (0.55-0.1)/0.9
-    assert gate_level(1.0, 0.1) == pytest.approx(1.0)
-
-
-def test_gate_clamps_inputs() -> None:
-    assert gate_level(2.0, 0.0) == 1.0
-    assert gate_level(-1.0, 0.2) == 0.0
-
-
-def test_update_beat_warmup_seeds_average_without_firing() -> None:
-    avg, env, is_beat = update_beat(1.0, 0.0, 0.0)
-    assert avg == 1.0
-    assert env == 0.0
-    assert is_beat is False
-
-
-def test_update_beat_fires_on_spike() -> None:
-    # Average settled low, then a loud bass block jumps above the threshold.
-    _avg, env, is_beat = update_beat(5.0, 1.0, 0.0, sensitivity=1.3)
-    assert is_beat is True
-    assert env == 1.0
-
-
-def test_update_beat_does_not_retrigger_while_pulse_high() -> None:
-    # Right after a beat (env=1.0) another loud block must not fire again.
-    _avg, _env, is_beat = update_beat(5.0, 1.0, 1.0, sensitivity=1.3)
-    assert is_beat is False
-
-
-def test_update_beat_envelope_decays_without_a_beat() -> None:
-    _avg, env, is_beat = update_beat(0.5, 1.0, 0.8, sensitivity=1.3, decay=0.5)
-    assert is_beat is False  # 0.5 is below 1.3x the average
-    assert env == pytest.approx(0.4)  # 0.8 * 0.5

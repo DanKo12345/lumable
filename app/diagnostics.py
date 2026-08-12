@@ -13,6 +13,7 @@ from app.live_sync_metrics import LiveSyncReport
 from app.live_sync_text import format_live_sync
 from app.localization import localization_manager
 from app.motion_policy import motion_policy
+from app.music_analysis import MusicSyncReport
 
 
 def _line(label: str, value: object) -> str:
@@ -219,12 +220,36 @@ def _ble_summary_section(history: dict[str, Any], last_command: dict[str, Any]) 
     return lines
 
 
+def _music_section(music: dict[str, Any] | None) -> list[str]:
+    """What the music analysis measured. Numbers only.
+
+    No device names beyond the source it was listening to, nothing about what
+    was playing, and no audio — the counters are the whole of it, which is what
+    makes this safe to paste into an issue.
+    """
+    report = (music or {}).get("music_sync")
+    if not isinstance(report, MusicSyncReport) or not report.blocks:
+        return []
+    heard = report.blocks - report.silent_blocks
+    return [
+        "",
+        "Music Sync",
+        f"source: {report.source or '-'}",
+        f"duration: {report.seconds}s",
+        f"noise floor: {report.noise_floor}",
+        f"beats: {report.beats}",
+        f"blocks: {report.blocks} ({heard} with sound, {report.silent_blocks} silent)",
+        f"peak level: {report.peak_level}",
+    ]
+
+
 def build_diagnostics_report(
     snapshot: dict[str, Any],
     session_logs: Iterable[str],
     *,
     include_crashes: bool = True,
     ambient: dict[str, Any] | None = None,
+    music: dict[str, Any] | None = None,
 ) -> str:
     device = snapshot.get("device") or {}
     driver = snapshot.get("driver") or {}
@@ -304,6 +329,7 @@ def build_diagnostics_report(
 
     sections.extend(_strips_section(snapshot))
     sections.extend(_ambient_section(ambient))
+    sections.extend(_music_section(music))
     sections.extend(_nearby_unknown_section(snapshot))
 
     sections.extend(["", _t("session_logs_section"), *(log_lines[-80:] if log_lines else ["-"])])
