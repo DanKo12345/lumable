@@ -1,30 +1,27 @@
 # LumaBLE 0.3.9 (beta)
 
-This release brings the controls you use most into Windows itself, adds safe portable backups, and makes Music Sync adapt to the room and recording source automatically.
+Windows controls & Music: use your lights without keeping the main window open, move your setup safely to another installation, and get steadier music reactions in quiet rooms and at different volume levels.
 
-## Closer to Windows
-- **Useful tray controls.** See connection status, apply recent scenes and toggle Screen Sync or Music Sync without opening the main window.
-- **Optional global hotkeys.** Screen Sync and Music Sync can be assigned shortcuts, but LumaBLE never claims new system-wide combinations during an update. Invalid and conflicting bindings are shown beside the affected field.
-- **Windows-aware automations.** Rules can react when the PC locks, unlocks, sleeps or wakes. Wake actions wait briefly for Bluetooth to return instead of failing immediately.
+## Added
+- **More useful tray controls.** Check the connection, apply a recent scene, or start and stop Screen Sync and Music Sync without opening LumaBLE.
+- **New hotkey actions.** Screen Sync and Music Sync can now have global shortcuts. They are optional and stay unassigned until you choose them.
+- **Windows automation triggers.** Rules can run when the PC locks, unlocks, goes to sleep or wakes up.
+- **Full backup and restore.** Move scenes, rules, groups and portable settings in one file. LumaBLE keeps a copy of the current setup before restoring it.
 
-## Portable backup
-- Export scenes, rules, groups and portable settings into one versioned file.
-- Restore only after the complete file passes validation; the current configuration is copied first and replacement is atomic.
-- Licence data, API secrets, BLE addresses, controller names, diagnostics and temporary UI state are never included.
-- Group identities remain linked to scenes, while physical strips must be assigned again on the new machine.
+## Improved
+- **Music Sync adapts to the room.** Background noise from a microphone or sound card is less likely to make the strip flicker in silence.
+- **Better beat detection.** Reactions follow the rhythm instead of treating every increase in volume as a new beat.
+- **Natural fade after a beat.** The last pulse now settles smoothly when the music stops.
+- **Recent scenes stay useful.** The tray remembers scenes you applied successfully instead of filling the list with automatic rules.
+- Backup and automation messages were simplified across English, Russian, Spanish and Chinese.
 
-## Smarter Music Sync
-- The silence threshold now learns each source and uses hysteresis, so microphone or sound-card noise does not make the strip flicker at rest.
-- Beat detection follows changes in the share of bass rather than raw loudness, reducing false beats when the whole track simply gets louder.
-- Beat cooldown uses real elapsed time, and the old pulse fades naturally when audio becomes quiet.
-- The existing Beat slider still controls flash depth; sensitivity adapts automatically without adding another setting.
-- Diagnostics report numerical Music Sync health without storing or exporting audio.
-
-## Fixed and polished
-- Clearing a hotkey now actually disables it, and a typing mistake cannot replace working shortcuts.
-- Windows lock and unlock events now reach the automation engine through the real Qt event path and display the correct icons.
-- Music analysis resets cleanly on source changes, restarts and capture failures.
-- Backup and automation wording was simplified across English, Russian, Spanish and Chinese.
+## Fixed
+- Clearing a hotkey now leaves it disabled instead of silently bringing the old shortcut back.
+- Invalid or conflicting shortcuts are shown beside the affected action and do not replace working ones.
+- Lock and unlock rules now receive the real Windows events and show the correct icons.
+- Wake rules wait briefly for Bluetooth to return instead of failing as soon as the PC resumes.
+- Music Sync starts fresh after changing the audio source, restarting a session or losing the recording device.
+- Restored settings can no longer be overwritten by the old session while LumaBLE is closing.
 
 ---
 
