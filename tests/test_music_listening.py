@@ -14,6 +14,7 @@ decides to emit, which is exactly where the decision lives.
 from __future__ import annotations
 
 import threading
+from time import monotonic, sleep
 
 import pytest
 
@@ -28,13 +29,17 @@ from app.music_controller import MusicController, MusicOptions
 class _Sound:
     """A capture device that plays a fixed block for as long as it is read."""
 
-    def __init__(self, frames: int = 1024, rate: int = 48000) -> None:
+    def __init__(self, frames: int = 1024, rate: int = 48000, delay: float = 0.0) -> None:
         self.frames = frames
         self.rate = rate
+        self.delay = delay
         self.reads = 0
 
     def reader(self, _options):
         def read(_size):
+            # A real device hands a block back when it is full, so a read waits.
+            if self.delay:
+                sleep(self.delay)
             self.reads += 1
             return [[0.3, 0.3]] * self.frames
 
@@ -43,24 +48,28 @@ class _Sound:
 
 def _listen(controller: MusicController, sound: _Sound, *, sink=None, blocks: int = 6):
     """Run the real capture loop until enough blocks have gone through."""
-    seen: list[tuple[float, float, float]] = []
+    seen: list = []
     colours: list[tuple[int, int, int]] = []
     owned: list[bool] = []
     enough = threading.Event()
 
-    def on_modulation(level, envelope, block_seconds):
-        seen.append((level, envelope, block_seconds))
+    def on_modulation(sample):
+        seen.append(sample)
         if len(seen) >= blocks:
             enough.set()
 
+    def on_colour(red, green, blue):
+        colours.append((red, green, blue))
+
     controller.modulation_sampled.connect(on_modulation, Qt.DirectConnection)
-    controller.color_sampled.connect(
-        lambda r, g, b: colours.append((r, g, b)), Qt.DirectConnection
-    )
+    controller.color_sampled.connect(on_colour, Qt.DirectConnection)
     original = MusicController._open_loopback_reader
     MusicController._open_loopback_reader = staticmethod(sound.reader)
     try:
-        controller.start(sink)
+        if sink is None:
+            controller.start_listening()
+        else:
+            controller.start_output(sink)
         assert enough.wait(5.0), "the capture loop produced nothing"
         # Asked while it is actually running: after stop() everything is false
         # and the check would pass for the wrong reason.
@@ -68,6 +77,10 @@ def _listen(controller: MusicController, sound: _Sound, *, sink=None, blocks: in
     finally:
         controller.stop()
         MusicController._open_loopback_reader = original
+        # Left connected, a second run would keep filling the first run's lists
+        # and every claim about "this run" would be about both.
+        controller.modulation_sampled.disconnect(on_modulation)
+        controller.color_sampled.disconnect(on_colour)
     return seen, colours, owned[0] if owned else False
 
 
@@ -94,7 +107,7 @@ def test_listening_only_still_measures_the_sound(controller) -> None:
     """A silent listener would be indistinguishable from a broken one."""
     seen, _colours, _owned = _listen(controller, _Sound(), blocks=40)
 
-    assert max(level for level, _e, _b in seen) > 0.0
+    assert max(sample.level for sample in seen) > 0.0
 
 
 def test_a_sink_is_what_makes_it_the_owner(controller) -> None:
@@ -122,7 +135,7 @@ def test_the_block_duration_is_the_real_one(controller) -> None:
 
     seen, _colours, _owned = _listen(controller, sound)
 
-    assert all(abs(block_seconds - 512 / 16000) < 1e-9 for _l, _e, block_seconds in seen)
+    assert all(abs(sample.block_seconds - 512 / 16000) < 1e-9 for sample in seen)
 
 
 def test_the_level_handed_over_has_no_beat_folded_into_it(controller) -> None:
@@ -150,12 +163,97 @@ def test_the_level_handed_over_has_no_beat_folded_into_it(controller) -> None:
     assert result.level <= 1.0
 
 
+def test_a_sample_is_stamped_when_the_sound_arrived_not_when_it_was_handled(
+    controller,
+) -> None:
+    """Qt is free to hold a queued signal, and a composer timing staleness from
+    arrival would call a late block fresh — the one measurement silence depends
+    on. Delivery is delayed here on purpose: the stamp has to be older than the
+    moment the receiver sees it, by about the delay."""
+    delay = 0.05
+    lag: list[float] = []
+    enough = threading.Event()
+
+    def slow_receiver(sample):
+        sleep(delay)
+        lag.append(monotonic() - sample.captured_at)
+        if len(lag) >= 3:
+            enough.set()
+
+    controller.modulation_sampled.connect(slow_receiver, Qt.DirectConnection)
+    sound = _Sound()
+    original = MusicController._open_loopback_reader
+    MusicController._open_loopback_reader = staticmethod(sound.reader)
+    try:
+        controller.start_listening()
+        assert enough.wait(5.0), "the capture loop produced nothing"
+    finally:
+        controller.stop()
+        MusicController._open_loopback_reader = original
+        controller.modulation_sampled.disconnect(slow_receiver)
+
+    assert min(lag) >= delay * 0.8, (
+        f"the stamp moved with the handler, so it is a delivery time: {lag}"
+    )
+
+
+def test_the_stamp_is_not_a_whole_block_behind(controller) -> None:
+    """A read waits for the block to fill. Stamping before the wait rather than
+    after it dates every sample to the start of the block, so a fresh reading
+    arrives already a block old — and on a slow device that is most of the
+    staleness budget spent before anything has happened."""
+    delay = 0.08
+    ages: list[float] = []
+    enough = threading.Event()
+
+    def on_sample(sample):
+        ages.append(monotonic() - sample.captured_at)
+        if len(ages) >= 3:
+            enough.set()
+
+    controller.modulation_sampled.connect(on_sample, Qt.DirectConnection)
+    sound = _Sound(delay=delay)
+    original = MusicController._open_loopback_reader
+    MusicController._open_loopback_reader = staticmethod(sound.reader)
+    try:
+        controller.start_listening()
+        assert enough.wait(5.0), "the capture loop produced nothing"
+    finally:
+        controller.stop()
+        MusicController._open_loopback_reader = original
+        controller.modulation_sampled.disconnect(on_sample)
+
+    assert max(ages) < delay * 0.5, f"samples arrive already a block old: {ages}"
+
+
+def test_every_run_gets_its_own_token(controller) -> None:
+    """A block emitted just before a stop can arrive after the next start. The
+    token is how a composer tells the two runs apart instead of mixing them."""
+    first, _colours, _owned = _listen(controller, _Sound())
+    second, _colours, _owned = _listen(controller, _Sound())
+
+    first_token = {sample.session_token for sample in first}
+    second_token = {sample.session_token for sample in second}
+    assert len(first_token) == 1 and len(second_token) == 1
+    assert first_token != second_token
+    assert controller.session_token() == second_token.pop()
+
+
+def test_starting_output_and_starting_listening_are_different_words(controller) -> None:
+    """There is no call that silently does the wrong one of the two. A start
+    that forgot its sink used to be a working music mode turned quiet, with
+    nothing raising anywhere."""
+    assert not hasattr(controller, "start")
+    assert hasattr(controller, "start_output")
+    assert hasattr(controller, "start_listening")
+
+
 def test_a_capture_failure_stops_the_modulation_too(controller) -> None:
     """Stale numbers from a device that has gone wrong are worse than none:
     downstream they look exactly like a quiet passage."""
     seen: list = []
     failures: list[str] = []
-    controller.modulation_sampled.connect(lambda *a: seen.append(a), Qt.DirectConnection)
+    controller.modulation_sampled.connect(seen.append, Qt.DirectConnection)
     controller.failed.connect(failures.append, Qt.DirectConnection)
 
     def broken(_options):
@@ -164,7 +262,7 @@ def test_a_capture_failure_stops_the_modulation_too(controller) -> None:
     original = MusicController._open_loopback_reader
     MusicController._open_loopback_reader = staticmethod(broken)
     try:
-        controller.start()
+        controller.start_listening()
         thread = controller._thread
         if thread is not None:
             thread.join(timeout=5.0)

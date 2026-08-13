@@ -357,7 +357,7 @@ def test_starting_again_does_not_inherit_the_last_run() -> None:
         player.play(_music(80))
     assert controller._analyzer.stats.beats > 0
 
-    controller.start(lambda r, g, b: None)
+    controller.start_output(lambda r, g, b: None)
     try:
         assert controller._analyzer.stats.beats == 0
         assert controller._analyzer.stats.blocks == 0

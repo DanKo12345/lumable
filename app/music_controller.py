@@ -127,6 +127,26 @@ class MusicOptions:
 
 
 @dataclass(frozen=True)
+class MusicModulationSample:
+    """One block of sound, described for whoever composes the frame.
+
+    Carries its own time and the run it belongs to, because neither can be
+    recovered by the receiver. Qt may deliver a queued signal later than it was
+    emitted, and a composer timing staleness from *arrival* would keep calling a
+    late block fresh — the one measurement that has to be right for silence to
+    look like silence. And a block emitted just before a stop can arrive after
+    the next start, so the token says which run it came from and a composer
+    holding a different one drops it rather than mixing two sessions.
+    """
+
+    session_token: int = 0
+    captured_at: float = 0.0
+    level: float = 0.0
+    beat_envelope: float = 0.0
+    block_seconds: float = 0.05
+
+
+@dataclass(frozen=True)
 class BlockResult:
     """What one audio block turned out to be, in both currencies.
 
@@ -149,25 +169,28 @@ class MusicController(QObject):
     colour, and a description of the sound as loudness and onset. Which of those
     leaves the controller depends on how it was started.
 
-    Started **with** a sink it behaves as it always has — music reactivity,
-    driving the strip through its own :class:`ColorStreamEngine`.
+    :meth:`start_output` is music reactivity as it always was — driving the
+    strip through its own :class:`ColorStreamEngine`.
 
-    Started **without** one it listens and nothing more: the engine never
-    starts, no colour is emitted, and the only output is
-    :attr:`modulation_sampled`. That is what "screen colour, music brightness"
-    needs, and it is the thing the old design could not do — analysing the sound
-    and owning the strip were one act, so the analysis stopped the moment
-    anything else took the line.
+    :meth:`start_listening` listens and nothing more: the engine never starts,
+    no colour is emitted, and the only output is :attr:`modulation_sampled`.
+    That is what "screen colour, music brightness" needs, and it is the thing
+    the old design could not do — analysing the sound and owning the strip were
+    one act, so the analysis stopped the moment anything else took the line.
+
+    Two named methods rather than one with an optional sink: the difference
+    between them is whether this controller drives the strip, and a forgotten
+    argument would turn a working music mode into a silent one with nothing
+    raising anywhere.
 
     No colour is emitted while listening only. A colour nobody is meant to send
     is exactly the sort of thing that quietly grows a second path to the strip.
     """
 
     color_sampled = Signal(int, int, int)
-    # (level, beat_envelope, block_seconds) — the block's own duration, because
-    # a block is not a unit of time and staleness downstream is measured in real
-    # seconds.
-    modulation_sampled = Signal(float, float, float)
+    # One MusicModulationSample. Sent whole rather than as loose numbers so the
+    # time and the run cannot be separated from the measurement in transit.
+    modulation_sampled = Signal(object)
     failed = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -183,6 +206,9 @@ class MusicController(QObject):
         # One source's idea of silence and of a beat. Reset whenever the source
         # changes or capture restarts — see _reset_analysis.
         self._analyzer = MusicAnalyzer()
+        # Bumped by every start, so a block emitted just before a stop can be
+        # recognised as belonging to the previous run and dropped.
+        self._session_token = 0
         self._started_at: float | None = None
         self._stopped_at: float | None = None
         self.color_sampled.connect(self._engine.set_target)
@@ -220,11 +246,23 @@ class MusicController(QObject):
         """Whether this controller is the one writing to the strip."""
         return self._engine.is_running()
 
-    def start(self, sink: Callable[[int, int, int], None] | None = None) -> None:
-        """Begin listening. With a ``sink``, also begin driving the strip."""
+    def session_token(self) -> int:
+        """Which run is current. Every start gets a new one."""
+        return self._session_token
+
+    def start_output(self, sink: Callable[[int, int, int], None]) -> None:
+        """Listen, and drive the strip with the colour — music reactivity."""
+        self._begin(sink)
+
+    def start_listening(self) -> None:
+        """Listen only. Nothing is written to the strip by this controller."""
+        self._begin(None)
+
+    def _begin(self, sink: Callable[[int, int, int], None] | None) -> None:
         if self.is_running():
             return
         self._reset_analysis()
+        self._session_token += 1
         self._started_at = monotonic()
         self._stopped_at = None
         if sink is not None:
@@ -500,16 +538,27 @@ class MusicController(QObject):
             self.failed.emit(self._capture_error_reason(exc))
             return
         try:
+            token = self._session_token
             while not self._stop.is_set():
                 options = self._options
                 block = read(options.blocksize)
+                # Stamped here, where the sound actually arrived. A receiver
+                # cannot recover this: a queued signal is timed from delivery,
+                # and a late block would look like a fresh one.
+                captured_at = monotonic()
                 result = self._process_block(block, samplerate, options)
                 # The block's real length, not the one that was asked for: a
                 # device is free to hand back fewer frames, and downstream
                 # staleness is measured against this.
                 frames = self._frame_count(block) or options.blocksize
                 self.modulation_sampled.emit(
-                    result.level, result.beat_envelope, frames / max(1, samplerate)
+                    MusicModulationSample(
+                        session_token=token,
+                        captured_at=captured_at,
+                        level=result.level,
+                        beat_envelope=result.beat_envelope,
+                        block_seconds=frames / max(1, samplerate),
+                    )
                 )
                 if self._engine.is_running():
                     red, green, blue = result.rgb

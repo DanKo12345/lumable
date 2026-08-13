@@ -301,7 +301,7 @@ class MusicUiController:
             return
         self._music.stop()
         self._apply_options()
-        self._music.start(self._sink)
+        self._music.start_output(self._sink)
 
     def _colors_dict(self) -> dict:
         host = self._host
@@ -428,7 +428,7 @@ class MusicUiController:
             host._ble.set_color_stream(red, green, blue)
 
         self._sink = sink
-        self._music.start(sink)
+        self._music.start_output(sink)
         self._set_manual_controls_enabled(False)
         self._apply_enabled_state()
         self._show_preview()

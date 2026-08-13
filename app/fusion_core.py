@@ -24,6 +24,12 @@ alert. It has a duration and it fades, and when it is over the frame returns to
 exactly what it would have been. Built here and tested here; nothing in 0.4.0
 turns an existing scene into one.
 
+An overlay currently needs a fresh base to sit on — with none, nothing is sent.
+That is defensible only while an overlay is not a user-facing feature: it is
+composed *onto* a picture and there would be nothing to return to. A real
+notification or an emergency colour probably has to light the strip whether or
+not Screen Sync is running, so this is a decision to revisit rather than a rule.
+
 Two things are deliberately separate from all of that, because conflating them
 is what today's code does:
 
