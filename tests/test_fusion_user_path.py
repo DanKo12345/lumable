@@ -211,3 +211,73 @@ def test_the_saved_mode_comes_back_on_the_next_run(window) -> None:
 
     assert window._fusion_ui.mode() == "screen_music"
     assert window.fusion_mode_segment.current_key() == "screen_music"
+
+
+def test_the_tray_and_a_hotkey_do_not_tear_music_out_of_the_shared_mode(window) -> None:
+    """Pressing "music" while the combined mode is chosen has to mean that mode.
+
+    Starting the old standalone reaction instead would take the strip off the
+    screen — and the tray tick would then say music is on for a mode nobody
+    chose.
+    """
+    app = QApplication.instance()
+    _click_second_segment(window.fusion_mode_segment)
+
+    # This is what both the tray entry and the global hotkey call.
+    assert window._music_ui.toggle() is True
+    app.processEvents()
+
+    assert window._fusion_ui.is_running() is True
+    assert window._music_ui.is_running() is True, "the tray tick would say music is off"
+    assert window._music_ui._music.owns_output() is False, "music took the strip on its own"
+
+    assert window._music_ui.toggle() is False
+    app.processEvents()
+
+    assert window._fusion_ui.is_running() is False
+    assert window._ambient_ui.is_running() is False
+
+
+def test_the_standalone_music_mode_is_untouched_when_the_screen_is_alone(window) -> None:
+    """Back on Screen only, the old behaviour has to be exactly the old one."""
+    app = QApplication.instance()
+    assert window._fusion_ui.mode() == "screen"
+
+    assert window._music_ui.toggle() is True
+    app.processEvents()
+
+    assert window._music_ui._music.owns_output() is True, "music stopped driving the strip"
+    assert window._fusion_ui.is_running() is False
+
+    assert window._music_ui.toggle() is False
+    app.processEvents()
+    assert window._music_ui.is_running() is False
+
+
+def test_losing_the_audio_device_leaves_the_screen_running(window) -> None:
+    """A microphone unplugged mid-run is the audio source's problem, not the
+    mode's: the picture still drives the strip, the modulation fades out, and
+    the tray still shows the mode as on rather than claiming it stopped.
+    """
+    app = QApplication.instance()
+    _click_second_segment(window.fusion_mode_segment)
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    _pump(app, 5.0, until=lambda: window._strip.count() >= 3)
+    assert window._strip.count() >= 1
+
+    # The device goes away; the music controller stops itself.
+    window._music_ui.stop_listening()
+    app.processEvents()
+    assert window._music_ui._music.is_running() is False
+
+    before = window._strip.count()
+    # Waited on the thing being asserted, not on a write count: the staleness
+    # window is a quarter of a second and two more frames can arrive well inside
+    # it, which would make the check pass or fail on how fast the machine is.
+    _pump(app, 3.0, until=lambda: window._fusion_ui.stats()["music_stale"])
+
+    assert window._fusion_ui.is_running() is True
+    assert window._music_ui.is_running() is True, "the tray would claim the mode had stopped"
+    assert window._ambient_ui.is_running() is True
+    assert window._strip.count() > before, "the screen stopped reaching the strip too"
+    assert window._fusion_ui.stats()["music_stale"] is True

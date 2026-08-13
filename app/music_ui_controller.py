@@ -362,7 +362,18 @@ class MusicUiController:
         if self._music.is_running():
             self._apply_options()
 
+    def _shared_with_screen(self) -> bool:
+        return self._host._fusion_ui.mode() == "screen_music"
+
     def is_running(self) -> bool:
+        """Whether "music" is on, as a person means it.
+
+        In the combined mode that is the combined mode: the tray tick and the
+        hotkey both read this, and answering with the standalone capture would
+        show music as off while the strip is plainly reacting to it.
+        """
+        if self._shared_with_screen():
+            return self._host._fusion_ui.is_running()
         return self._music.is_running()
 
     def stats(self) -> dict:
@@ -429,10 +440,30 @@ class MusicUiController:
         return float(self._music.options().beat_strength)
 
     def stop_if_running(self) -> None:
+        """Stop whatever "music" currently means.
+
+        In the combined mode that is the whole mode. Stopping only the listener
+        would leave the screen still driving the strip with a modulation that
+        has silently gone stale — a half-stop nobody asked for and nothing
+        reports.
+        """
+        if self._shared_with_screen() and self._host._fusion_ui.is_running():
+            self._host._fusion_ui.stop_if_running()
+            return
         if self._music.is_running():
             self._stop()
 
     def activate(self) -> bool:
+        # Music is part of the screen mode right now. Starting it on its own
+        # from a tray entry or a hotkey would tear it back out into the old
+        # standalone mode and take the strip off the screen — the opposite of
+        # what someone pressing "music" while that mode is chosen wants.
+        if self._shared_with_screen():
+            fusion = self._host._fusion_ui
+            return True if fusion.is_running() else fusion.activate()
+        return self._activate_standalone()
+
+    def _activate_standalone(self) -> bool:
         """Start music reaction as if its toggle was pressed. Returns whether it
         actually started (a licence/connection gate may have blocked it)."""
         self._host.music_toggle_button.setChecked(True)
