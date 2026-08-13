@@ -257,7 +257,7 @@ def test_nothing_is_written_while_the_frame_says_not_to(app) -> None:
         coordinator.stop()
 
     assert len(strip.writes) == settled, (
-        f"{len(strip.writes) - settled} writes after the frame said not to send"
+        f"{len(strip.writes) - settled} writes after the frame said not to send: {strip.writes}"
     )
 
 
@@ -641,3 +641,128 @@ def test_no_hardware_brightness_command_is_sent_on_audio_blocks(app) -> None:
 
     assert "color" in backend.calls, "nothing was written at all"
     assert "brightness" not in backend.calls
+
+
+class _EagerSources:
+    """A device that hands over a sample from inside its own start and stop.
+
+    A capture thread joined during ``stop()`` can run one more block, and a
+    device can deliver something the moment it is opened. An ordinary late
+    callback usually misses the dangerous window; this one lands in it every
+    time, and ticks there too, because a real event loop can run inside a join.
+    """
+
+    def __init__(self, coordinator, clock) -> None:
+        self.coordinator = coordinator
+        self.clock = clock
+        self.token = 100
+        self.running = False
+
+    def _deliver(self, colour) -> None:
+        self.coordinator.submit_screen(
+            ScreenSample(session_token=self.token, captured_at=self.clock.now, rgb=colour)
+        )
+        # Whatever else is happening, a tick can land here.
+        self.coordinator._tick()
+
+    def start(self) -> tuple[int, int]:
+        self.running = True
+        self.token += 1
+        # Delivered while starting, before the coordinator has been told the new
+        # token: the strip is still off as far as anything here knows.
+        self._deliver((255, 0, 0))
+        return (self.token, 0)
+
+    def stop(self) -> None:
+        # One last frame on the way out, exactly in the window.
+        self._deliver((255, 0, 0))
+        self.running = False
+
+
+def test_a_sample_delivered_inside_stop_cannot_reach_the_strip(app) -> None:
+    """The window the order exists to close. Refusing permission after stopping
+    the sources leaves room for one more colour on a strip that is off."""
+    clock = _Clock()
+    strip = _Strip()
+    coordinator = FusionCoordinator(clock=clock)
+    sources = _EagerSources(coordinator, clock)
+    coordinator.attach_sources(start=sources.start, stop=sources.stop)
+    coordinator.start(strip.sink, mode="screen")
+    try:
+        coordinator.set_powered(True)
+        clock.advance(0.05)
+        coordinator.submit_screen(
+            ScreenSample(session_token=sources.token, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        _drain(coordinator, clock, app, seconds=0.3)
+        assert strip.writes, "nothing was written while the strip was on"
+        before_off = len(strip.writes)
+
+        coordinator.set_powered(False)
+        _drain(coordinator, clock, app, seconds=0.3)
+    finally:
+        coordinator.stop()
+
+    assert len(strip.writes) == before_off, (
+        f"{len(strip.writes) - before_off} colours went out during or after power off"
+    )
+    assert coordinator.last_frame().should_send is False
+
+
+def test_a_sample_delivered_inside_start_does_not_beat_the_first_real_frame(app) -> None:
+    """Coming back on, a device's opening sample describes the room or the
+    screen from before the light was on. Permission is granted last so it has
+    nowhere to go."""
+    clock = _Clock()
+    strip = _Strip()
+    coordinator = FusionCoordinator(clock=clock)
+    sources = _EagerSources(coordinator, clock)
+    coordinator.attach_sources(start=sources.start, stop=sources.stop)
+    coordinator.start(strip.sink, mode="screen")
+    try:
+        coordinator.set_powered(True)
+        after_start = coordinator.last_frame()
+
+        clock.advance(0.05)
+        coordinator.submit_screen(
+            ScreenSample(session_token=sources.token, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        coordinator._tick()
+        first_real = coordinator.last_frame()
+    finally:
+        coordinator.stop()
+
+    assert after_start.should_send is False, "the opening sample was sent"
+    assert after_start.reason == "no_base"
+    assert first_real.rgb == (10, 200, 90)
+
+
+def test_the_light_never_comes_back_on_black(app) -> None:
+    """The engine starts from a colour, and its own is black. Waking it when
+    power returns rather than when there is a frame worth sending puts a black
+    write on the strip in the moment someone is looking at it."""
+    clock = _Clock()
+    strip = _Strip()
+    coordinator = FusionCoordinator(clock=clock)
+    sources = _Sources()
+    coordinator.attach_sources(start=sources.start, stop=sources.stop)
+    coordinator.start(strip.sink, mode="screen")
+    try:
+        coordinator.set_powered(True)
+        coordinator.submit_screen(
+            ScreenSample(session_token=sources._token, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        _drain(coordinator, clock, app, seconds=0.3)
+        coordinator.set_powered(False)
+        _drain(coordinator, clock, app, seconds=0.3)
+
+        coordinator.set_powered(True)
+        coordinator.submit_screen(
+            ScreenSample(session_token=sources._token, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        _drain(coordinator, clock, app, seconds=0.3)
+    finally:
+        coordinator.stop()
+
+    assert (0, 0, 0) not in strip.writes, f"a black frame was written: {strip.writes}"
+    assert strip.writes[-1] != (0, 0, 0)

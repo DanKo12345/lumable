@@ -224,6 +224,17 @@ class FusionCompositor:
             self._activity = 0.0
         self._output_allowed = allowed
 
+    def forget_inputs(self) -> None:
+        """Drop the base, the modulation and the influence; keep the mode.
+
+        Separate from :meth:`set_output_allowed` so a caller can clear at the
+        exact point in a sequence it means to, rather than as a side effect of
+        changing permission.
+        """
+        self._base = None
+        self._music = None
+        self._activity = 0.0
+
     # ── inputs ────────────────────────────────────────────────────────
     def submit_base(self, sample: BaseSample) -> None:
         self._base = sample

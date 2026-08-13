@@ -98,6 +98,8 @@ class FusionCoordinator(QObject):
         self._dropped_music = 0
         self._start_sources: Callable[[], tuple[int, int]] | None = None
         self._stop_sources: Callable[[], None] | None = None
+        self._sink: Callable[..., None] | None = None
+        self._initial: RGB = (0, 0, 0)
 
     # ── running ───────────────────────────────────────────────────────
     def is_running(self) -> bool:
@@ -107,6 +109,8 @@ class FusionCoordinator(QObject):
         """Take the output. ``sink`` is the only route to the strip from here."""
         self._compositor.set_mode(mode)
         self._compositor.set_sources_running(True)
+        self._sink = sink
+        self._initial = initial
         self._engine.start(sink, initial=initial)
         self._timer.start()
 
@@ -147,7 +151,23 @@ class FusionCoordinator(QObject):
 
     def set_output_allowed(self, allowed: bool) -> None:
         """Permission to write, on its own. See :meth:`set_powered` for power."""
-        self._compositor.set_output_allowed(bool(allowed))
+        allowed = bool(allowed)
+        if not allowed:
+            self._silence_engine()
+        self._compositor.set_output_allowed(allowed)
+
+    def _silence_engine(self) -> None:
+        """Cancel anything aimed but not yet written.
+
+        The engine paces itself, so a colour handed to it a moment ago is still
+        waiting for its interval to come round. Refusing to compose does not
+        recall it: it would land afterwards, on a strip that is stale, blocked or
+        switched off. Stopped rather than told to forget, because stopping is
+        what the engine offers — the next frame worth sending wakes it again and
+        seeds it with that frame.
+        """
+        if self._engine.is_running():
+            self._engine.stop()
 
     def set_powered(self, on: bool) -> None:
         """Power, acting on each of the three states for its own reason.
@@ -166,19 +186,35 @@ class FusionCoordinator(QObject):
         not the frame this was holding when it went off.
         """
         if on:
-            self._compositor.set_output_allowed(True)
+            # Permission comes last. Sources are started while writing is still
+            # refused, so a sample a device hands over during its own start —
+            # describing the room or the screen from before the light came on —
+            # has nowhere to go.
+            self._forget()
             if self._start_sources is not None:
                 screen_token, music_token = self._start_sources()
                 self.expect_screen(screen_token or 0)
                 self.expect_music(music_token or 0)
+            self._compositor.set_output_allowed(True)
             return
-        if self._stop_sources is not None:
-            self._stop_sources()
-        # After the sources, so a frame in flight from a capture thread that has
-        # not noticed yet arrives to a coordinator already refusing to write.
+        # Permission goes first, and the tokens with it. Stopping the sources
+        # first leaves a window: a capture that delivers a last sample inside its
+        # own stop, or an event loop that runs while a thread is joined, can put
+        # one more colour on a strip that has just been switched off.
         self._compositor.set_output_allowed(False)
+
         self._screen_token = 0
         self._music_token = 0
+        if self._stop_sources is not None:
+            self._stop_sources()
+        self._forget()
+
+    def _forget(self) -> None:
+        """Drop everything held about the picture and the sound."""
+        with self._lock:
+            self._pending_base = None
+            self._pending_music = None
+        self._compositor.forget_inputs()
 
     def output_allowed(self) -> bool:
         return self._compositor.output_allowed
@@ -232,9 +268,17 @@ class FusionCoordinator(QObject):
         if frame.should_send:
             red, green, blue = frame.rgb
             scale = frame.brightness_factor
-            self._engine.set_target(
-                round(red * scale), round(green * scale), round(blue * scale)
-            )
+            colour = (round(red * scale), round(green * scale), round(blue * scale))
+            if not self._engine.is_running() and self._sink is not None:
+                # Woken by the first frame there is actually something to send,
+                # and seeded with that frame. Restarting it when the light comes
+                # back on instead would put its starting colour — black — on the
+                # strip before the screen had been looked at.
+                self._engine.start(self._sink, initial=colour)
+            self._engine.set_target(*colour)
+        else:
+            # Nothing should go out, including anything already aimed.
+            self._silence_engine()
         self.frame_composed.emit(frame)
 
     # ── what happened ─────────────────────────────────────────────────
