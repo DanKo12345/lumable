@@ -305,6 +305,46 @@ def test_an_overlay_fades_in_and_out_rather_than_cutting() -> None:
     assert 0 < rising.rgb[2] < full.rgb[2]
 
 
+def test_the_screen_keeps_arriving_underneath_an_overlay() -> None:
+    """An overlay covers the frame, it does not pause the world. What appears
+    when it ends has to be the screen as it is *now* — a second of the picture
+    from before the alert would be a visible rewind."""
+    comp, clock = _rig(mode="screen")
+    comp.submit_base(BaseSample(rgb=(10, 20, 30), brightness=0.5, at=clock.now))
+    comp.compose()
+
+    comp.show_overlay(
+        TransientOverlay(rgb=(255, 0, 0), started_at=clock.now, duration=0.5, fade_out=0.0)
+    )
+    # The screen moves on while the alert is up.
+    for _ in range(10):
+        clock.advance(0.05)
+        comp.submit_base(BaseSample(rgb=(90, 180, 240), brightness=0.5, at=clock.now))
+        comp.compose()
+
+    clock.advance(0.05)
+    comp.submit_base(BaseSample(rgb=(90, 180, 240), brightness=0.5, at=clock.now))
+    frame = comp.compose()
+
+    assert frame.overlay is False
+    assert frame.rgb == (90, 180, 240), "the picture from before the overlay came back"
+
+
+def test_an_overlay_is_not_shown_over_a_screen_that_has_stopped() -> None:
+    """Deliberate, and worth stating: an overlay is composed *onto* a base. With
+    no fresh base there is nothing to return to when it ends, and lighting the
+    strip would claim the capture is alive when it is not."""
+    comp, clock = _rig(mode="screen")
+    comp.submit_base(BaseSample(rgb=(10, 20, 30), at=clock.now))
+
+    clock.advance(BASE_STALE_S + 0.1)
+    comp.show_overlay(TransientOverlay(rgb=(255, 0, 0), started_at=clock.now, duration=1.0))
+    frame = comp.compose()
+
+    assert frame.should_send is False
+    assert frame.reason == "base_stale"
+
+
 def test_an_overlay_with_no_fade_still_ends_when_its_time_is_up() -> None:
     """A hard-edged overlay is a legitimate thing to ask for, and it is the one
     shape where "past the end" is not covered by the fade arithmetic. Without an

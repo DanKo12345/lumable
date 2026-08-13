@@ -126,17 +126,48 @@ class MusicOptions:
     noise_gate: float = 0.08
 
 
-class MusicController(QObject):
-    """Drives music reactivity: captures system audio (WASAPI loopback) on a
-    background thread, turns each block into a colour and streams it to a sink
-    (BLE write) through :class:`ColorStreamEngine`.
+@dataclass(frozen=True)
+class BlockResult:
+    """What one audio block turned out to be, in both currencies.
 
-    Mirrors :class:`AmbientController`: capture runs off-thread and emits
-    :attr:`color_sampled` (connected to the engine on the main thread); capture
-    failures surface via :attr:`failed`.
+    The colour is music reactivity's own answer. The other two are what Fusion
+    asks for, and they are deliberately not the same numbers: ``level`` has no
+    beat mixed into it and ``beat_envelope`` is the bare onset, because the beat
+    slider is applied by whoever composes the frame. Handing over a level that
+    already contains a beat would mean the impulse is aimed twice.
+    """
+
+    rgb: tuple[int, int, int]
+    level: float = 0.0
+    beat_envelope: float = 0.0
+
+
+class MusicController(QObject):
+    """Listens to sound. Owning the strip is a separate decision.
+
+    Capture runs on a background thread and every block produces two things: a
+    colour, and a description of the sound as loudness and onset. Which of those
+    leaves the controller depends on how it was started.
+
+    Started **with** a sink it behaves as it always has — music reactivity,
+    driving the strip through its own :class:`ColorStreamEngine`.
+
+    Started **without** one it listens and nothing more: the engine never
+    starts, no colour is emitted, and the only output is
+    :attr:`modulation_sampled`. That is what "screen colour, music brightness"
+    needs, and it is the thing the old design could not do — analysing the sound
+    and owning the strip were one act, so the analysis stopped the moment
+    anything else took the line.
+
+    No colour is emitted while listening only. A colour nobody is meant to send
+    is exactly the sort of thing that quietly grows a second path to the strip.
     """
 
     color_sampled = Signal(int, int, int)
+    # (level, beat_envelope, block_seconds) — the block's own duration, because
+    # a block is not a unit of time and staleness downstream is measured in real
+    # seconds.
+    modulation_sampled = Signal(float, float, float)
     failed = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -185,14 +216,20 @@ class MusicController(QObject):
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self, sink: Callable[[int, int, int], None]) -> None:
+    def owns_output(self) -> bool:
+        """Whether this controller is the one writing to the strip."""
+        return self._engine.is_running()
+
+    def start(self, sink: Callable[[int, int, int], None] | None = None) -> None:
+        """Begin listening. With a ``sink``, also begin driving the strip."""
         if self.is_running():
             return
         self._reset_analysis()
         self._started_at = monotonic()
         self._stopped_at = None
-        self._engine.set_smoothing(self._options.smoothing)
-        self._engine.start(sink, initial=(0, 0, 0))
+        if sink is not None:
+            self._engine.set_smoothing(self._options.smoothing)
+            self._engine.start(sink, initial=(0, 0, 0))
         self._stop.clear()
         thread = threading.Thread(target=self._run, name="MusicCapture", daemon=True)
         self._thread = thread
@@ -388,7 +425,7 @@ class MusicController(QObject):
             return f"mic_capture_failed: {reason}"
         return reason
 
-    def _process_block(self, block, samplerate: int, options: MusicOptions) -> tuple[int, int, int]:
+    def _process_block(self, block, samplerate: int, options: MusicOptions) -> BlockResult:
         bass, mid, treble, rms = analyze_block(block, samplerate)
         # Silence and onsets are judged on the raw block: a transient does not
         # survive smoothing, and a floor learned from smoothed values would
@@ -411,6 +448,9 @@ class MusicController(QObject):
                 self._ema[i] += (value - self._ema[i]) * factor
         bass, mid, treble, smooth_rms = self._ema
         level = self._analyzer.level_for(smooth_rms, self._manual_gate(options))
+        # Kept before the beat is folded in: this is the loudness on its own,
+        # and it is what a composer wants alongside the bare onset.
+        plain_level = level
         if options.beat_strength > 0.0 and level > 0.0:
             level = min(1.0, level + reading.envelope * options.beat_strength)
         # Auto-gain the bands against a slowly decaying running peak so the hue
@@ -418,11 +458,24 @@ class MusicController(QObject):
         current = max(bass, mid, treble, 1e-6)
         self._band_peak = max(current, self._band_peak * options.agc_decay)
         scale = 1.0 / self._band_peak
-        return bands_to_rgb(
+        rgb = bands_to_rgb(
             bass * scale, mid * scale, treble * scale, level,
             colors=options.band_colors, saturation=options.saturation,
             floor_brightness=options.floor_brightness,
         )
+        return BlockResult(rgb=rgb, level=plain_level, beat_envelope=reading.envelope)
+
+    @staticmethod
+    def _frame_count(block) -> int:
+        """How many frames a block actually holds, whatever container it is in."""
+        try:
+            shape = block.shape
+        except AttributeError:
+            try:
+                return len(block)
+            except TypeError:
+                return 0
+        return int(shape[0]) if shape else 0
 
     @staticmethod
     def _manual_gate(options: MusicOptions) -> float:
@@ -450,8 +503,17 @@ class MusicController(QObject):
             while not self._stop.is_set():
                 options = self._options
                 block = read(options.blocksize)
-                red, green, blue = self._process_block(block, samplerate, options)
-                self.color_sampled.emit(red, green, blue)
+                result = self._process_block(block, samplerate, options)
+                # The block's real length, not the one that was asked for: a
+                # device is free to hand back fewer frames, and downstream
+                # staleness is measured against this.
+                frames = self._frame_count(block) or options.blocksize
+                self.modulation_sampled.emit(
+                    result.level, result.beat_envelope, frames / max(1, samplerate)
+                )
+                if self._engine.is_running():
+                    red, green, blue = result.rgb
+                    self.color_sampled.emit(red, green, blue)
         except Exception as exc:  # audio device/driver failure — report and stop cleanly.
             # Whatever was learned came from a device that has just gone wrong;
             # the next attempt starts from nothing rather than from that.

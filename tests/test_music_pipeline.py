@@ -41,12 +41,15 @@ class _Player:
         return False
 
     def play(self, blocks, step_ms: float = 20.0):
-        colours = []
+        return [result.rgb for result in self.play_results(blocks, step_ms)]
+
+    def play_results(self, blocks, step_ms: float = 20.0):
+        results = []
         for values in blocks:
             module.analyze_block = lambda _b, _s, v=values: v
-            colours.append(self._controller._process_block(None, 48000, self._options))
+            results.append(self._controller._process_block(None, 48000, self._options))
             self._clock += step_ms / 1000.0
-        return colours
+        return results
 
 
 def _controller(**options) -> tuple[MusicController, MusicOptions]:
