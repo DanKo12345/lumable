@@ -131,6 +131,18 @@ def _drain(coordinator, clock, app, *, seconds: float, step: float = 0.05) -> No
         app.processEvents()
 
 
+def _drain_until_written(coordinator, clock, app, strip, *, limit: float = 3.0) -> None:
+    """Tick until the engine has actually written, or give up loudly.
+
+    The engine paces itself against real time, so "long enough" is not a number
+    a test can pick once and rely on across machines and load.
+    """
+    deadline = time.monotonic() + limit
+    while not strip.writes and time.monotonic() < deadline:
+        _drain(coordinator, clock, app, seconds=0.05)
+    assert strip.writes, "nothing was written even while the screen was fresh"
+
+
 def _pump(app, seconds: float, until=None) -> None:
     """Run the Qt event loop for real time, which is where the ticks happen."""
     deadline = time.monotonic() + seconds
@@ -230,9 +242,10 @@ def test_a_sample_does_not_compose_a_frame_by_itself() -> None:
     assert coordinator.last_frame().rgb == (10, 20, 30)
 
 
-def test_nothing_is_written_while_the_frame_says_not_to(app) -> None:
-    """``should_send`` is the whole answer. A frame that says no and is written
-    anyway is how a stale picture or a switched-off strip lights up."""
+def test_blocking_output_by_hand_accepts_nothing_further(app) -> None:
+    """One guarantee on its own: from the moment the call returns, no further
+    command is accepted. The base is fresh throughout, so nothing else can
+    explain a write."""
     clock = _Clock()
     strip = _Strip()
     coordinator = FusionCoordinator(clock=clock)
@@ -243,21 +256,54 @@ def test_nothing_is_written_while_the_frame_says_not_to(app) -> None:
             ScreenSample(session_token=1, captured_at=clock.now, rgb=(10, 200, 90))
         )
         coordinator._tick()
-        clock.advance(0.2)
-        _drain(coordinator, clock, app, seconds=0.3)
-        assert strip.writes, "nothing was written even while the screen was fresh"
-        settled = len(strip.writes)
+        _drain_until_written(coordinator, clock, app, strip)
 
-        # The screen stops arriving, then the strip is switched off.
-        clock.advance(5.0)
-        _drain(coordinator, clock, app, seconds=0.3)
         coordinator.set_output_allowed(False)
+        accepted = len(strip.writes)
+        # Everything that could still deliver one, with the base still fresh.
         _drain(coordinator, clock, app, seconds=0.3)
     finally:
         coordinator.stop()
 
-    assert len(strip.writes) == settled, (
-        f"{len(strip.writes) - settled} writes after the frame said not to send: {strip.writes}"
+    assert len(strip.writes) == accepted, (
+        f"{len(strip.writes) - accepted} commands accepted after the block: {strip.writes}"
+    )
+
+
+def test_a_stale_base_stops_the_output_at_the_next_tick(app) -> None:
+    """The other guarantee, and it belongs to the tick.
+
+    Moving the clock does not make anything stale by itself — nothing has read
+    it yet. Staleness is noticed when the coordinator next composes, which in a
+    running app is at most one tick away, and it is from there that no further
+    command may be accepted. Asserting over the window before that would be
+    asking the engine to know something no code has looked at.
+    """
+    clock = _Clock()
+    strip = _Strip()
+    coordinator = FusionCoordinator(clock=clock)
+    coordinator.expect_screen(1)
+    coordinator.start(strip.sink, mode="screen")
+    try:
+        coordinator.submit_screen(
+            ScreenSample(session_token=1, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        coordinator._tick()
+        _drain_until_written(coordinator, clock, app, strip)
+
+        clock.advance(5.0)
+        coordinator._tick()
+        noticed = coordinator.last_frame()
+        accepted = len(strip.writes)
+
+        _drain(coordinator, clock, app, seconds=0.3)
+    finally:
+        coordinator.stop()
+
+    assert noticed.should_send is False
+    assert noticed.reason == "base_stale"
+    assert len(strip.writes) == accepted, (
+        f"{len(strip.writes) - accepted} commands accepted after the base went stale"
     )
 
 
@@ -766,3 +812,94 @@ def test_the_light_never_comes_back_on_black(app) -> None:
 
     assert (0, 0, 0) not in strip.writes, f"a black frame was written: {strip.writes}"
     assert strip.writes[-1] != (0, 0, 0)
+
+
+class _SlowLink:
+    """A BLE link where a write is accepted now and finishes later.
+
+    The two are worth telling apart. Calling the sink means a command has been
+    *accepted for sending* — from that moment it is on its way and no amount of
+    stopping recalls it. What must be true after a power off is that no *new*
+    command is accepted; a write already handed to the link finishing afterwards
+    is physics, not a defect.
+    """
+
+    def __init__(self) -> None:
+        self.accepted: list[tuple[int, int, int]] = []
+        self.finished: list[tuple[int, int, int]] = []
+        self._in_flight: list[tuple[int, int, int]] = []
+
+    def sink(self, red, green, blue, *_labels) -> bool:
+        self._in_flight.append((red, green, blue))
+        return True
+
+    def settle(self) -> None:
+        self.accepted.extend(self._in_flight)
+        self.finished.extend(self._in_flight)
+        self._in_flight.clear()
+
+
+def test_power_off_accepts_no_further_command(app) -> None:
+    """The guarantee, stated in the only terms that are actually enforceable."""
+    clock = _Clock()
+    link = _SlowLink()
+    sources = _Sources()
+    coordinator = FusionCoordinator(clock=clock)
+    coordinator.attach_sources(start=sources.start, stop=sources.stop)
+    coordinator.start(link.sink, mode="screen")
+    try:
+        coordinator.set_powered(True)
+        coordinator.submit_screen(
+            ScreenSample(session_token=sources._token, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        _drain(coordinator, clock, app, seconds=0.3)
+        link.settle()
+        accepted_before = len(link.accepted)
+        assert accepted_before, "nothing was accepted while the strip was on"
+
+        coordinator.set_powered(False)
+        # Everything that could still deliver one: the event loop, the sources'
+        # own stop, and the coordinator's remaining ticks.
+        _drain(coordinator, clock, app, seconds=0.5)
+        link.settle()
+    finally:
+        coordinator.stop()
+
+    assert len(link.accepted) == accepted_before, (
+        f"{len(link.accepted) - accepted_before} commands accepted after power off: "
+        f"{link.accepted[accepted_before:]}"
+    )
+
+
+def test_blocking_output_cancels_the_aimed_colour_immediately(app) -> None:
+    """Immediately, not on the next tick.
+
+    The composing tick also cancels an aimed colour when a frame says not to
+    send, which hides the difference in normal settings — the next tick is
+    thirty milliseconds away and the engine has not reached its turn. So the two
+    are pulled apart here: a coordinator that ticks rarely and an engine that
+    writes often, which is the same shape as a real one whose tick is delayed by
+    a device being closed on the UI thread. In that window, blocking output and
+    cancelling what was aimed have to be one act.
+    """
+    clock = _Clock()
+    strip = _Strip()
+    coordinator = FusionCoordinator(clock=clock, tick_ms=100000, send_interval_ms=33)
+    coordinator.expect_screen(1)
+    coordinator.start(strip.sink, mode="screen")
+    try:
+        coordinator.submit_screen(
+            ScreenSample(session_token=1, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        coordinator._tick()
+        # Aimed but not yet due: the send interval has not come round.
+        coordinator.set_powered(False)
+        # Only the event loop from here — no further coordinator tick.
+        for _ in range(20):
+            app.processEvents()
+            time.sleep(0.02)
+            app.processEvents()
+    finally:
+        coordinator.stop()
+
+    assert strip.writes == [], f"a colour went out after power off: {strip.writes}"

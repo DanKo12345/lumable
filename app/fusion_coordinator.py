@@ -151,10 +151,22 @@ class FusionCoordinator(QObject):
 
     def set_output_allowed(self, allowed: bool) -> None:
         """Permission to write, on its own. See :meth:`set_powered` for power."""
-        allowed = bool(allowed)
-        if not allowed:
-            self._silence_engine()
-        self._compositor.set_output_allowed(allowed)
+        if allowed:
+            self._compositor.set_output_allowed(True)
+            return
+        self._block_output()
+
+    def _block_output(self) -> None:
+        """Refuse permission and cancel what was aimed, as one act.
+
+        The two halves are meaningless apart. Refusing to compose leaves the
+        engine holding a colour it has not written yet, and every caller that
+        blocks output has to remember to cancel it — which is exactly the kind
+        of thing that gets forgotten on one of the paths and shows up as an
+        occasional extra command nobody can reproduce.
+        """
+        self._compositor.set_output_allowed(False)
+        self._silence_engine()
 
     def _silence_engine(self) -> None:
         """Cancel anything aimed but not yet written.
@@ -201,8 +213,7 @@ class FusionCoordinator(QObject):
         # first leaves a window: a capture that delivers a last sample inside its
         # own stop, or an event loop that runs while a thread is joined, can put
         # one more colour on a strip that has just been switched off.
-        self._compositor.set_output_allowed(False)
-
+        self._block_output()
         self._screen_token = 0
         self._music_token = 0
         if self._stop_sources is not None:
