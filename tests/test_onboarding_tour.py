@@ -142,6 +142,27 @@ def test_the_first_four_steps_frame_the_whole_card(window, tour, step: int, targ
     assert tour._spotlight_rect == QRectF(top_left.x(), top_left.y(), target.width(), target.height())
 
 
+def _expected_frame(tour, window, target) -> QRectF:
+    """Where the frame belongs, by the widget's own documented rule.
+
+    A card that fits is framed exactly. A card taller than the viewport cannot
+    have its far edge shown, so the visible work area is framed instead — see
+    ``_target_rect``. Which of the two applies depends on the window size and on
+    how tall the card happens to be, so a test that always expects the card is a
+    test about today's card rather than about remeasuring.
+    """
+    top_left = tour.mapFromGlobal(target.mapToGlobal(QPoint(0, 0)))
+    card = QRectF(top_left.x(), top_left.y(), target.width(), target.height())
+    scroll = window.body_scroll
+    view_top = tour.mapFromGlobal(scroll.viewport().mapToGlobal(QPoint(0, 0)))
+    viewport = QRectF(
+        view_top.x(), view_top.y(), scroll.viewport().width(), scroll.viewport().height()
+    )
+    if card.width() > viewport.width() or card.height() > viewport.height():
+        return viewport.adjusted(10, 10, -10, -10)
+    return card
+
+
 @pytest.mark.parametrize(("step", "target_name"), ((0, "color_card"), (2, "ambient_card")))
 def test_resizing_between_windowed_and_large_remeasures_the_card(
     window, tour, step: int, target_name: str
@@ -150,13 +171,16 @@ def test_resizing_between_windowed_and_large_remeasures_the_card(
     tour._go_tour_step(step)
     QApplication.instance().processEvents()
 
+    seen = []
     for size in ((1600, 900), (1000, 700)):
         window.resize(*size)
         QTest.qWait(420)
         target = getattr(window, target_name)
-        top_left = tour.mapFromGlobal(target.mapToGlobal(QPoint(0, 0)))
-        expected = QRectF(top_left.x(), top_left.y(), target.width(), target.height())
+        expected = _expected_frame(tour, window, target)
         assert tour._spotlight_rect == expected, "the frame kept geometry from the previous window size"
+        seen.append(QRectF(tour._spotlight_rect))
+
+    assert seen[0] != seen[1], "the frame never moved, so nothing was remeasured"
 
 
 def test_reopened_guide_follows_the_card_while_the_live_preview_expands(

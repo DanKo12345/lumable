@@ -624,8 +624,7 @@ def test_nothing_is_written_between_power_off_and_the_first_fresh_frame(app) -> 
         coordinator.submit_screen(
             ScreenSample(session_token=sources._token, captured_at=clock.now, rgb=(10, 200, 90))
         )
-        _drain(coordinator, clock, app, seconds=0.3)
-        assert strip.writes
+        _drain_until_written(coordinator, clock, app, strip)
         before_off = len(strip.writes)
 
         coordinator.set_powered(False)
@@ -740,8 +739,7 @@ def test_a_sample_delivered_inside_stop_cannot_reach_the_strip(app) -> None:
         coordinator.submit_screen(
             ScreenSample(session_token=sources.token, captured_at=clock.now, rgb=(10, 200, 90))
         )
-        _drain(coordinator, clock, app, seconds=0.3)
-        assert strip.writes, "nothing was written while the strip was on"
+        _drain_until_written(coordinator, clock, app, strip)
         before_off = len(strip.writes)
 
         coordinator.set_powered(False)
@@ -798,7 +796,7 @@ def test_the_light_never_comes_back_on_black(app) -> None:
         coordinator.submit_screen(
             ScreenSample(session_token=sources._token, captured_at=clock.now, rgb=(10, 200, 90))
         )
-        _drain(coordinator, clock, app, seconds=0.3)
+        _drain_until_written(coordinator, clock, app, strip)
         coordinator.set_powered(False)
         _drain(coordinator, clock, app, seconds=0.3)
 
@@ -852,7 +850,9 @@ def test_power_off_accepts_no_further_command(app) -> None:
         coordinator.submit_screen(
             ScreenSample(session_token=sources._token, captured_at=clock.now, rgb=(10, 200, 90))
         )
-        _drain(coordinator, clock, app, seconds=0.3)
+        deadline = time.monotonic() + 3.0
+        while not link._in_flight and time.monotonic() < deadline:
+            _drain(coordinator, clock, app, seconds=0.05)
         link.settle()
         accepted_before = len(link.accepted)
         assert accepted_before, "nothing was accepted while the strip was on"

@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from PySide6.QtCore import Qt
+
 from app.ambient_controller import AmbientController
 from app.feature_gate import can_use
 from app.screen_profiles import normalize_profile_id
@@ -27,6 +29,7 @@ class AmbientUiController:
         host = self._host
         host.ambient_toggle_button.clicked.connect(self._toggle)
         host.ambient_profile_segment.selected.connect(lambda _key: self._on_options_changed())
+        host.fusion_mode_segment.selected.connect(self._on_mode_changed)
         host.ambient_area_selector.selected.connect(lambda _region: self._on_options_changed())
         host.ambient_saturation_slider.valueChanged.connect(self._on_options_changed)
         host.ambient_smoothing_slider.valueChanged.connect(self._on_options_changed)
@@ -96,7 +99,41 @@ class AmbientUiController:
         self._refresh_profile_description()
 
     def is_running(self) -> bool:
-        return self._ambient.is_running()
+        """Whether the screen is driving the strip — in either mode.
+
+        The capture on its own is not the answer: in the combined mode the
+        coordinator is what owns the output, and the card's button has to
+        describe that rather than the thread underneath it.
+        """
+        return self._host._fusion_ui.is_running()
+
+    # ── the mode chooser ──────────────────────────────────────────────
+    def sync_mode_segment(self) -> None:
+        host = self._host
+        segment = getattr(host, "fusion_mode_segment", None)
+        if segment is None:
+            return
+        segment.blockSignals(True)
+        segment.set_current(host._fusion_ui.mode(), animate=False)
+        segment.blockSignals(False)
+        self._refresh_mode_hint()
+
+    def _on_mode_changed(self, key: str) -> None:
+        self._host._fusion_ui.set_mode(key)
+        self._refresh_mode_hint()
+        self._host._music_ui.refresh_shared_state()
+
+    def _refresh_mode_hint(self) -> None:
+        host = self._host
+        label = getattr(host, "fusion_mode_hint_label", None)
+        if label is None:
+            return
+        mode = host._fusion_ui.mode()
+        # A reason to show is more useful than the description: someone who
+        # picked a mode that cannot run needs to know why, not what it would
+        # have done. The choice itself is never quietly changed back.
+        reason = host._fusion_ui.unavailable_reason(mode)
+        label.setText(host._tr(reason) if reason else host._tr(f"fusion.mode.{mode}_desc"))
 
     def stats(self) -> dict:
         return {
@@ -110,8 +147,34 @@ class AmbientUiController:
         }
 
     def stop_if_running(self) -> None:
-        if self._ambient.is_running():
+        if self.is_running() or self._ambient.is_running():
             self._stop()
+
+    # ── lending the capture to Fusion ─────────────────────────────────
+    def connect_samples(self, slot) -> None:
+        """Send every captured frame to ``slot`` as well as to the card.
+
+        Queued on purpose: the frames are produced on the capture thread and the
+        composer lives on the UI thread, which is also why a sample carries its
+        own timestamp instead of being timed on arrival.
+        """
+        self._ambient.screen_sampled.connect(slot, Qt.QueuedConnection)
+
+    def start_listening(self) -> int:
+        """Capture the screen for someone else to compose with.
+
+        The card's own options still apply and its preview still updates; what
+        does not happen is this controller writing to the strip. Returns the
+        session token every frame of this run will carry.
+        """
+        self._apply_options()
+        self._frame_times.clear()
+        return self._ambient.start_listening()
+
+    def stop_listening(self) -> None:
+        if self._ambient.is_running():
+            self._ambient.stop()
+            self._host.ambient_preview.clear()
 
     def activate(self, profile_id: str | None = None) -> bool:
         """Start screen sync as if the card's toggle was pressed (keeps the
@@ -171,34 +234,13 @@ class AmbientUiController:
 
     def _start(self) -> None:
         host = self._host
-        # Only one owner drives the strip at a time — stop the others (music,
-        # software FX, DIY, sleep/sunrise timers).
-        host.stop_streams(exclude=self)
-        # If the strip is powered off the colour stream wouldn't show — turn it
-        # on first so enabling screen sync "just works".
-        if not host.power_button.isChecked():
-            host.power_button.setChecked(True)
-            host._toggle_power()
-        self._apply_options()
-
-        def sink(red: int, green: int, blue: int, token: int, frame_id: int) -> bool:
-            # Colour-only quiet stream: never resends brightness, drops frames
-            # while a BLE write is in flight, and stays out of the session log.
-            # The frame's identity rides along so the write's outcome can be
-            # attributed to the run that produced it, even if that run has ended
-            # by the time the strip answers.
-            return host._ble.set_color_stream(
-                red,
-                green,
-                blue,
-                observer=lambda ok: self._ambient.command_finished(token, frame_id, ok),
-            )
-
-        # Seed from the strip's current colour so nothing flashes black before
-        # the first captured frame (both the filter and the stream engine).
-        # _current_color() is a QColor — read the channels, don't index it.
-        seed = host._current_color()
-        self._ambient.start(sink, initial=(seed.red(), seed.green(), seed.blue()))
+        if not host._fusion_ui.activate():
+            host.ambient_toggle_button.setChecked(False)
+            self._refresh_mode_hint()
+            reason = host._fusion_ui.last_reason()
+            if reason:
+                host._show_error(host._tr(reason))
+            return
         self._set_manual_controls_enabled(False)
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_on"))
         self._frame_times.clear()
@@ -206,11 +248,13 @@ class AmbientUiController:
         if status is not None:
             status.setText(host._tr("ambient.capture_status", fps=0))
             status.setVisible(True)
+        host._music_ui.refresh_shared_state()
         host._log(host._tr("ambient.started_log"))
 
     def _stop(self) -> None:
         host = self._host
-        was_running = self._ambient.is_running()
+        was_running = host._fusion_ui.is_running()
+        host._fusion_ui.stop_if_running()
         self._ambient.stop()
         host.ambient_preview.clear()
         self._set_manual_controls_enabled(True)
@@ -219,6 +263,7 @@ class AmbientUiController:
         status = getattr(host, "ambient_status_label", None)
         if status is not None:
             status.setText(host._tr("ambient.status_off"))
+        host._music_ui.refresh_shared_state()
         if was_running:
             host._log(host._tr("ambient.stopped_log"))
 

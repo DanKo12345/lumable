@@ -70,6 +70,7 @@ def _app_window():
     is testing.
     """
     import app.ambient_ui_controller as ambient_module
+    import app.fusion_ui_controller as fusion_module
     import app.music_ui_controller as music_module
     from app.main_window import MainWindow
     from app.music_controller import MusicController
@@ -78,10 +79,12 @@ def _app_window():
     real_mss = sys.modules.get("mss")
     sys.modules["mss"] = types.SimpleNamespace(mss=_FakeSct)
     ambient_can_use = ambient_module.can_use
+    fusion_can_use = fusion_module.can_use
     music_can_use = music_module.can_use
     loopback = MusicController._open_loopback_reader
     mic = MusicController._open_mic_reader
     ambient_module.can_use = lambda _feature: True
+    fusion_module.can_use = lambda _feature: True
     music_module.can_use = lambda _feature: True
     MusicController._open_loopback_reader = staticmethod(_quiet_reader)
     MusicController._open_mic_reader = staticmethod(_quiet_reader)
@@ -100,6 +103,7 @@ def _app_window():
         win._ble.shutdown()
         win.close()
         ambient_module.can_use = ambient_can_use
+        fusion_module.can_use = fusion_can_use
         music_module.can_use = music_can_use
         MusicController._open_loopback_reader = loopback
         MusicController._open_mic_reader = mic

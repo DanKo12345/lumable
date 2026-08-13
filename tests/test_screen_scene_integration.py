@@ -129,11 +129,49 @@ class _Btn:
         pass
 
 
+class _FusionStub:
+    """Stands in for the coordinator-owning controller the card delegates to."""
+
+    def __init__(self) -> None:
+        self.activated = 0
+        self.running = False
+        self.reason = ""
+
+    def is_running(self) -> bool:
+        return self.running
+
+    def mode(self) -> str:
+        return "screen"
+
+    def unavailable_reason(self, _mode=None) -> str:
+        return self.reason
+
+    def last_reason(self) -> str:
+        return self.reason
+
+    def activate(self) -> bool:
+        self.activated += 1
+        self.running = True
+        return True
+
+    def stop_if_running(self) -> None:
+        self.running = False
+
+
+class _MusicStub:
+    def refresh_shared_state(self) -> None:
+        pass
+
+
 class _StartHost:
     def __init__(self) -> None:
         from PySide6.QtGui import QColor
 
         self._qcolor = QColor(10, 20, 30)
+        self._fusion_ui = _FusionStub()
+        self._music_ui = _MusicStub()
+        self.fusion_mode_segment = None
+        self.fusion_mode_hint_label = None
         self._is_connected = True
         self.license_overlays = 0
         self.errors: list[str] = []
@@ -174,31 +212,48 @@ class _StartHost:
         self.errors.append(message)
 
 
-def test_start_seeds_the_stream_with_the_current_qcolor(monkeypatch) -> None:
-    # Regression for the P1 crash: _current_color() is a QColor (not
-    # subscriptable). _start() must convert it and pass a real (r,g,b) seed, so a
-    # future `seed[0]` would fail this test instead of only crashing at runtime.
-    import app.ambient_ui_controller as mod
+def test_the_seed_handed_to_the_stream_is_a_real_rgb_triple(monkeypatch) -> None:
+    """Regression for the P1 crash: ``_current_color()`` is a QColor and is not
+    subscriptable. The seed now leaves from the Fusion controller, which is
+    where the conversion has to happen — a future ``seed[0]`` fails here instead
+    of only at runtime.
+    """
+    import app.fusion_ui_controller as fusion_mod
 
     started: dict = {}
 
-    class _FakeAmbient:
+    class _FakeCoordinator:
         def __init__(self, _host) -> None:
-            pass
-
-        def configure(self, **_kwargs) -> None:
             pass
 
         def is_running(self) -> bool:
             return False
 
-        def start(self, _sink, initial=(0, 0, 0)) -> None:
-            started["initial"] = initial
+        def attach_sources(self, **_kwargs) -> None:
+            pass
 
-    monkeypatch.setattr(mod, "AmbientController", _FakeAmbient)
-    ui = mod.AmbientUiController(_StartHost())
-    ui._start()
+        def start(self, _sink, *, mode, initial=(0, 0, 0)) -> None:
+            started["initial"] = initial
+            started["mode"] = mode
+
+        def set_beat_gain(self, _gain) -> None:
+            pass
+
+        def set_powered(self, _on) -> None:
+            pass
+
+    host = _StartHost()
+    host._music_ui = type(
+        "M", (), {"has_audio_source": lambda self: True, "beat_strength": lambda self: 0.4}
+    )()
+    monkeypatch.setattr(fusion_mod, "FusionCoordinator", _FakeCoordinator)
+    monkeypatch.setattr(fusion_mod, "can_use", lambda _feature: True)
+
+    controller = fusion_mod.FusionUiController(host)
+    assert controller.activate() is True
+
     assert started["initial"] == (10, 20, 30)
+    assert started["mode"] == "screen"
 
 
 @pytest.mark.parametrize("licensed, connected", [(False, True), (True, False)])

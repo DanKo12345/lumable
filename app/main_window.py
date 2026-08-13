@@ -51,6 +51,7 @@ from app.device_view_state import describe_device
 from app.diagnostics_controller import DiagnosticsController
 from app.diy_ui_controller import DiyUiController
 from app.feature_gate import FREE_COLOR_HISTORY_COUNT, PRO_COLOR_HISTORY_COUNT, can_use
+from app.fusion_ui_controller import FusionUiController
 from app.hotkey_controller import HotkeyController
 from app.hotkey_ui_controller import HotkeyUiController
 from app.license_refresh import LicenseRefresher
@@ -234,6 +235,7 @@ class MainWindow(QMainWindow):
         self._quick_mode_ctrl = QuickModeController(self)
         self._ambient_ui = AmbientUiController(self)
         self._music_ui = MusicUiController(self)
+        self._fusion_ui = FusionUiController(self)
         self._software_fx_ui = SoftwareEffectUiController(self)
         self._diy_ui = DiyUiController(self)
         self._scene_ui = SceneUiController(self)
@@ -641,6 +643,8 @@ class MainWindow(QMainWindow):
         self._wire_schedule_events()
         self._ambient_ui.wire()
         self._music_ui.wire()
+        self._fusion_ui.wire()
+        self._ambient_ui.sync_mode_segment()
         self._software_fx_ui.wire()
         self._diy_ui.wire()
         self._scene_ui.wire()
@@ -1056,7 +1060,7 @@ class MainWindow(QMainWindow):
         """Every controller that can drive the strip's colour path. Exactly one
         of these owns the strip at a time; starting one stops the rest."""
         return (
-            self._ambient_ui,
+            self._fusion_ui,
             self._music_ui,
             self._software_fx_ui,
             self._diy_ui,
@@ -1638,6 +1642,7 @@ class MainWindow(QMainWindow):
             self._stop_automations()
             self._tray_controller.hide_icon()
             self._local_api.shutdown()
+            self._fusion_ui.shutdown()
             self._ambient_ui.shutdown()
             self._music_ui.shutdown()
             self._software_fx_ui.shutdown()

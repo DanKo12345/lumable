@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation
+from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QGraphicsOpacityEffect
 
@@ -297,6 +297,13 @@ class MusicUiController:
             self._restart_capture()
 
     def _restart_capture(self) -> None:
+        host = self._host
+        if host._fusion_ui.is_running():
+            # Only the audio device is reopened. The screen keeps arriving and
+            # the composed colour keeps going out, so changing the microphone
+            # does not blink the light.
+            host._fusion_ui.restart_audio()
+            return
         if self._sink is None:
             return
         self._music.stop()
@@ -367,6 +374,59 @@ class MusicUiController:
             # still describes the run being asked about.
             "music_sync": self._music.music_report(),
         }
+
+    # ── lending the analysis to Fusion ────────────────────────────────
+    def connect_samples(self, slot) -> None:
+        """Send every analysed block to ``slot`` as well as to the card."""
+        self._music.modulation_sampled.connect(slot, Qt.QueuedConnection)
+
+    def start_listening(self) -> int:
+        """Analyse the sound for someone else to compose with.
+
+        No colour is produced and nothing is written to the strip; the card's
+        source, gate and reaction settings all still apply. Returns the session
+        token every block of this run will carry.
+        """
+        self._apply_options()
+        return self._music.start_listening()
+
+    def stop_listening(self) -> None:
+        if self._music.is_running():
+            self._music.stop()
+
+    def refresh_shared_state(self) -> None:
+        """Show whether music is currently working as part of the screen mode.
+
+        One button stops the combined mode, and it is the screen card's. A second
+        one here would be two buttons for one thing, so this explains where the
+        stop lives instead of offering a different one.
+        """
+        host = self._host
+        shared = host._fusion_ui.mode() == "screen_music"
+        button = getattr(host, "music_toggle_button", None)
+        status = getattr(host, "music_status_label", None)
+        if button is not None:
+            button.setEnabled(not shared)
+        if status is not None and shared:
+            status.setText(host._tr("fusion.music_shared"))
+            status.setVisible(True)
+        elif status is not None and not self._music.is_running():
+            status.setText(host._tr("music.status_off"))
+
+    def has_audio_source(self) -> bool:
+        """Whether there is a device to listen to at all.
+
+        Asked before the combined mode starts so the reason can be shown next to
+        the choice, instead of the mode appearing to start and then dying with
+        an error a moment later.
+        """
+        combo = getattr(self._host, "music_source_combo", None)
+        if combo is None:
+            return True
+        return combo.count() > 0
+
+    def beat_strength(self) -> float:
+        return float(self._music.options().beat_strength)
 
     def stop_if_running(self) -> None:
         if self._music.is_running():

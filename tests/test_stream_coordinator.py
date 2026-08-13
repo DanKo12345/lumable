@@ -16,7 +16,11 @@ from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
 
-_OWNER_ATTRS = ("_ambient_ui", "_music_ui", "_software_fx_ui", "_diy_ui", "_timer_ctrl")
+# Screen Sync no longer owns the strip itself: in both of its modes the colour
+# is composed and written by the Fusion coordinator, so that is the owner the
+# others have to yield to. The music card is still here because its standalone
+# mode is unchanged and still takes the strip on its own.
+_OWNER_ATTRS = ("_fusion_ui", "_music_ui", "_software_fx_ui", "_diy_ui", "_timer_ctrl")
 
 
 class _Recorder:

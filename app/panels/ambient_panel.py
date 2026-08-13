@@ -46,6 +46,23 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
     settings_layout.addWidget(mode_row)
     settings_layout.addWidget(divider(host))
 
+    # What the strip follows: the screen alone, or the screen with the music
+    # moving its brightness. Deliberately one choice on the screen card rather
+    # than a mode hidden inside the music card — the colour comes from here
+    # either way, and two cards each claiming to start something is exactly the
+    # confusion this replaces.
+    host.fusion_mode_segment = SegmentedControl(
+        [(key, host._tr(f"fusion.mode.{key}")) for key in ("screen", "screen_music")]
+    )
+    fusion_row, fusion_layout, host.fusion_mode_title_label, host.fusion_mode_hint_label, _ = list_row(
+        host, "audio-lines", _SYNC_TINT, host._tr("fusion.mode_title")
+    )
+    assert host.fusion_mode_hint_label is not None
+    host.fusion_mode_hint_label.setText(host._tr("fusion.mode.screen_desc"))
+    fusion_layout.addWidget(host.fusion_mode_segment, 0, Qt.AlignVCenter)
+    settings_layout.addWidget(fusion_row)
+    settings_layout.addWidget(divider(host))
+
     profile_row, profile_layout, host.ambient_profile_title_label, host.ambient_profile_description, _ = list_row(
         host, "gauge", _PROFILE_TINT, host._tr("ambient.profile_title")
     )
