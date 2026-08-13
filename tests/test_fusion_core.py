@@ -44,7 +44,7 @@ def _rig(*, mode: str = "screen_music") -> tuple[FusionCompositor, _Clock]:
 
 
 def _feed(comp: FusionCompositor, clock: _Clock, *, level: float, beat: float = 0.0) -> None:
-    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness=0.8, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness_factor=0.8, at=clock.now))
     comp.submit_music(MusicModulation(level=level, beat_envelope=beat, at=clock.now))
 
 
@@ -94,20 +94,20 @@ def test_silence_returns_the_frame_to_the_base_exactly() -> None:
     "the base" is not a state the strip can actually be in."""
     comp, clock = _rig()
     quiet = _settle(comp, clock, level=0.1)
-    assert quiet.brightness < 0.8, "the music was not being heard at all"
+    assert quiet.brightness_factor < 0.8, "the music was not being heard at all"
 
     # The music stops arriving; the base keeps coming.
     seen_between = False
     for _ in range(200):
         clock.advance(0.05)
-        comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness=0.8, at=clock.now))
+        comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness_factor=0.8, at=clock.now))
         frame = comp.compose()
-        if 0.0 < frame.brightness - quiet.brightness < 0.8 - quiet.brightness:
+        if 0.0 < frame.brightness_factor - quiet.brightness_factor < 0.8 - quiet.brightness_factor:
             seen_between = True
 
     assert seen_between, "the modulation was cut rather than faded out"
     assert frame.activity == 0.0
-    assert frame.brightness == 0.8
+    assert frame.brightness_factor == 0.8
     assert frame.music_stale is True
     assert frame.should_send is True
 
@@ -130,10 +130,10 @@ def test_quiet_music_pulls_brightness_down_only_as_far_as_the_floor() -> None:
 
     frame = _settle(comp, clock, level=0.0)
 
-    assert frame.brightness == round(0.8 * MODULATION_FLOOR, 10) or abs(
-        frame.brightness - 0.8 * MODULATION_FLOOR
+    assert frame.brightness_factor == round(0.8 * MODULATION_FLOOR, 10) or abs(
+        frame.brightness_factor - 0.8 * MODULATION_FLOOR
     ) < 0.01
-    assert frame.brightness > 0.0
+    assert frame.brightness_factor > 0.0
 
 
 def test_loud_music_leaves_the_base_brightness_alone() -> None:
@@ -141,7 +141,7 @@ def test_loud_music_leaves_the_base_brightness_alone() -> None:
 
     frame = _settle(comp, clock, level=1.0)
 
-    assert abs(frame.brightness - 0.8) < 0.01
+    assert abs(frame.brightness_factor - 0.8) < 0.01
 
 
 def test_a_beat_is_an_impulse_above_where_the_music_already_was() -> None:
@@ -152,8 +152,8 @@ def test_a_beat_is_an_impulse_above_where_the_music_already_was() -> None:
     _feed(comp, clock, level=0.4, beat=1.0)
     beat = comp.compose(beat_gain=1.0)
 
-    assert beat.brightness > steady.brightness
-    assert beat.brightness <= steady.brightness + BEAT_HEADROOM + 0.01
+    assert beat.brightness_factor > steady.brightness_factor
+    assert beat.brightness_factor <= steady.brightness_factor + BEAT_HEADROOM + 0.01
 
 
 def test_the_beat_slider_is_the_only_thing_aiming_the_impulse() -> None:
@@ -167,14 +167,14 @@ def test_the_beat_slider_is_the_only_thing_aiming_the_impulse() -> None:
     _feed(comp, clock, level=0.4, beat=1.0)
     full = comp.compose(beat_gain=1.0)
 
-    assert full.brightness > off.brightness
+    assert full.brightness_factor > off.brightness_factor
 
 
 # ── arriving and leaving smoothly ─────────────────────────────────────
 def test_music_appearing_fades_in_rather_than_jumping() -> None:
     comp, clock = _rig()
     clock.advance(0.05)
-    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness=0.8, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness_factor=0.8, at=clock.now))
     comp.compose()
 
     clock.advance(0.05)
@@ -182,7 +182,7 @@ def test_music_appearing_fades_in_rather_than_jumping() -> None:
     first = comp.compose()
 
     assert 0.0 < first.activity < 0.5, "the influence arrived all at once"
-    assert first.brightness > 0.8 * MODULATION_FLOOR
+    assert first.brightness_factor > 0.8 * MODULATION_FLOOR
 
 
 def test_one_dropped_audio_block_is_not_silence() -> None:
@@ -192,7 +192,7 @@ def test_one_dropped_audio_block_is_not_silence() -> None:
     _settle(comp, clock, level=0.5)
 
     clock.advance(0.06)
-    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness=0.8, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness_factor=0.8, at=clock.now))
     frame = comp.compose()
 
     assert frame.music_stale is False
@@ -201,11 +201,11 @@ def test_one_dropped_audio_block_is_not_silence() -> None:
 def test_a_slow_audio_device_is_not_permanently_stale() -> None:
     """A long block is a property of the device, not a sign that music stopped."""
     comp, clock = _rig()
-    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness=0.8, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness_factor=0.8, at=clock.now))
     comp.submit_music(MusicModulation(level=0.5, at=clock.now, block_seconds=0.4))
 
     clock.advance(0.6)
-    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness=0.8, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness_factor=0.8, at=clock.now))
 
     assert comp.compose().music_stale is False
 
@@ -254,11 +254,11 @@ def test_power_off_does_not_leave_the_music_influence_wound_up() -> None:
     comp.set_output_allowed(True)
 
     clock.advance(0.05)
-    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness=0.8, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness_factor=0.8, at=clock.now))
     frame = comp.compose()
 
     assert frame.activity == 0.0
-    assert frame.brightness == 0.8
+    assert frame.brightness_factor == 0.8
 
 
 # ── the overlay ───────────────────────────────────────────────────────
@@ -269,7 +269,7 @@ def test_an_overlay_takes_the_frame_and_gives_it_back_exactly() -> None:
     before = comp.compose()
 
     comp.show_overlay(
-        TransientOverlay(rgb=(255, 0, 0), brightness=1.0, started_at=clock.now, duration=1.0)
+        TransientOverlay(rgb=(255, 0, 0), brightness_factor=1.0, started_at=clock.now, duration=1.0)
     )
     clock.advance(0.5)
     _feed(comp, clock, level=1.0)
@@ -283,7 +283,7 @@ def test_an_overlay_takes_the_frame_and_gives_it_back_exactly() -> None:
     assert during.overlay is True
     assert after.rgb == before.rgb
     assert after.overlay is False
-    assert abs(after.brightness - before.brightness) < 0.02
+    assert abs(after.brightness_factor - before.brightness_factor) < 0.02
 
 
 def test_an_overlay_fades_in_and_out_rather_than_cutting() -> None:
@@ -310,7 +310,7 @@ def test_the_screen_keeps_arriving_underneath_an_overlay() -> None:
     when it ends has to be the screen as it is *now* — a second of the picture
     from before the alert would be a visible rewind."""
     comp, clock = _rig(mode="screen")
-    comp.submit_base(BaseSample(rgb=(10, 20, 30), brightness=0.5, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(10, 20, 30), brightness_factor=0.5, at=clock.now))
     comp.compose()
 
     comp.show_overlay(
@@ -319,11 +319,11 @@ def test_the_screen_keeps_arriving_underneath_an_overlay() -> None:
     # The screen moves on while the alert is up.
     for _ in range(10):
         clock.advance(0.05)
-        comp.submit_base(BaseSample(rgb=(90, 180, 240), brightness=0.5, at=clock.now))
+        comp.submit_base(BaseSample(rgb=(90, 180, 240), brightness_factor=0.5, at=clock.now))
         comp.compose()
 
     clock.advance(0.05)
-    comp.submit_base(BaseSample(rgb=(90, 180, 240), brightness=0.5, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(90, 180, 240), brightness_factor=0.5, at=clock.now))
     frame = comp.compose()
 
     assert frame.overlay is False
@@ -366,23 +366,23 @@ def test_an_overlay_with_no_fade_still_ends_when_its_time_is_up() -> None:
 
 
 def test_an_overlay_blends_its_brightness_in_rather_than_replacing_it() -> None:
-    """Halfway through a fade the frame is halfway between the two, brightness
-    included. Snapping brightness while the colour eases is the flicker a fade
+    """Halfway through a fade the frame is halfway between the two, brightness_factor
+    included. Snapping brightness_factor while the colour eases is the flicker a fade
     exists to avoid."""
     comp, clock = _rig()
-    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness=0.2, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness_factor=0.2, at=clock.now))
     comp.show_overlay(
         TransientOverlay(
-            rgb=(255, 0, 0), brightness=1.0, started_at=clock.now, duration=2.0, fade_in=0.4
+            rgb=(255, 0, 0), brightness_factor=1.0, started_at=clock.now, duration=2.0, fade_in=0.4
         )
     )
 
     clock.advance(0.2)
-    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness=0.2, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(200, 120, 40), brightness_factor=0.2, at=clock.now))
     frame = comp.compose()
 
-    assert 0.2 < frame.brightness < 1.0
-    assert abs(frame.brightness - 0.6) < 0.05
+    assert 0.2 < frame.brightness_factor < 1.0
+    assert abs(frame.brightness_factor - 0.6) < 0.05
 
 
 def test_an_expired_overlay_is_forgotten_and_does_not_come_back() -> None:
@@ -415,13 +415,13 @@ def test_screen_only_is_the_same_path_with_no_music() -> None:
     is this compositor with nothing modulating it."""
     comp, clock = _rig(mode="screen")
     clock.advance(0.05)
-    comp.submit_base(BaseSample(rgb=(12, 34, 56), brightness=0.5, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(12, 34, 56), brightness_factor=0.5, at=clock.now))
 
     frame = comp.compose()
 
     assert frame.should_send is True
     assert frame.rgb == (12, 34, 56)
-    assert frame.brightness == 0.5
+    assert frame.brightness_factor == 0.5
     assert frame.music_stale is True
     assert frame.base_source == "screen"
 
@@ -435,14 +435,13 @@ def test_choosing_another_mode_drops_what_the_old_one_left_behind() -> None:
     assert comp.compose().reason == "no_base"
 
 
-def test_brightness_never_leaves_the_range_the_drivers_accept() -> None:
+def test_the_factor_never_leaves_the_range_a_colour_can_be_scaled_by() -> None:
     comp, clock = _rig()
-    comp.submit_base(BaseSample(rgb=(255, 255, 255), brightness=1.0, at=clock.now))
+    comp.submit_base(BaseSample(rgb=(255, 255, 255), brightness_factor=1.0, at=clock.now))
     _settle(comp, clock, level=1.0, beat=1.0)
 
     clock.advance(0.05)
     _feed(comp, clock, level=1.0, beat=1.0)
     frame = comp.compose(beat_gain=1.0)
 
-    assert 0.0 <= frame.brightness <= 1.0
-    assert 0 <= frame.brightness8 <= 255
+    assert 0.0 <= frame.brightness_factor <= 1.0

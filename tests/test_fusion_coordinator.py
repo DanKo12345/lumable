@@ -436,9 +436,9 @@ def test_power_off_stops_the_writes_and_keeps_the_mode() -> None:
     assert coordinator.mode() == "screen_music"
 
 
-# ── brightness rides in the colour ────────────────────────────────────
+# ── brightness_factor rides in the colour ────────────────────────────────────
 def test_brightness_is_folded_into_the_colour_not_sent_beside_it(app) -> None:
-    """A separate brightness command on every audio block would double the
+    """A separate brightness_factor command on every audio block would double the
     traffic on a link that manages about ten writes a second."""
     clock = _Clock()
     strip = _Strip()
@@ -468,11 +468,176 @@ def test_brightness_is_folded_into_the_colour_not_sent_beside_it(app) -> None:
         coordinator.stop()
 
     frame = coordinator.last_frame()
-    assert frame.brightness < 0.7, "the music was not modulating at all"
+    assert frame.brightness_factor < 0.7, "the music was not modulating at all"
     assert frame.rgb == (200, 200, 200), "the composed colour was dimmed twice"
     # And the dimming actually left the coordinator: the frame keeps the screen's
     # colour, the write carries it scaled.
     written = strip.writes[-1]
     assert written == pytest.approx(
-        tuple(round(200 * frame.brightness) for _ in range(3)), abs=2
-    ), f"brightness never reached the strip: {written}"
+        tuple(round(200 * frame.brightness_factor) for _ in range(3)), abs=2
+    ), f"brightness_factor never reached the strip: {written}"
+
+
+# ── power acts on all three states ────────────────────────────────────
+class _Sources:
+    """Stands in for the screen and the microphone: records, hands out tokens."""
+
+    def __init__(self) -> None:
+        self.running = False
+        self.starts = 0
+        self.stops = 0
+        self._token = 100
+
+    def start(self) -> tuple[int, int]:
+        self.running = True
+        self.starts += 1
+        self._token += 1
+        return (self._token, self._token)
+
+    def stop(self) -> None:
+        self.running = False
+        self.stops += 1
+
+
+def test_power_off_stops_capture_instead_of_running_it_for_nothing() -> None:
+    """Grabbing the screen twenty times a second and holding a microphone open
+    for a strip that is off costs battery and puts a recording indicator on
+    someone's taskbar with nothing to explain it."""
+    clock = _Clock()
+    sources = _Sources()
+    coordinator = FusionCoordinator(clock=clock)
+    coordinator.attach_sources(start=sources.start, stop=sources.stop)
+    coordinator.start(_Strip().sink, mode="screen_music")
+    try:
+        coordinator.set_powered(True)
+        assert sources.running is True
+
+        coordinator.set_powered(False)
+    finally:
+        coordinator.stop()
+
+    assert sources.running is False
+    assert coordinator.mode() == "screen_music", "the choice was forgotten"
+
+
+def test_power_on_starts_capture_again_and_waits_for_a_fresh_frame() -> None:
+    """The already-agreed rule, now with the sources following it: what was
+    captured before the strip went off describes a screen from minutes ago."""
+    clock = _Clock()
+    sources = _Sources()
+    strip = _Strip()
+    coordinator = FusionCoordinator(clock=clock)
+    coordinator.attach_sources(start=sources.start, stop=sources.stop)
+    coordinator.start(strip.sink, mode="screen")
+    try:
+        coordinator.set_powered(True)
+        first_token = sources._token
+        coordinator.submit_screen(
+            ScreenSample(session_token=first_token, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        coordinator._tick()
+        assert coordinator.last_frame().should_send is True
+
+        coordinator.set_powered(False)
+        clock.advance(120.0)
+        coordinator.set_powered(True)
+        coordinator._tick()
+        stale_frame = coordinator.last_frame()
+
+        # A frame from the run before, arriving late, is not what comes back.
+        coordinator.submit_screen(
+            ScreenSample(session_token=first_token, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        coordinator._tick()
+        still_nothing = coordinator.last_frame()
+
+        clock.advance(0.05)
+        coordinator.submit_screen(
+            ScreenSample(session_token=sources._token, captured_at=clock.now, rgb=(30, 40, 50))
+        )
+        coordinator._tick()
+        fresh = coordinator.last_frame()
+    finally:
+        coordinator.stop()
+
+    assert sources.starts == 2
+    assert stale_frame.should_send is False and stale_frame.reason == "no_base"
+    assert still_nothing.should_send is False, "the previous run's frame came back"
+    assert fresh.rgb == (30, 40, 50)
+
+
+def test_nothing_is_written_between_power_off_and_the_first_fresh_frame(app) -> None:
+    clock = _Clock()
+    sources = _Sources()
+    strip = _Strip()
+    coordinator = FusionCoordinator(clock=clock)
+    coordinator.attach_sources(start=sources.start, stop=sources.stop)
+    coordinator.start(strip.sink, mode="screen")
+    try:
+        coordinator.set_powered(True)
+        coordinator.submit_screen(
+            ScreenSample(session_token=sources._token, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        _drain(coordinator, clock, app, seconds=0.3)
+        assert strip.writes
+        before_off = len(strip.writes)
+
+        coordinator.set_powered(False)
+        _drain(coordinator, clock, app, seconds=0.3)
+        after_off = len(strip.writes)
+
+        coordinator.set_powered(True)
+        _drain(coordinator, clock, app, seconds=0.3)
+    finally:
+        coordinator.stop()
+
+    assert after_off == before_off, "writes continued after the strip was switched off"
+    assert len(strip.writes) == after_off, "a colour went out before any fresh frame"
+
+
+# ── the brightness slider stays the strip's own ceiling ───────────────
+class _Backend:
+    """A BLE facade that records which commands were asked for."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def set_color_stream(self, red, green, blue, *_labels) -> bool:
+        self.calls.append("color")
+        return True
+
+    def set_brightness(self, _value) -> bool:
+        self.calls.append("brightness")
+        return True
+
+
+def test_no_hardware_brightness_command_is_sent_on_audio_blocks(app) -> None:
+    """The slider is the strip's ceiling and belongs to the person who set it.
+    Fusion moves the colour underneath it, one command per frame — a brightness
+    command per audio block would both fight the slider and double the traffic
+    on a link that manages about ten writes a second."""
+    clock = _Clock()
+    backend = _Backend()
+    coordinator = FusionCoordinator(clock=clock)
+    coordinator.expect_screen(1)
+    coordinator.expect_music(1)
+    coordinator.start(backend.set_color_stream, mode="screen_music")
+    try:
+        for _ in range(60):
+            clock.advance(0.05)
+            coordinator.submit_screen(
+                ScreenSample(session_token=1, captured_at=clock.now, rgb=(200, 200, 200))
+            )
+            coordinator.submit_music(
+                MusicModulationSample(
+                    session_token=1, captured_at=clock.now, level=0.1, block_seconds=0.02
+                )
+            )
+            coordinator._tick()
+            app.processEvents()
+            time.sleep(0.005)
+    finally:
+        coordinator.stop()
+
+    assert "color" in backend.calls, "nothing was written at all"
+    assert "brightness" not in backend.calls

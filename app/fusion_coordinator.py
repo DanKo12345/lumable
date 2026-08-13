@@ -16,11 +16,16 @@ at unrelated rates would double the command rate, and which of them arrived last
 would decide what the strip shows. Here the rate belongs to the engine and
 nothing else, whether one source is running or both.
 
-**Brightness travels in the colour.** The strip takes a colour and a brightness
-as two separate commands, and music moves brightness on every block — sending
-both would double the traffic on a link that manages about ten writes a second.
-The composed brightness scales the RGB instead, which is one write and keeps the
-hue the screen chose.
+**The factor travels in the colour.** The strip takes a colour and a hardware
+brightness as two separate commands, and music moves its factor on every block —
+sending both would double the traffic on a link that manages about ten writes a
+second. The composed factor scales the RGB instead: one write, the hue the
+screen chose, and the brightness slider left alone as the strip's own ceiling.
+
+So the factor is never a device brightness and must not be reported as one. At a
+hardware 50% and a factor of 0.65 the wall shows about a third of full. A
+diagnostics block says both — the strip's brightness and Fusion's factor — and
+never one number standing for the two.
 
 **Only the current run is accepted.** Each source stamps its samples with the
 token of its capture run, and a sample from any other run is dropped rather than
@@ -91,6 +96,8 @@ class FusionCoordinator(QObject):
         self._last_frame = ComposedFrame()
         self._dropped_screen = 0
         self._dropped_music = 0
+        self._start_sources: Callable[[], tuple[int, int]] | None = None
+        self._stop_sources: Callable[[], None] | None = None
 
     # ── running ───────────────────────────────────────────────────────
     def is_running(self) -> bool:
@@ -123,9 +130,55 @@ class FusionCoordinator(QObject):
     def set_beat_gain(self, gain: float) -> None:
         self._beat_gain = max(0.0, min(1.0, float(gain)))
 
+    def attach_sources(
+        self,
+        *,
+        start: Callable[[], tuple[int, int]],
+        stop: Callable[[], None],
+    ) -> None:
+        """How to start and stop capture. ``start`` returns the two new tokens.
+
+        Given to the coordinator rather than reached for, so power can act on
+        all three states at once without this module knowing what a screen or a
+        microphone is.
+        """
+        self._start_sources = start
+        self._stop_sources = stop
+
     def set_output_allowed(self, allowed: bool) -> None:
-        """Power. Blocks writing, keeps the chosen mode — see fusion_core."""
+        """Permission to write, on its own. See :meth:`set_powered` for power."""
         self._compositor.set_output_allowed(bool(allowed))
+
+    def set_powered(self, on: bool) -> None:
+        """Power, acting on each of the three states for its own reason.
+
+        *Chosen* is untouched: switching the strip off is not a change of mind
+        about what it should be doing, and 0.4.0 exists partly because today it
+        silently is one.
+
+        *Capture* stops. Holding a microphone open and grabbing the screen
+        twenty times a second for a strip that is off is a cost with no result —
+        and on Windows it is a microphone indicator sitting on someone's taskbar
+        with nothing to explain it.
+
+        *Output* is refused, and on the way back the base and the modulation go
+        with it: the next colour is the screen as it is when the light comes on,
+        not the frame this was holding when it went off.
+        """
+        if on:
+            self._compositor.set_output_allowed(True)
+            if self._start_sources is not None:
+                screen_token, music_token = self._start_sources()
+                self.expect_screen(screen_token or 0)
+                self.expect_music(music_token or 0)
+            return
+        if self._stop_sources is not None:
+            self._stop_sources()
+        # After the sources, so a frame in flight from a capture thread that has
+        # not noticed yet arrives to a coordinator already refusing to write.
+        self._compositor.set_output_allowed(False)
+        self._screen_token = 0
+        self._music_token = 0
 
     def output_allowed(self) -> bool:
         return self._compositor.output_allowed
@@ -141,7 +194,7 @@ class FusionCoordinator(QObject):
             return
         base = BaseSample(
             rgb=tuple(sample.rgb),
-            brightness=1.0,
+            brightness_factor=1.0,
             source="screen",
             at=sample.captured_at,
         )
@@ -178,7 +231,7 @@ class FusionCoordinator(QObject):
         self._last_frame = frame
         if frame.should_send:
             red, green, blue = frame.rgb
-            scale = frame.brightness
+            scale = frame.brightness_factor
             self._engine.set_target(
                 round(red * scale), round(green * scale), round(blue * scale)
             )

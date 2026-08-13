@@ -13,9 +13,10 @@ colour. It carries its own timestamp because a base that has stopped arriving
 must not keep being sent: a frozen picture on the wall is worse than nothing,
 and it is indistinguishable from a working one.
 
-**A modulation** is what the music is doing. It moves brightness and it never
+**A modulation** is what the music is doing. It moves the brightness factor and
+never
 touches hue: the screen says *what colour*, the music says *how much of it*.
-Modulation is bounded — at its quietest it takes brightness down to
+Modulation is bounded — at its quietest it takes the factor down to
 ``MODULATION_FLOOR`` of the base, never to black — because a strip that goes
 dark in every quiet passage reads as broken rather than musical.
 
@@ -55,14 +56,14 @@ from dataclasses import dataclass
 
 RGB = tuple[int, int, int]
 
-# How far down music may pull the base brightness. Not a slider: v1 fixes the
+# How far down music may pull the base factor. Not a slider: v1 fixes the
 # range so that "Screen + Music" has one predictable character, and the only
 # thing the user aims is the beat impulse. 0.65 is deep enough to be plainly
 # visible on a wall and shallow enough that a quiet passage still lights a room.
 MODULATION_FLOOR = 0.65
 
 # How much a beat may add on top, at full "Бит". Headroom, not a target: it is
-# added to an already-modulated brightness and the result is clipped, so a beat
+# added to an already-modulated factor and the result is clipped, so a beat
 # in a loud passage is a smaller jump than a beat in a quiet one — which is how
 # a beat sounds.
 BEAT_HEADROOM = 0.35
@@ -103,7 +104,7 @@ class BaseSample:
     """What colour the strip should be, before music has a say."""
 
     rgb: RGB
-    brightness: float = 1.0
+    brightness_factor: float = 1.0
     source: str = "screen"
     at: float = 0.0
 
@@ -127,7 +128,7 @@ class TransientOverlay:
     """Something shown on top for a moment, then gone."""
 
     rgb: RGB
-    brightness: float = 1.0
+    brightness_factor: float = 1.0
     started_at: float = 0.0
     duration: float = 1.0
     fade_in: float = 0.15
@@ -151,7 +152,12 @@ class ComposedFrame:
     """The one answer. ``should_send`` is the answer to "anything to write?"."""
 
     rgb: RGB = (0, 0, 0)
-    brightness: float = 0.0
+    # A fraction of the base, never a device brightness. The strip keeps its own
+    # hardware brightness — the slider a person set — and this scales the colour
+    # underneath it. At a hardware 50% and a factor of 0.65 the wall shows about
+    # a third of full, which is correct and is why the two are never added up or
+    # reported as one number.
+    brightness_factor: float = 0.0
     should_send: bool = False
     reason: str = "no_base"
     activity: float = 0.0
@@ -159,11 +165,6 @@ class ComposedFrame:
     base_stale: bool = False
     overlay: bool = False
     base_source: str = ""
-
-    @property
-    def brightness8(self) -> int:
-        """Brightness as the 0..255 the drivers speak."""
-        return _clamp8(self.brightness * 255.0)
 
 
 class FusionCompositor:
@@ -304,7 +305,7 @@ class FusionCompositor:
                 base_source=base.source,
             )
 
-        brightness = _clamp(base.brightness)
+        brightness_factor = _clamp(base.brightness_factor)
         if activity > 0.0 and music is not None:
             # The last known modulation keeps being applied while the influence
             # fades. Dropping it the instant the audio goes stale would make
@@ -312,15 +313,15 @@ class FusionCompositor:
             # decoration — the strip would still snap back to the base in one
             # frame. The influence reaching zero is what ends it, and it reaches
             # zero exactly.
-            # Quiet music pulls brightness down toward the floor; loud music
+            # Quiet music pulls the factor down toward the floor; loud music
             # leaves it where the base put it. The factor passes through exactly
             # 1.0 at zero influence, which is what makes silence a true return.
             factor = MODULATION_FLOOR + (1.0 - MODULATION_FLOOR) * _clamp(music.level)
-            brightness *= 1.0 + activity * (factor - 1.0)
-            brightness += (
+            brightness_factor *= 1.0 + activity * (factor - 1.0)
+            brightness_factor += (
                 activity * _clamp(music.beat_envelope) * _clamp(beat_gain) * BEAT_HEADROOM
             )
-        brightness = _clamp(brightness)
+        brightness_factor = _clamp(brightness_factor)
 
         rgb = base.rgb
         reason = "composed"
@@ -330,12 +331,12 @@ class FusionCompositor:
                 _clamp8(rgb[1] + (overlay.rgb[1] - rgb[1]) * overlay_weight),
                 _clamp8(rgb[2] + (overlay.rgb[2] - rgb[2]) * overlay_weight),
             )
-            brightness += (_clamp(overlay.brightness) - brightness) * overlay_weight
+            brightness_factor += (_clamp(overlay.brightness_factor) - brightness_factor) * overlay_weight
             reason = "overlay"
 
         return ComposedFrame(
             rgb=(_clamp8(rgb[0]), _clamp8(rgb[1]), _clamp8(rgb[2])),
-            brightness=_clamp(brightness),
+            brightness_factor=_clamp(brightness_factor),
             should_send=True,
             reason=reason,
             activity=activity,
