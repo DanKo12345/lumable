@@ -250,13 +250,18 @@ class MusicController(QObject):
         """Which run is current. Every start gets a new one."""
         return self._session_token
 
-    def start_output(self, sink: Callable[[int, int, int], None]) -> None:
-        """Listen, and drive the strip with the colour — music reactivity."""
-        self._begin(sink)
+    def start_output(self, sink: Callable[[int, int, int], None]) -> int:
+        """Listen, and drive the strip with the colour — music reactivity.
 
-    def start_listening(self) -> None:
+        Returns the session token every sample of this run will carry.
+        """
+        self._begin(sink)
+        return self._session_token
+
+    def start_listening(self) -> int:
         """Listen only. Nothing is written to the strip by this controller."""
         self._begin(None)
+        return self._session_token
 
     def _begin(self, sink: Callable[[int, int, int], None] | None) -> None:
         if self.is_running():

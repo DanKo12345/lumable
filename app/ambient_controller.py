@@ -36,6 +36,22 @@ _MIN_FRAME_PERIOD = 0.02
 _CATCH_UP_YIELD = 0.002
 
 
+@dataclass(frozen=True)
+class ScreenSample:
+    """One captured frame, described for whoever composes the final colour.
+
+    Carries its own time and the run it belongs to for the same reason the music
+    sample does: a queued signal is delivered later than it was emitted, so a
+    receiver timing staleness from arrival would call a late frame fresh, and a
+    frame emitted just before a stop can arrive after the next run has begun.
+    """
+
+    session_token: int = 0
+    captured_at: float = 0.0
+    rgb: tuple[int, int, int] = (0, 0, 0)
+    frame_id: int = 0
+
+
 class _CaptureError(Exception):
     """The screen itself could not be read.
 
@@ -62,6 +78,10 @@ class AmbientController(QObject):
     # final colour → engine/BLE, carrying the session token and frame id that
     # produced it so a drop can be attributed to the right frame of the right run
     color_sampled = Signal(int, int, int, int, int)
+    # One ScreenSample. Emitted for every frame whether or not this controller
+    # is the one writing to the strip — that is what lets a composer use the
+    # screen as a base while something else owns the output.
+    screen_sampled = Signal(object)
     preview_sampled = Signal(int, int, int, int, int, int)      # raw rgb, final rgb → UI preview
     failed = Signal(str)
 
@@ -106,6 +126,10 @@ class AmbientController(QObject):
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    def owns_output(self) -> bool:
+        """Whether this controller is the one writing to the strip."""
+        return self._engine.is_running()
+
     def start(
         self,
         sink: Callable[[int, int, int, int, int], bool],
@@ -114,6 +138,24 @@ class AmbientController(QObject):
         """Begin syncing. ``sink`` writes a frame's colour to the strip and says
         whether the write was accepted; it is given the frame's token and id so
         it can report the outcome back through :meth:`command_finished`."""
+        return self._begin(sink, initial)
+
+    def start_listening(self, initial: tuple[int, int, int] = (0, 0, 0)) -> int:
+        """Capture the screen without writing to the strip.
+
+        Returns the session token every sample of this run will carry. Named
+        apart from :meth:`start` rather than made a default argument: the
+        difference is whether this controller drives the strip, and a forgotten
+        sink would be a working screen sync gone quiet with nothing raising.
+        """
+        self._begin(None, initial)
+        return self._token
+
+    def _begin(
+        self,
+        sink: Callable[[int, int, int, int, int], bool] | None,
+        initial: tuple[int, int, int] = (0, 0, 0),
+    ) -> None:
         if self.is_running():
             return
         # Passthrough: with easing off, the engine follows the target instantly
@@ -121,9 +163,10 @@ class AmbientController(QObject):
         # smoothed twice (the TemporalFilter owns easing). Seed it with the
         # strip's current colour so no black frame is sent before the first
         # captured one.
-        self._engine.set_smoothing(1.0)
         self._sink = sink
-        self._engine.start(self._deliver, initial=initial, labelled_sink=True)
+        if sink is not None:
+            self._engine.set_smoothing(1.0)
+            self._engine.start(self._deliver, initial=initial, labelled_sink=True)
         self._stop.clear()
         # Opened before the thread exists, so the very first frame already has a
         # session to belong to. The previous run's sample goes with it: a session
@@ -351,7 +394,19 @@ class AmbientController(QObject):
                     )
                     # Only the final colour reaches BLE; the preview shows both.
                     self.preview_sampled.emit(raw[0], raw[1], raw[2], final[0], final[1], final[2])
-                    self.color_sampled.emit(final[0], final[1], final[2], token, frame_id)
+                    self.screen_sampled.emit(
+                        ScreenSample(
+                            session_token=token,
+                            # Stamped where the frame was finished, so a composer
+                            # times staleness from the picture rather than from
+                            # whenever Qt got round to delivering the signal.
+                            captured_at=done,
+                            rgb=(final[0], final[1], final[2]),
+                            frame_id=frame_id,
+                        )
+                    )
+                    if self._engine.is_running():
+                        self.color_sampled.emit(final[0], final[1], final[2], token, frame_id)
 
                     # Wait out what is left of the frame period, not a fresh
                     # interval on top of the work. Pausing the full interval
