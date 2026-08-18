@@ -331,6 +331,17 @@ def test_the_combined_screen_mode_is_accepted_by_the_phone() -> None:
     assert "screen" in _PC_MODES
 
 
+def test_the_api_describes_the_modes_it_accepts() -> None:
+    """The description is the only documentation the API has. Listing fewer
+    modes than it takes is how an integration never learns about one."""
+    from app.local_api.router import _PC_MODES
+
+    described = _router().handle("GET", "/").body["endpoints"]["POST /pc-mode"]
+
+    for mode in _PC_MODES:
+        assert mode in described, f"{mode} is accepted but undocumented: {described}"
+
+
 def test_the_phone_offers_the_combined_mode_with_a_label() -> None:
     """A mode the API accepts and the page has no button for is a mode nobody
     can reach from a phone."""

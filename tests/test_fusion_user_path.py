@@ -382,6 +382,13 @@ def test_a_power_cycle_clears_a_stale_audio_complaint(window) -> None:
 
     assert window._music_ui._music.is_running() is True, "audio did not come back"
     assert window._fusion_ui.audio_lost() is False, "the card still says the device is gone"
+    # And the cards say so too: healthy state behind an interface still
+    # apologising is the same defect one layer up.
+    assert window.music_status_label.text() == window._tr("fusion.music_shared")
+    assert window.ambient_status_label.text() == window._tr("fusion.status.screen_music")
+    assert window.music_toggle_button.isEnabled() is False, (
+        "the recovery button is still offered for a device that came back"
+    )
 
 
 def test_the_report_does_not_credit_screen_sync_with_fusion_writes(window) -> None:
@@ -492,4 +499,36 @@ def test_a_late_result_from_the_previous_run_is_not_credited_to_this_one(window)
 
     assert window._fusion_ui.stats()["commands_succeeded"] == 0, (
         "the previous run's result landed in this run's counters"
+    )
+
+
+def test_a_result_arriving_inside_its_own_write_cannot_outrun_it(window) -> None:
+    """A write that fails immediately calls back before set_color_stream even
+    returns. Counted there, a snapshot taken from inside the observer shows a
+    success for a command that does not exist yet — succeeded above submitted,
+    which makes the whole block unreadable."""
+    app = QApplication.instance()
+    seen: list[dict] = []
+
+    def instant_link(red, green, blue, observer=None, **_kwargs):
+        if observer is not None:
+            # Synchronously, from inside the call, as a fast failure does.
+            observer(True)
+            seen.append(window._fusion_ui.stats())
+        return True
+
+    window._ble.set_color_stream = instant_link
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    _pump(app, 3.0, until=lambda: bool(seen))
+    assert seen, "nothing was ever written"
+
+    for snapshot in seen:
+        assert snapshot["commands_succeeded"] <= snapshot["commands_submitted"], (
+            f"a result outran its own command: {snapshot}"
+        )
+
+    settled = window._fusion_ui.stats()
+    assert settled["commands_submitted"] >= 1
+    assert settled["commands_succeeded"] == settled["commands_submitted"], (
+        f"the held results were never counted: {settled}"
     )

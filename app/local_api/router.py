@@ -120,7 +120,7 @@ class ApiRouter:
                     "POST /brightness": "{value: 0-100}",
                     "POST /effect": "{code, speed?}",
                     "POST /quick-mode": "{key}",
-                    "POST /pc-mode": "{mode: screen|music|effect|diy|off}",
+                    "POST /pc-mode": "{mode: screen|screen_music|music|effect|diy|off}",
                     "GET /scenes": "saved scenes",
                     "POST /scenes/save": "{name} — snapshot current state",
                     "POST /scenes/apply": "{scene_id}",

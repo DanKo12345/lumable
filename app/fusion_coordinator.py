@@ -116,6 +116,11 @@ class FusionCoordinator(QObject):
         """
         self._compositor.set_mode(mode)
         self._compositor.set_sources_running(True)
+        # Zeroed with everything else the report counts. Left running, these
+        # would be a lifetime total sitting next to per-run commands, and the
+        # two would be read as the same scale.
+        self._dropped_screen = 0
+        self._dropped_music = 0
         self._sink = sink
         self._initial = initial
         self._timer.start()

@@ -1101,6 +1101,11 @@ class MainWindow(QMainWindow):
             if callable(stop):
                 stop()
         self._fusion_ui.set_powered(bool(enabled))
+        # The sources come back through set_powered, which can clear a stale
+        # "the audio device is gone" — but nothing repaints the cards, so the
+        # state would be healthy behind an interface still apologising for it.
+        self._music_ui.refresh_shared_state()
+        self._ambient_ui.refresh_status()
 
     def _toggle_power(self):
         self._sync_power_button()

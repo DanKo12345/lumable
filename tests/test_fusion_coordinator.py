@@ -933,3 +933,26 @@ def test_starting_writes_nothing_before_the_first_screen_frame(app) -> None:
 
     assert before_any_frame == [], f"a colour went out before any frame: {before_any_frame}"
     assert strip.writes[0] == (10, 200, 90), "the first write was not the first frame"
+
+
+def test_refused_samples_are_counted_per_run(app) -> None:
+    """They sit next to the command counts in the report, and those are zeroed
+    every start. A lifetime total beside per-run numbers is read as the same
+    scale, and the second report of a session looks alarming for no reason."""
+    clock = _Clock()
+    strip = _Strip()
+    coordinator = FusionCoordinator(clock=clock)
+    coordinator.start(strip.sink, mode="screen")
+    coordinator.expect_screen(1)
+    try:
+        coordinator.submit_screen(
+            ScreenSample(session_token=99, captured_at=clock.now, rgb=(1, 2, 3))
+        )
+        assert coordinator.dropped_samples() == (1, 0)
+        coordinator.stop()
+
+        coordinator.start(strip.sink, mode="screen")
+    finally:
+        coordinator.stop()
+
+    assert coordinator.dropped_samples() == (0, 0), "last run's refusals came along"

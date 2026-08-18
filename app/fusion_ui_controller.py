@@ -15,6 +15,7 @@ screen and the strip never learn that anything happened.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from app.feature_gate import can_use
@@ -45,6 +46,12 @@ class FusionUiController:
         self._failed = 0
         self._link_rejections = 0
         self._run_token = 0
+        # A result can land while its own command is still being submitted, and
+        # on another thread. Held under the same lock that counts the command,
+        # so a snapshot can never show a success for a write that does not exist.
+        self._result_lock = threading.Lock()
+        self._registering: int | None = None
+        self._held: bool | None = None
         self._audio_lost = False
 
     def wire(self) -> None:
@@ -150,16 +157,42 @@ class FusionUiController:
             # write is not a screen frame — several frames can coalesce into one
             # — so attributing an outcome back to a frame id would be inventing a
             # correspondence that does not exist.
-            accepted = host._ble.set_color_stream(
-                red, green, blue, observer=lambda ok: self._note_result(run, ok)
-            )
-            if accepted:
-                self._submitted += 1
-            else:
-                # A refused frame is the link being busy, not a failed write.
-                # Counting it as submitted would report a command that was never
-                # sent and can never settle, so the totals would never add up.
-                self._link_rejections += 1
+            #
+            # The result is held rather than counted as it arrives, because it
+            # can arrive *inside* this call — a write that fails immediately
+            # calls the observer before the call returns. Counted then, a
+            # snapshot taken from within the observer shows a success for a
+            # command that does not exist yet.
+            with self._result_lock:
+                self._registering = run
+                self._held = None
+            try:
+                accepted = host._ble.set_color_stream(
+                    red, green, blue, observer=lambda ok: self._note_result(run, ok)
+                )
+            except BaseException:
+                with self._result_lock:
+                    self._registering = None
+                    self._held = None
+                raise
+
+            with self._result_lock:
+                held = self._held
+                self._held = None
+                self._registering = None
+                if accepted:
+                    self._submitted += 1
+                else:
+                    # A refused frame is the link being busy, not a failed write.
+                    # Counting it as submitted would report a command that was
+                    # never sent and can never settle, so the totals would never
+                    # add up. Any result held for it is discarded with it.
+                    self._link_rejections += 1
+                    held = None
+                if held is True:
+                    self._succeeded += 1
+                elif held is False:
+                    self._failed += 1
             return accepted
 
         seed = host._current_color()
@@ -251,13 +284,20 @@ class FusionUiController:
         Results arrive on the BLE thread and can land after a stop. Without the
         run, a write from the previous session would settle into the counters of
         the new one, which have just been zeroed.
+
+        A result for the write currently being submitted is held instead of
+        counted, and the sink counts it once the command it belongs to exists.
         """
-        if run != self._run_token:
-            return
-        if ok:
-            self._succeeded += 1
-        else:
-            self._failed += 1
+        with self._result_lock:
+            if run != self._run_token:
+                return
+            if self._registering == run:
+                self._held = bool(ok)
+                return
+            if ok:
+                self._succeeded += 1
+            else:
+                self._failed += 1
 
     def _strip_brightness(self) -> str:
         """The hardware brightness, as the card shows it."""
