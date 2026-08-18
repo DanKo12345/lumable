@@ -577,7 +577,15 @@ class MusicUiController:
         self._refresh_value_labels()
         self._persist()
         if self._music.is_running():
+            # True in the combined mode too: the analysis is running as a
+            # listener there, so every slider on this card lands on the live
+            # capture without anything being restarted.
             self._apply_options()
+        # The beat slider is the exception, because the impulse is applied by
+        # whoever composes the frame rather than inside the analysis. Without
+        # this it would only take effect the next time the mode was started —
+        # a slider that silently does nothing while you drag it.
+        self._host._fusion_ui.set_beat_gain(self.beat_strength())
 
     def _refresh_value_labels(self) -> None:
         host = self._host

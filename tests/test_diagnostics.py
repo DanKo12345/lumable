@@ -324,3 +324,83 @@ def test_diagnostics_report_includes_motion_mode_and_resolved_state(preserve_mot
     # probing the OS provider a second time (it reflects motion_policy state).
     assert "Motion mode: reduced" in report
     assert "Motion reduced: yes" in report
+
+
+# ── the combined mode ─────────────────────────────────────────────────
+def _fusion_stats(**overrides) -> dict:
+    stats = {
+        "running": True,
+        "mode": "screen_music",
+        "errors": 0,
+        "last_error": "",
+        "frame_reason": "composed",
+        "strip_brightness": "50%",
+        "brightness_factor": 0.65,
+        "music_activity": 0.8,
+        "music_stale": False,
+        "dropped_screen_samples": 0,
+        "dropped_music_samples": 0,
+    }
+    stats.update(overrides)
+    return stats
+
+
+def test_the_two_brightnesses_are_reported_apart() -> None:
+    """The strip keeps the level a person set and Fusion scales the colour
+    underneath it. At 50% hardware and a 0.65 factor the wall shows about a
+    third of full — one number standing for both makes every "too dim" report
+    impossible to answer."""
+    report = build_diagnostics_report({}, [], include_crashes=False, fusion=_fusion_stats())
+
+    assert "strip brightness: 50%" in report
+    assert "fusion brightness factor: 0.65" in report
+    # And no line that merges them into one figure.
+    assert "brightness: 0.65" not in report
+
+
+def test_a_mode_that_is_not_running_says_nothing() -> None:
+    """A report from someone who never used it should not carry a block of
+    zeroes for them to read past."""
+    report = build_diagnostics_report(
+        {}, [], include_crashes=False, fusion=_fusion_stats(running=False)
+    )
+
+    assert "Fusion" not in report
+
+
+def test_refused_samples_are_shown_when_there_are_any() -> None:
+    """A rising count is the signature of a source restarting underneath."""
+    quiet = build_diagnostics_report({}, [], include_crashes=False, fusion=_fusion_stats())
+    noisy = build_diagnostics_report(
+        {}, [], include_crashes=False, fusion=_fusion_stats(dropped_music_samples=12)
+    )
+
+    assert "refused samples" not in quiet
+    assert "refused samples: 0 screen, 12 music" in noisy
+
+
+def test_why_nothing_was_sent_is_in_the_report() -> None:
+    report = build_diagnostics_report(
+        {}, [], include_crashes=False, fusion=_fusion_stats(frame_reason="base_stale")
+    )
+
+    assert "last frame: base_stale" in report
+
+
+def test_a_stream_error_goes_through_the_same_scrubbing() -> None:
+    """Which means the home path, and only that — the strip's own address is
+    the user's own and is already elsewhere in the report. What must not travel
+    is the name of the person whose folder the app is installed in."""
+    from pathlib import Path
+
+    home = str(Path.home())
+    report = build_diagnostics_report(
+        {},
+        [],
+        include_crashes=False,
+        fusion=_fusion_stats(errors=3, last_error="write failed from " + home + "/logs"),
+    )
+
+    assert "stream errors: 3" in report
+    assert home not in report
+    assert "~" in report

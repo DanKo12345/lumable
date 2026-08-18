@@ -243,6 +243,42 @@ def _music_section(music: dict[str, Any] | None) -> list[str]:
     ]
 
 
+def _fusion_section(fusion: dict[str, Any] | None) -> list[str]:
+    """What the combined mode was doing, in numbers that cannot be confused.
+
+    The two brightnesses are printed apart on purpose. The strip keeps its own
+    hardware brightness — the slider a person set — and Fusion scales the colour
+    underneath it, so at a hardware 50% and a factor of 0.65 the wall shows about
+    a third of full. One number standing for both would make every "too dim"
+    report unanswerable.
+    """
+    if not fusion or not (fusion.get("running") or fusion.get("errors")):
+        return []
+    lines = [
+        "",
+        "Fusion",
+        f"mode: {fusion.get('mode', '-')}",
+        f"running: {_yes_no(fusion.get('running'))}",
+        f"last frame: {fusion.get('frame_reason', '-')}",
+        f"strip brightness: {fusion.get('strip_brightness', '-')}",
+        f"fusion brightness factor: {fusion.get('brightness_factor', '-')}",
+        f"music activity: {fusion.get('music_activity', '-')}",
+        f"music stale: {_yes_no(fusion.get('music_stale'))}",
+        f"stream errors: {int(fusion.get('errors', 0) or 0)}",
+    ]
+    dropped_screen = int(fusion.get("dropped_screen_samples", 0) or 0)
+    dropped_music = int(fusion.get("dropped_music_samples", 0) or 0)
+    if dropped_screen or dropped_music:
+        # Samples refused as belonging to a previous run. Never zero-hidden when
+        # it happens: a rising count is the signature of a source that keeps
+        # restarting underneath.
+        lines.append(f"refused samples: {dropped_screen} screen, {dropped_music} music")
+    error_text = sanitize_report_text(str(fusion.get("last_error", "") or ""))
+    if error_text:
+        lines.append(f"last stream error: {error_text}")
+    return lines
+
+
 def build_diagnostics_report(
     snapshot: dict[str, Any],
     session_logs: Iterable[str],
@@ -250,6 +286,7 @@ def build_diagnostics_report(
     include_crashes: bool = True,
     ambient: dict[str, Any] | None = None,
     music: dict[str, Any] | None = None,
+    fusion: dict[str, Any] | None = None,
 ) -> str:
     device = snapshot.get("device") or {}
     driver = snapshot.get("driver") or {}
@@ -330,6 +367,7 @@ def build_diagnostics_report(
     sections.extend(_strips_section(snapshot))
     sections.extend(_ambient_section(ambient))
     sections.extend(_music_section(music))
+    sections.extend(_fusion_section(fusion))
     sections.extend(_nearby_unknown_section(snapshot))
 
     sections.extend(["", _t("session_logs_section"), *(log_lines[-80:] if log_lines else ["-"])])

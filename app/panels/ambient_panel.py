@@ -37,30 +37,29 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
     # how the selected profile changes the response. This avoids making "Game"
     # look like an app trigger that only works while a game is open.
     settings, settings_layout = list_container(host)
-    mode_row, mode_layout, host.ambient_mode_title_label, host.ambient_status_label, _ = list_row(
-        host, "power", _SYNC_TINT, host._tr("ambient.mode_title")
-    )
-    assert host.ambient_status_label is not None
-    host.ambient_status_label.setText(host._tr("ambient.status_off"))
-    mode_layout.addWidget(host.ambient_toggle_button, 0, Qt.AlignVCenter)
-    settings_layout.addWidget(mode_row)
-    settings_layout.addWidget(divider(host))
-
-    # What the strip follows: the screen alone, or the screen with the music
-    # moving its brightness. Deliberately one choice on the screen card rather
-    # than a mode hidden inside the music card — the colour comes from here
-    # either way, and two cards each claiming to start something is exactly the
-    # confusion this replaces.
+    # One row for the whole decision, and three separate things inside it: what
+    # the strip follows, and whether the capture is running. Kept apart on
+    # purpose — a single `Off | Screen | Screen + music` control would look
+    # tidier and would destroy the distinction the release is built on, where a
+    # mode stays chosen while the output is switched off.
     host.fusion_mode_segment = SegmentedControl(
         [(key, host._tr(f"fusion.mode.{key}")) for key in ("screen", "screen_music")]
     )
-    fusion_row, fusion_layout, host.fusion_mode_title_label, host.fusion_mode_hint_label, _ = list_row(
-        host, "audio-lines", _SYNC_TINT, host._tr("fusion.mode_title")
+    # Tighter than the default: this row also carries a title, a status line and
+    # the power button, and "Captura de pantalla · Pantalla + música" is a good
+    # deal wider than the English it was laid out against. Measured at 860 wide
+    # in all four languages — see tools/measure_mode_row.py.
+    host.fusion_mode_segment.set_metrics(pad=12)
+    mode_row, mode_layout, host.ambient_mode_title_label, host.ambient_status_label, _ = list_row(
+        host, "monitor", _SYNC_TINT, host._tr("ambient.mode_title")
     )
-    assert host.fusion_mode_hint_label is not None
-    host.fusion_mode_hint_label.setText(host._tr("fusion.mode.screen_desc"))
-    fusion_layout.addWidget(host.fusion_mode_segment, 0, Qt.AlignVCenter)
-    settings_layout.addWidget(fusion_row)
+    assert host.ambient_status_label is not None
+    host.ambient_status_label.setText(host._tr("ambient.status_off"))
+    # Mode first, then power: the choice describes what would run, the button
+    # says whether it is running.
+    mode_layout.addWidget(host.fusion_mode_segment, 0, Qt.AlignVCenter)
+    mode_layout.addWidget(host.ambient_toggle_button, 0, Qt.AlignVCenter)
+    settings_layout.addWidget(mode_row)
     settings_layout.addWidget(divider(host))
 
     profile_row, profile_layout, host.ambient_profile_title_label, host.ambient_profile_description, _ = list_row(

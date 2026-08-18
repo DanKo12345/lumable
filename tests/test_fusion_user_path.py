@@ -281,3 +281,33 @@ def test_losing_the_audio_device_leaves_the_screen_running(window) -> None:
     assert window._ambient_ui.is_running() is True
     assert window._strip.count() > before, "the screen stopped reaching the strip too"
     assert window._fusion_ui.stats()["music_stale"] is True
+
+
+def test_the_cards_sliders_land_on_a_running_combined_mode(window) -> None:
+    """Nothing on either card may need a restart to take effect.
+
+    The screen sliders reconfigure the live capture; the beat slider is the one
+    that leaves the analysis and is applied where the frame is composed, so it
+    has its own route and its own way of quietly doing nothing.
+    """
+    app = QApplication.instance()
+    _click_second_segment(window.fusion_mode_segment)
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    _pump(app, 5.0, until=lambda: window._strip.count() >= 2)
+    assert window._fusion_ui.is_running()
+
+    # Screen: the live capture takes the new profile without stopping.
+    window.ambient_saturation_slider.setValue(90)
+    app.processEvents()
+    assert window._ambient_ui._ambient.options().intensity == 90
+    assert window._fusion_ui.is_running(), "changing a screen slider restarted the mode"
+
+    # Music: the beat slider reaches the compositor, not just the options.
+    window.music_beat_slider.setValue(0)
+    app.processEvents()
+    assert window._fusion_ui.coordinator()._beat_gain == 0.0
+
+    window.music_beat_slider.setValue(100)
+    app.processEvents()
+    assert window._fusion_ui.coordinator()._beat_gain > 0.0
+    assert window._music_ui._music.is_running(), "the audio capture was restarted"

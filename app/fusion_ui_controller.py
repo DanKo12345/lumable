@@ -194,6 +194,11 @@ class FusionUiController:
     def set_beat_gain(self, gain: float) -> None:
         self._coordinator.set_beat_gain(gain)
 
+    def _strip_brightness(self) -> str:
+        """The hardware brightness, as the card shows it."""
+        slider = getattr(self._host, "brightness_slider", None)
+        return f"{int(slider.value())}%" if slider is not None else "-"
+
     # ── what happened ─────────────────────────────────────────────────
     def stats(self) -> dict:
         frame = self._coordinator.last_frame()
@@ -204,8 +209,11 @@ class FusionUiController:
             "errors": self._coordinator.stream_error_count(),
             "last_error": self._coordinator.last_stream_error(),
             "frame_reason": frame.reason,
-            # A fraction of the base, not the strip's brightness — the slider is
-            # a separate number and the two are never added up.
+            # Two brightnesses, never one. The strip keeps the hardware level a
+            # person set with the slider; Fusion scales the colour underneath
+            # it. Reporting their product as "brightness" would make every
+            # "too dim" question unanswerable.
+            "strip_brightness": self._strip_brightness(),
             "brightness_factor": round(frame.brightness_factor, 3),
             "music_activity": round(frame.activity, 3),
             "music_stale": frame.music_stale,

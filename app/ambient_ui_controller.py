@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -23,7 +22,6 @@ class AmbientUiController:
     def __init__(self, host: Any) -> None:
         self._host = host
         self._ambient = AmbientController(host)
-        self._frame_times: list[float] = []
 
     def wire(self) -> None:
         host = self._host
@@ -116,24 +114,35 @@ class AmbientUiController:
         segment.blockSignals(True)
         segment.set_current(host._fusion_ui.mode(), animate=False)
         segment.blockSignals(False)
-        self._refresh_mode_hint()
+        self._refresh_status()
 
     def _on_mode_changed(self, key: str) -> None:
         self._host._fusion_ui.set_mode(key)
-        self._refresh_mode_hint()
+        self._refresh_status()
         self._host._music_ui.refresh_shared_state()
 
-    def _refresh_mode_hint(self) -> None:
+    def _refresh_status(self) -> None:
+        """The one line under the row title, and the one place it is decided.
+
+        Three things it can say, in order of what a person needs to know:
+        something is stopping this mode, or it is running and which one, or it
+        is simply off. A description of the chosen mode is not among them —
+        while everything is fine the segments already say that, and while
+        something is wrong the reason matters more than the description.
+        """
         host = self._host
-        label = getattr(host, "fusion_mode_hint_label", None)
+        label = getattr(host, "ambient_status_label", None)
         if label is None:
             return
         mode = host._fusion_ui.mode()
-        # A reason to show is more useful than the description: someone who
-        # picked a mode that cannot run needs to know why, not what it would
-        # have done. The choice itself is never quietly changed back.
         reason = host._fusion_ui.unavailable_reason(mode)
-        label.setText(host._tr(reason) if reason else host._tr(f"fusion.mode.{mode}_desc"))
+        if reason:
+            label.setText(host._tr(reason))
+        elif self.is_running():
+            label.setText(host._tr(f"fusion.status.{mode}"))
+        else:
+            label.setText(host._tr("ambient.status_off"))
+        label.setVisible(True)
 
     def stats(self) -> dict:
         return {
@@ -168,7 +177,6 @@ class AmbientUiController:
         session token every frame of this run will carry.
         """
         self._apply_options()
-        self._frame_times.clear()
         return self._ambient.start_listening()
 
     def stop_listening(self) -> None:
@@ -236,18 +244,14 @@ class AmbientUiController:
         host = self._host
         if not host._fusion_ui.activate():
             host.ambient_toggle_button.setChecked(False)
-            self._refresh_mode_hint()
+            self._refresh_status()
             reason = host._fusion_ui.last_reason()
             if reason:
                 host._show_error(host._tr(reason))
             return
         self._set_manual_controls_enabled(False)
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_on"))
-        self._frame_times.clear()
-        status = getattr(host, "ambient_status_label", None)
-        if status is not None:
-            status.setText(host._tr("ambient.capture_status", fps=0))
-            status.setVisible(True)
+        self._refresh_status()
         host._music_ui.refresh_shared_state()
         host._log(host._tr("ambient.started_log"))
 
@@ -260,9 +264,7 @@ class AmbientUiController:
         self._set_manual_controls_enabled(True)
         host.ambient_toggle_button.setChecked(False)
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_off"))
-        status = getattr(host, "ambient_status_label", None)
-        if status is not None:
-            status.setText(host._tr("ambient.status_off"))
+        self._refresh_status()
         host._music_ui.refresh_shared_state()
         if was_running:
             host._log(host._tr("ambient.stopped_log"))
@@ -309,8 +311,7 @@ class AmbientUiController:
         host.ambient_mode_title_label.setText(host._tr("ambient.mode_title"))
         host.ambient_profile_title_label.setText(host._tr("ambient.profile_title"))
         self._refresh_profile_description()
-        if not self.is_running():
-            host.ambient_status_label.setText(host._tr("ambient.status_off"))
+        self._refresh_status()
 
     def _persist(self) -> None:
         host = self._host
@@ -328,15 +329,6 @@ class AmbientUiController:
     def _update_preview(self, raw_r: int, raw_g: int, raw_b: int, r: int, g: int, b: int) -> None:
         host = self._host
         host.ambient_preview.set_colors((raw_r, raw_g, raw_b), (r, g, b))
-        # Live capture rate: count frames sampled in the last second.
-        now = time.monotonic()
-        self._frame_times.append(now)
-        cutoff = now - 1.0
-        while self._frame_times and self._frame_times[0] < cutoff:
-            self._frame_times.pop(0)
-        status = getattr(host, "ambient_status_label", None)
-        if status is not None:
-            status.setText(host._tr("ambient.capture_status", fps=len(self._frame_times)))
 
     def _on_failed(self, reason: str) -> None:
         host = self._host

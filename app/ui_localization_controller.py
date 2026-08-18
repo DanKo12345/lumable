@@ -307,6 +307,10 @@ class UiLocalizationController:
             host.ambient_profile_segment.set_labels(
                 {pid: host._tr(f"ambient.profile.{pid}") for pid in ("desktop", "game", "movie")}
             )
+        if getattr(host, "fusion_mode_segment", None) is not None:
+            host.fusion_mode_segment.set_labels(
+                {key: host._tr(f"fusion.mode.{key}") for key in ("screen", "screen_music")}
+            )
         host._ambient_ui.refresh_texts()
         running = host._ambient_ui.is_running()
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_on" if running else "ambient.toggle_off"))

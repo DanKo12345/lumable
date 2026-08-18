@@ -43,6 +43,7 @@ class DiagnosticsController:
             include_crashes=include_crashes,
             ambient=host._ambient_ui.stats(),
             music=host._music_ui.stats(),
+            fusion=host._fusion_ui.stats(),
         )
 
     def _snapshot_with_saved_strips(self) -> dict[str, Any]:
