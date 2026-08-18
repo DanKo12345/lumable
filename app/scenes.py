@@ -43,12 +43,15 @@ SCENE_TYPE = "scene"
 # v3: pc_mode serialises as an object {kind, preset} instead of a bare string.
 # The bump matters for forward-compat: an older build that only knows up to v2
 # must *reject* a v3 envelope, not accept it and choke on the dict pc_mode.
-SCENE_VERSION = 3
+# v4: "screen_music" joins the pc_mode kinds. Bumped for the same reason: an
+# older build does not know the mode and would apply the scene as though it had
+# no PC mode at all, quietly lighting the strip in a way nobody saved.
+SCENE_VERSION = 4
 SHARE_PREFIX = "LUMASCENE1-"
 
 EFFECT_KINDS = frozenset({"firmware", "software", "diy"})
 TARGET_KINDS = frozenset({"primary", "all", "group"})
-PC_MODES = frozenset({"screen", "music", "effect", "diy"})
+PC_MODES = frozenset({"screen", "screen_music", "music", "effect", "diy"})
 
 _MAX_NAME = 40
 _MAX_ICON = 32
@@ -160,10 +163,10 @@ def _norm_pc_mode(raw: Any) -> dict[str, Any] | None:
         return None
     preset = raw.get("preset")
     preset = str(preset).strip() if isinstance(preset, str) and preset.strip() else None
-    # Only screen sync has presets today, and only the known profiles are valid.
+    # Only the screen modes have presets, and only the known profiles are valid.
     # An unknown preset degrades to None (use the current profile) rather than
     # silently resolving to Desktop later — honest degradation, not a lie.
-    if kind == "screen":
+    if kind in ("screen", "screen_music"):
         if preset not in PROFILE_IDS:
             preset = None
     else:
@@ -228,6 +231,10 @@ def _migrate(payload: Any, version: int) -> Any:
 
     v2 -> v3: ``pc_mode`` changed from a bare string to a ``{kind, preset}``
     object so a screen-sync scene can restore its exact profile.
+
+    v3 -> v4: ``screen_music`` became a mode of its own. Nothing stored needs
+    changing — a scene saved as ``screen`` still means the screen alone — so the
+    bump exists only so an older build refuses a scene it cannot honour.
     """
     if not isinstance(payload, dict):
         return payload

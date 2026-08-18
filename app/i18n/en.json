@@ -917,6 +917,7 @@
         "remote.all_off": "Turn everything off",
         "remote.pc_modes": "PC modes",
         "remote.pc_screen": "Screen",
+        "remote.pc_screen_music": "Screen + music",
         "remote.pc_music": "Music",
         "remote.pc_effect": "Effect",
         "remote.pc_diy": "DIY",

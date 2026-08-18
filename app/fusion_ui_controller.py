@@ -43,6 +43,8 @@ class FusionUiController:
         self._submitted = 0
         self._succeeded = 0
         self._failed = 0
+        self._link_rejections = 0
+        self._run_token = 0
         self._audio_lost = False
 
     def wire(self) -> None:
@@ -127,9 +129,17 @@ class FusionUiController:
         if self._reason:
             return False
         host.stop_streams(exclude=self)
+        self._run_token += 1
+        self._audio_lost = False
+        self._submitted = 0
+        self._succeeded = 0
+        self._failed = 0
+        self._link_rejections = 0
         if not host.power_button.isChecked():
             host.power_button.setChecked(True)
             host._toggle_power()
+
+        run = self._run_token
 
         def sink(red: int, green: int, blue: int) -> bool:
             # The only route to the strip from a streaming mode. Colour only:
@@ -140,14 +150,18 @@ class FusionUiController:
             # write is not a screen frame — several frames can coalesce into one
             # — so attributing an outcome back to a frame id would be inventing a
             # correspondence that does not exist.
-            self._submitted += 1
-            return host._ble.set_color_stream(red, green, blue, observer=self._note_result)
+            accepted = host._ble.set_color_stream(
+                red, green, blue, observer=lambda ok: self._note_result(run, ok)
+            )
+            if accepted:
+                self._submitted += 1
+            else:
+                # A refused frame is the link being busy, not a failed write.
+                # Counting it as submitted would report a command that was never
+                # sent and can never settle, so the totals would never add up.
+                self._link_rejections += 1
+            return accepted
 
-        self._sink = sink
-        self._audio_lost = False
-        self._submitted = 0
-        self._succeeded = 0
-        self._failed = 0
         seed = host._current_color()
         self._coordinator.attach_sources(start=self._start_sources, stop=self._stop_sources)
         self._coordinator.start(
@@ -185,6 +199,10 @@ class FusionUiController:
         music_token = 0
         if self._mode == SCREEN_MUSIC:
             music_token = host._music_ui.start_listening()
+        # Cleared by a start that worked, whichever start it was. Power brings
+        # the sources back through here too, and a flag left set would leave the
+        # card apologising for a device that is listening again.
+        self._audio_lost = not bool(music_token) if self._mode == SCREEN_MUSIC else False
         return (screen_token, music_token)
 
     def _stop_sources(self) -> None:
@@ -220,13 +238,22 @@ class FusionUiController:
             return
         host = self._host
         host._music_ui.stop_listening()
-        self._audio_lost = False
-        self._coordinator.expect_music(host._music_ui.start_listening())
+        token = host._music_ui.start_listening()
+        self._audio_lost = not bool(token)
+        self._coordinator.expect_music(token)
 
     def set_beat_gain(self, gain: float) -> None:
         self._coordinator.set_beat_gain(gain)
 
-    def _note_result(self, ok: bool) -> None:
+    def _note_result(self, run: int, ok: bool) -> None:
+        """An outcome, credited to the run that asked for it.
+
+        Results arrive on the BLE thread and can land after a stop. Without the
+        run, a write from the previous session would settle into the counters of
+        the new one, which have just been zeroed.
+        """
+        if run != self._run_token:
+            return
         if ok:
             self._succeeded += 1
         else:
@@ -238,16 +265,26 @@ class FusionUiController:
         return f"{int(slider.value())}%" if slider is not None else "-"
 
     # ── what happened ─────────────────────────────────────────────────
+    def has_run(self) -> bool:
+        """Whether there is a run to describe — this one or the last one.
+
+        A report is usually exported *after* stopping, so a block that only
+        exists while running is a block nobody ever sees when they need it.
+        """
+        return self._run_token > 0
+
     def stats(self) -> dict:
         frame = self._coordinator.last_frame()
         dropped_screen, dropped_music = self._coordinator.dropped_samples()
         return {
             "running": self.is_running(),
+            "has_run": self.has_run(),
             "mode": self._mode,
             "errors": self._coordinator.stream_error_count(),
             "commands_submitted": self._submitted,
             "commands_succeeded": self._succeeded,
             "commands_failed": self._failed,
+            "link_rejections": self._link_rejections,
             "last_error": self._coordinator.last_stream_error(),
             "frame_reason": frame.reason,
             # Two brightnesses, never one. The strip keeps the hardware level a

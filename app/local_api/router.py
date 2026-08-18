@@ -42,7 +42,7 @@ _KNOWN_ROUTES: dict[str, set[str]] = {
 }
 
 # PC "hub" modes the phone can trigger (plus "off" to stop and return to manual).
-_PC_MODES = {"screen", "music", "effect", "diy", "off"}
+_PC_MODES = {"screen", "screen_music", "music", "effect", "diy", "off"}
 
 
 @dataclass

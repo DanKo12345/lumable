@@ -86,9 +86,30 @@ def test_pc_mode_preset_is_validated() -> None:
     }
 
 
-def test_new_envelope_is_v3() -> None:
-    assert SCENE_VERSION == 3
-    assert wrap_scene(make_scene("s", {"pc_mode": {"kind": "screen", "preset": "game"}}))["version"] == 3
+def test_new_envelope_is_v4() -> None:
+    assert SCENE_VERSION == 4
+    assert wrap_scene(make_scene("s", {"pc_mode": {"kind": "screen", "preset": "game"}}))["version"] == 4
+
+
+def test_the_combined_screen_mode_is_a_mode_a_scene_can_hold() -> None:
+    """Without it a scene saved while the strip was following the screen *and*
+    the music comes back as no PC mode at all — the light silently stops being
+    what it was saved as."""
+    scene = make_scene("Combined", {"pc_mode": {"kind": "screen_music", "preset": "movie"}})
+
+    assert normalize_scene(scene)["state"]["pc_mode"] == {
+        "kind": "screen_music",
+        "preset": "movie",
+    }
+
+
+def test_an_older_build_refuses_a_scene_it_cannot_honour() -> None:
+    """The version bump is the whole point: a build that does not know the
+    combined mode must reject the envelope rather than apply it as plain screen
+    sync and light the room in a way nobody saved."""
+    envelope = wrap_scene(make_scene("Combined", {"pc_mode": {"kind": "screen_music"}}))
+
+    assert envelope["version"] == 4
 
 
 def test_legacy_v2_envelope_with_string_pc_mode_migrates() -> None:

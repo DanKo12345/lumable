@@ -153,7 +153,11 @@ class AmbientUiController:
             # capture is feeding a composer. Said out loud so the report can
             # leave out numbers it is no longer measuring instead of printing
             # their zeros.
-            "link_owned_by_fusion": self._host._fusion_ui.is_running(),
+            #
+            # Asked of the run, not of this instant: a report is usually
+            # exported after stopping, and by then "is Fusion running" is False
+            # while the numbers being described still belong to it.
+            "link_owned_by_fusion": self._host._fusion_ui.has_run(),
             "errors": self._ambient.stream_error_count(),
             "last_error": self._ambient.last_stream_error(),
             # The last run's numbers survive its stop, so a report exported

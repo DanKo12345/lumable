@@ -456,15 +456,16 @@ class MusicUiController:
         return float(self._music.options().beat_strength)
 
     def stop_if_running(self) -> None:
-        """Stop whatever "music" currently means.
+        """Yield the strip, if this controller is the one holding it.
 
-        In the combined mode that is the whole mode. Stopping only the listener
-        would leave the screen still driving the strip with a modulation that
-        has silently gone stale — a half-stop nobody asked for and nothing
-        reports.
+        In the combined mode it is not: the audio is Fusion's source, and Fusion
+        is its own entry in the owner list, so whoever is taking over has already
+        dealt with it. Stopping the analysis from here would tear the audio half
+        out of a mode that is meant to keep running — which is what power does,
+        since power deliberately skips Fusion and would otherwise reach it
+        sideways through this method.
         """
         if self._shared_with_screen() and self._host._fusion_ui.is_running():
-            self._host._fusion_ui.stop_if_running()
             return
         if self._music.is_running():
             self._stop()
@@ -507,6 +508,12 @@ class MusicUiController:
         neither of them has to know about the licence gate, the connection or
         the other modes, all of which ``activate`` already handles.
         """
+        if self._shared_with_screen() and not self._audio_lost():
+            # "Music" here means the mode the person chose, and stopping it means
+            # stopping that mode. Routed through Fusion directly rather than
+            # through stop_if_running, which is the narrower "yield the strip to
+            # another owner" and deliberately leaves Fusion alone.
+            return self._host._fusion_ui.toggle()
         if self.is_running():
             self.stop_if_running()
             return False
@@ -519,6 +526,16 @@ class MusicUiController:
         host = self._host
         if not host.music_toggle_button.isChecked():
             self._stop()
+            return
+        if self._audio_lost():
+            # The button came back because the device went away, and what it
+            # offers is that device again — not the old standalone mode, which
+            # would stop Screen Sync to take the strip for itself. The person
+            # pressing it wants their music back, not their screen gone.
+            host.music_toggle_button.setChecked(False)
+            host._fusion_ui.restart_audio()
+            self.refresh_shared_state()
+            host._ambient_ui.refresh_status()
             return
         if not can_use("music_sync"):
             host.music_toggle_button.setChecked(False)

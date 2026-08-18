@@ -320,3 +320,23 @@ def test_delete_unknown_scene_is_404() -> None:
 
 def test_scenes_require_auth() -> None:
     assert _router().handle("GET", "/scenes").status == 401
+
+
+def test_the_combined_screen_mode_is_accepted_by_the_phone() -> None:
+    """The router is the gate: a mode it does not know is refused before it ever
+    reaches the desktop, so the phone silently cannot ask for it."""
+    from app.local_api.router import _PC_MODES
+
+    assert "screen_music" in _PC_MODES
+    assert "screen" in _PC_MODES
+
+
+def test_the_phone_offers_the_combined_mode_with_a_label() -> None:
+    """A mode the API accepts and the page has no button for is a mode nobody
+    can reach from a phone."""
+    from app.local_api.mobile_page import build_mobile_page
+
+    page = build_mobile_page()
+
+    assert '"screen_music"' in page, "the phone has no button for the combined mode"
+    assert "Screen + music" in page, "the button has no label"

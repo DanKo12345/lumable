@@ -460,6 +460,7 @@ class LocalApiController:
             "all_off",
             "pc_modes",
             "pc_screen",
+            "pc_screen_music",
             "pc_music",
             "pc_effect",
             "pc_diy",

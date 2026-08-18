@@ -253,7 +253,7 @@ def _fusion_section(fusion: dict[str, Any] | None) -> list[str]:
     a third of full. One number standing for both would make every "too dim"
     report unanswerable.
     """
-    if not fusion or not (fusion.get("running") or fusion.get("errors")):
+    if not fusion or not (fusion.get("has_run") or fusion.get("running") or fusion.get("errors")):
         return []
 
     def flag(value: object) -> str:
@@ -275,6 +275,8 @@ def _fusion_section(fusion: dict[str, Any] | None) -> list[str]:
         f"commands: {int(fusion.get('commands_submitted', 0) or 0)} submitted, "
         f"{int(fusion.get('commands_succeeded', 0) or 0)} succeeded, "
         f"{int(fusion.get('commands_failed', 0) or 0)} failed",
+        f"link rejections: {int(fusion.get('link_rejections', 0) or 0)} "
+        "(link busy, not a write error)",
         f"stream errors: {int(fusion.get('errors', 0) or 0)}",
     ]
     dropped_screen = int(fusion.get("dropped_screen_samples", 0) or 0)

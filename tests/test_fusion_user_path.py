@@ -130,6 +130,19 @@ def _pump(app, seconds: float, until=None) -> None:
     app.processEvents()
 
 
+def _section(report: str, heading: str) -> str:
+    """One block of the diagnostics text, found by its heading line.
+
+    Blocks are separated by a blank line and start with their heading, so a
+    block is matched whole. Splitting on the bare word instead cut the Live
+    Sync block in half, because "Fusion" also appears inside it.
+    """
+    for block in report.split('\n\n'):
+        if block.startswith(heading):
+            return block
+    raise AssertionError("no " + heading + " block in the report")
+
+
 def test_screen_plus_music_from_the_card_to_the_strip_and_back(window) -> None:
     app = QApplication.instance()
     strip = window._strip
@@ -322,7 +335,35 @@ def test_losing_the_audio_device_leaves_the_screen_running(window) -> None:
     assert window._settings["fusion"]["mode"] == "screen_music"
 
 
-def test_taking_the_audio_source_again_clears_the_lost_state(window) -> None:
+def test_the_restored_button_takes_the_audio_back_and_keeps_the_screen(window) -> None:
+    """Pressed by a person, not called as a method. Its ordinary handler starts
+    the old standalone reaction, which stops Screen Sync to take the strip —
+    the opposite of what someone whose microphone came back is asking for."""
+    app = QApplication.instance()
+    _click_second_segment(window.fusion_mode_segment)
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    _pump(app, 5.0, until=lambda: window._strip.count() >= 2)
+
+    window._music_ui._music.stop()
+    window._music_ui._on_failed("audio_capture_unavailable: device gone")
+    app.processEvents()
+    assert window._fusion_ui.audio_lost() is True
+    assert window.music_toggle_button.isEnabled() is True
+
+    QTest.mouseClick(window.music_toggle_button, Qt.LeftButton)
+    app.processEvents()
+
+    assert window._fusion_ui.audio_lost() is False
+    assert window._music_ui._music.is_running() is True
+    assert window._fusion_ui.is_running() is True, "the screen half was stopped"
+    assert window._fusion_ui.mode() == "screen_music"
+    assert window._music_ui._music.owns_output() is False, "music took the strip for itself"
+    assert window.music_status_label.text() == window._tr("fusion.music_shared")
+
+
+def test_a_power_cycle_clears_a_stale_audio_complaint(window) -> None:
+    """The flag describes the device, so a start that opened it has to clear the
+    flag — otherwise the card apologises for a microphone that is listening."""
     app = QApplication.instance()
     _click_second_segment(window.fusion_mode_segment)
     QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
@@ -333,11 +374,14 @@ def test_taking_the_audio_source_again_clears_the_lost_state(window) -> None:
     app.processEvents()
     assert window._fusion_ui.audio_lost() is True
 
-    window._fusion_ui.restart_audio()
+    window.power_button.setChecked(False)
+    window._toggle_power()
+    window.power_button.setChecked(True)
+    window._toggle_power()
     app.processEvents()
 
-    assert window._fusion_ui.audio_lost() is False
-    assert window._music_ui._music.is_running() is True
+    assert window._music_ui._music.is_running() is True, "audio did not come back"
+    assert window._fusion_ui.audio_lost() is False, "the card still says the device is gone"
 
 
 def test_the_report_does_not_credit_screen_sync_with_fusion_writes(window) -> None:
@@ -355,6 +399,97 @@ def test_the_report_does_not_credit_screen_sync_with_fusion_writes(window) -> No
     assert stats["link_owned_by_fusion"] is True
 
     report = window._diagnostics_ctrl.text(include_crashes=False)
-    assert "link rejections:" not in report
-    assert "Fusion" in report
-    assert "commands:" in report, "the Fusion block did not report its own writes"
+    live_sync = _section(report, "Live Sync")
+    fusion_block = _section(report, "Fusion")
+
+    assert "link rejections:" not in live_sync, (
+        "Screen Sync reported writes it never made: " + live_sync
+    )
+    assert "written by Fusion" in live_sync
+    assert "commands:" in fusion_block, "the Fusion block did not report its own writes"
+
+
+def test_the_report_still_describes_the_run_after_it_is_stopped(window) -> None:
+    """The usual order: stop, then export. A block that only exists while
+    running is a block nobody sees when they need it, and Screen Sync must not
+    take the writes back the moment Fusion lets go of them."""
+    app = QApplication.instance()
+    _click_second_segment(window.fusion_mode_segment)
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    _pump(app, 5.0, until=lambda: window._strip.count() >= 2)
+
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    app.processEvents()
+    assert window._fusion_ui.is_running() is False
+
+    report = window._diagnostics_ctrl.text(include_crashes=False)
+    fusion_block = _section(report, "Fusion")
+    live_sync = _section(report, "Live Sync")
+
+    assert "mode: screen_music" in fusion_block, "the finished run vanished from the report"
+    assert "commands:" in fusion_block
+    assert "link rejections:" not in live_sync, (
+        "Screen Sync claimed the writes back once Fusion stopped: " + live_sync
+    )
+    assert "written by Fusion" in live_sync
+
+
+def test_a_refused_frame_is_not_counted_as_a_command(window) -> None:
+    """set_color_stream returns False when the link is busy — a dropped frame,
+    not a sent one. Counting it as submitted reports a command that can never
+    settle, so succeeded + failed never add up to submitted and the report is
+    unreadable in exactly the situation it is exported for."""
+    app = QApplication.instance()
+    accepted = {"value": False}
+
+    def busy_link(red, green, blue, observer=None, **_kwargs):
+        if accepted["value"] and observer is not None:
+            observer(True)
+        return accepted["value"]
+
+    window._ble.set_color_stream = busy_link
+    _click_second_segment(window.fusion_mode_segment)
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    _pump(app, 3.0, until=lambda: window._fusion_ui.stats()["link_rejections"] >= 2)
+
+    refused = window._fusion_ui.stats()
+    assert refused["link_rejections"] >= 1, "the link never refused anything"
+    assert refused["commands_submitted"] == 0, "a refused frame was counted as sent"
+
+    accepted["value"] = True
+    _pump(app, 3.0, until=lambda: window._fusion_ui.stats()["commands_submitted"] >= 1)
+
+    taken = window._fusion_ui.stats()
+    assert taken["commands_submitted"] >= 1
+    assert taken["commands_succeeded"] + taken["commands_failed"] <= taken["commands_submitted"]
+
+
+def test_a_late_result_from_the_previous_run_is_not_credited_to_this_one(window) -> None:
+    """Outcomes arrive on the BLE thread and can land after a stop. Without the
+    run they settle into counters that were just zeroed, and a fresh session
+    starts with someone else's numbers."""
+    app = QApplication.instance()
+    stale: list = []
+
+    def slow_link(red, green, blue, observer=None, **_kwargs):
+        if observer is not None:
+            stale.append(observer)
+        return True
+
+    window._ble.set_color_stream = slow_link
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    _pump(app, 3.0, until=lambda: bool(stale))
+    assert stale, "nothing was ever written"
+
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    app.processEvents()
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    app.processEvents()
+
+    # The first run's write finally settles, after the second has begun.
+    for observer in stale:
+        observer(True)
+
+    assert window._fusion_ui.stats()["commands_succeeded"] == 0, (
+        "the previous run's result landed in this run's counters"
+    )

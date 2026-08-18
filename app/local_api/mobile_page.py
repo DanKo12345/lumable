@@ -23,6 +23,7 @@ _FALLBACK_LABELS = {
     "all_off": "Turn everything off",
     "pc_modes": "PC modes",
     "pc_screen": "Screen",
+    "pc_screen_music": "Screen + music",
     "pc_music": "Music",
     "pc_effect": "Effect",
     "pc_diy": "DIY",
@@ -477,7 +478,7 @@ async function startLive() {
 }
 const SWATCHES=[[255,255,255],[255,60,0],[255,170,0],[0,200,120],[0,150,255],[120,60,255],[255,0,140],[20,20,20]];
 const MODES=["chill","gaming","night","rainbow"];
-const PC_MODES=["screen","music","effect","diy"];
+const PC_MODES=["screen","screen_music","music","effect","diy"];
 function build() {
   $("#swatches").innerHTML=SWATCHES.map(c=>`<button class="sw" data-rgb="${c.join(',')}" style="background:rgb(${c[0]},${c[1]},${c[2]})" onclick="setColor(${c[0]},${c[1]},${c[2]})"></button>`).join("");
   $("#modes").innerHTML=MODES.map(mode=>`<button data-mode="${mode}" onclick="quick('${mode}')">${TEXT['mode_'+mode]}</button>`).join("");
