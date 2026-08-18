@@ -91,6 +91,30 @@ class _Ble:
         self.calls.append(("speed", value))
 
 
+class _FakeFusion:
+    """The controller that runs both screen modes."""
+
+    def __init__(self) -> None:
+        self._mode = "screen"
+        self._running = False
+
+    def mode(self) -> str:
+        return self._mode
+
+    def set_mode(self, mode, **_kwargs) -> None:
+        self._mode = mode
+
+    def is_running(self) -> bool:
+        return self._running
+
+    def activate(self) -> bool:
+        self._running = True
+        return True
+
+    def stop_if_running(self) -> None:
+        self._running = False
+
+
 class _Host(QObject):
     def __init__(self) -> None:
         super().__init__()
@@ -110,6 +134,9 @@ class _Host(QObject):
         self.applied = 0
         self.stops = 0
         self.activated: list[str] = []
+        # Both screen modes run through here now; a host without one cannot
+        # answer what mode it is in.
+        self._fusion_ui = _FakeFusion()
 
     def stop_streams(self, **_):
         self.stops += 1
@@ -149,20 +176,37 @@ def test_status_snapshot() -> None:
 
 
 class _FakeMode:
-    def __init__(self, running: bool = False, starts: bool = True) -> None:
+    def __init__(self, running: bool = False, starts: bool = True, fusion=None) -> None:
         self._running = running
         self._starts = starts  # whether activate() actually turns it on
         self.activated = 0
+        self.activated_mode = None
+        self._fusion = fusion or _FakeFusion()
 
     def is_running(self) -> bool:
         return self._running
 
-    def activate(self, profile_id=None) -> bool:
-        # Screen sync's activate takes a profile id (scenes pin a preset); the
-        # other modes ignore it.
+    def activate(self, profile_id=None, mode=None) -> bool:
+        # Screen sync's activate takes a profile id (scenes pin a preset) and,
+        # since 0.4.0, the screen mode being asked for; the other modes ignore
+        # both.
         self.activated += 1
         self.activated_with = profile_id
+        self.activated_mode = mode
+        if mode is not None:
+            # The real controller sets the mode and then starts the coordinator,
+            # which is what the status reads back.
+            self._fusion.set_mode(mode)
+            if self._starts:
+                self._fusion.activate()
         self._running = self._starts
+        return self._running
+
+    def activate_standalone(self) -> bool:
+        """What "music" means as an API mode: the reaction on its own."""
+        return self.activate()
+
+    def is_standalone_running(self) -> bool:
         return self._running
 
 
@@ -173,6 +217,41 @@ def test_set_pc_mode_activates_matching_controller() -> None:
     assert backend.set_pc_mode("music") is True
     assert host._music_ui.activated == 1
     assert backend.status()["pc_mode"] == "music"
+
+
+def test_the_two_screen_modes_are_asked_for_by_name() -> None:
+    """A command must not depend on what the card was last left showing, and a
+    scene saved as "screen + music" has to light the same way everywhere."""
+    host = _Host()
+    fusion = host._fusion_ui
+    host._ambient_ui = _FakeMode(fusion=fusion)
+
+    assert QtApiBackend(host).set_pc_mode("screen_music", "movie") is True
+
+    assert fusion.mode() == "screen_music"
+    assert host._ambient_ui.activated_with == "movie"
+    assert QtApiBackend(host).status()["pc_mode"] == "screen_music"
+
+
+def test_asking_for_the_plain_screen_mode_does_not_start_the_combined_one() -> None:
+    host = _Host()
+    fusion = host._fusion_ui
+    fusion.set_mode("screen_music")  # what this machine was left on
+    host._ambient_ui = _FakeMode(fusion=fusion)
+
+    assert QtApiBackend(host).set_pc_mode("screen") is True
+
+    assert fusion.mode() == "screen"
+
+
+def test_asking_for_music_does_not_start_the_combined_mode() -> None:
+    host = _Host()
+    host._fusion_ui.set_mode("screen_music")
+    host._music_ui = _FakeMode()
+
+    assert QtApiBackend(host).set_pc_mode("music") is True
+
+    assert host._music_ui.activated == 1
 
 
 def test_set_pc_mode_off_stops_all_streams() -> None:

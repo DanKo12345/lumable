@@ -365,6 +365,15 @@ class MusicUiController:
     def _shared_with_screen(self) -> bool:
         return self._host._fusion_ui.mode() == "screen_music"
 
+    def is_standalone_running(self) -> bool:
+        """Whether the old mode — music owning the strip by itself — is on.
+
+        Distinct from :meth:`is_running`, which answers what a person means by
+        "is music on" and includes the combined mode. The API and a saved scene
+        need the narrower question, because "music" is a mode name there.
+        """
+        return self._music.is_running() and not self._shared_with_screen()
+
     def is_running(self) -> bool:
         """Whether "music" is on, as a person means it.
 
@@ -461,6 +470,19 @@ class MusicUiController:
         if self._shared_with_screen():
             fusion = self._host._fusion_ui
             return True if fusion.is_running() else fusion.activate()
+        return self._activate_standalone()
+
+    def activate_standalone(self) -> bool:
+        """Start music reaction on its own, whatever the screen card is set to.
+
+        What "music" means as an API mode or in a saved scene: the reaction that
+        owns the strip by itself. The tray entry and the hotkey deliberately do
+        something else — there, "music" means whatever the person has chosen.
+        """
+        if self._shared_with_screen():
+            self._host._fusion_ui.stop_if_running()
+            self._host._fusion_ui.set_mode("screen")
+            self._host._ambient_ui.sync_mode_segment()
         return self._activate_standalone()
 
     def _activate_standalone(self) -> bool:

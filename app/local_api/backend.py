@@ -181,9 +181,22 @@ class QtApiBackend:
     # PC "hub" modes exposed to the phone: which live stream (if any) the desktop
     # is currently running. The name is the stable API key; the label is localised
     # on the phone side.
-    _PC_MODES = (("_ambient_ui", "screen"), ("_music_ui", "music"), ("_software_fx_ui", "effect"), ("_diy_ui", "diy"))
+    # "screen" and "screen_music" are both run by the Fusion controller and are
+    # asked for by name, never inferred from whatever the card happens to be set
+    # to. A scene saved as "screen + music" must light the same way on a machine
+    # whose local chooser says "screen", and a command that says "screen" must
+    # not quietly start the combined mode.
+    _PC_MODES = (("_software_fx_ui", "effect"), ("_diy_ui", "diy"))
+    _FUSION_MODES = ("screen", "screen_music")
 
     def _active_pc_mode(self) -> str | None:
+        fusion = getattr(self._host, "_fusion_ui", None)
+        if fusion is not None and fusion.is_running():
+            return str(fusion.mode())
+        music = getattr(self._host, "_music_ui", None)
+        standalone = getattr(music, "is_standalone_running", None) if music else None
+        if callable(standalone) and standalone():
+            return "music"
         for attr, key in self._PC_MODES:
             controller = getattr(self._host, attr, None)
             if controller is not None and controller.is_running():
@@ -191,8 +204,8 @@ class QtApiBackend:
         return None
 
     def _active_pc_mode_preset(self, mode: str | None) -> str | None:
-        # Only screen sync has a preset today: the chosen profile.
-        if mode != "screen":
+        # The screen profile, in both of the modes that capture the screen.
+        if mode not in self._FUSION_MODES:
             return None
         segment = getattr(self._host, "ambient_profile_segment", None)
         if segment is not None:
@@ -205,15 +218,27 @@ class QtApiBackend:
         if wanted in ("", "off", "none", "stop"):
             host.stop_streams()  # back to plain manual colour
             return True
+        if wanted in self._FUSION_MODES:
+            ambient = getattr(host, "_ambient_ui", None)
+            if ambient is None:
+                return False
+            # Named, not read off the card: the mode goes in with the command so
+            # the result does not depend on what this machine was last left
+            # showing. The card's own controller owns the gate and the chooser.
+            return bool(ambient.activate(preset, mode=wanted))
+        if wanted == "music":
+            music = getattr(host, "_music_ui", None)
+            if music is None:
+                return False
+            # Explicitly the standalone reaction: "music" as an API mode is the
+            # one that owns the strip by itself, whatever the card is set to.
+            return bool(music.activate_standalone())
         for attr, key in self._PC_MODES:
             if key != wanted:
                 continue
             controller = getattr(host, attr, None)
             if controller is None:
                 return False
-            # A scene may pin the screen-sync profile; other modes ignore preset.
-            if key == "screen":
-                return bool(controller.activate(preset))
             if controller.is_running():
                 return True
             # activate() reports the real outcome — a Free licence or a missing
@@ -270,6 +295,13 @@ class QtApiBackend:
             host._ble.set_power_for_addresses(bool(on), [str(device_id).strip()])
             if self._is_primary(device_id):
                 host.power_button.setChecked(bool(on))  # reflect, don't re-send
+                # The streams belong to the primary strip, so an address-targeted
+                # command still has to reach them. Without this the capture keeps
+                # running and the colour keeps going out to a strip that was just
+                # switched off.
+                apply_to_streams = getattr(host, "apply_power_to_streams", None)
+                if callable(apply_to_streams):
+                    apply_to_streams(bool(on))
                 remember_power = getattr(host, "_remember_power_setting", None)
                 if callable(remember_power):
                     remember_power(bool(on))

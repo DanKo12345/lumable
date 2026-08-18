@@ -903,3 +903,33 @@ def test_blocking_output_cancels_the_aimed_colour_immediately(app) -> None:
         coordinator.stop()
 
     assert strip.writes == [], f"a colour went out after power off: {strip.writes}"
+
+
+def test_starting_writes_nothing_before_the_first_screen_frame(app) -> None:
+    """The seed describes the strip as it was before the mode began. Starting
+    the engine with it puts that colour out during the moment between pressing
+    start and the first frame arriving — visible on any machine where capture
+    takes a moment to open."""
+    clock = _Clock()
+    strip = _Strip()
+    coordinator = FusionCoordinator(clock=clock, send_interval_ms=33)
+    coordinator.expect_screen(1)
+    coordinator.start(strip.sink, mode="screen", initial=(17, 23, 41))
+    try:
+        # A slow start: the event loop runs, and no sample has arrived yet.
+        for _ in range(12):
+            app.processEvents()
+            time.sleep(0.02)
+            app.processEvents()
+        before_any_frame = list(strip.writes)
+
+        clock.advance(0.05)
+        coordinator.submit_screen(
+            ScreenSample(session_token=1, captured_at=clock.now, rgb=(10, 200, 90))
+        )
+        _drain_until_written(coordinator, clock, app, strip)
+    finally:
+        coordinator.stop()
+
+    assert before_any_frame == [], f"a colour went out before any frame: {before_any_frame}"
+    assert strip.writes[0] == (10, 200, 90), "the first write was not the first frame"

@@ -445,3 +445,30 @@ def test_the_factor_never_leaves_the_range_a_colour_can_be_scaled_by() -> None:
     frame = comp.compose(beat_gain=1.0)
 
     assert 0.0 <= frame.brightness_factor <= 1.0
+
+
+def test_the_first_frame_after_a_long_pause_still_fades_in() -> None:
+    """Forgetting the inputs has to forget the clock reading with them.
+
+    Between a stop and the next start, minutes of wall time pass. Kept, that gap
+    becomes the elapsed time of the first frame, the smoothing step reaches 1.0,
+    and the very first audio block lands at full influence — a jump into a
+    dimmed strip at the moment the mode comes back.
+    """
+    comp, clock = _rig()
+    _settle(comp, clock, level=0.5)
+    assert comp.compose().activity > 0.9
+
+    comp.forget_inputs()
+    clock.advance(300.0)
+
+    clock.advance(0.05)
+    _feed(comp, clock, level=0.5)
+    first = comp.compose()
+
+    assert first.activity == 0.0, "five minutes of pause counted as elapsed time"
+    assert first.brightness_factor == 0.8, "the base was not what came back"
+
+    clock.advance(0.05)
+    _feed(comp, clock, level=0.5)
+    assert 0.0 < comp.compose().activity < 0.5, "the influence did not resume gradually"

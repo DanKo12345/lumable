@@ -39,18 +39,47 @@ class _AmbientUi:
     def is_running(self) -> bool:
         return self._running
 
-    def activate(self, profile_id: str | None = None) -> bool:
+    def activate(self, profile_id: str | None = None, mode: str | None = None) -> bool:
         if profile_id:
             self._segment.set_current(profile_id)
         self._running = True
         self.activated_with = profile_id
+        self.activated_mode = mode
         return True
+
+    def sync_mode_segment(self) -> None:
+        pass
+
+
+class _FusionUi:
+    """The controller that actually runs both screen modes now."""
+
+    def __init__(self) -> None:
+        self._mode = "screen"
+        self._running = False
+
+    def mode(self) -> str:
+        return self._mode
+
+    def set_mode(self, mode: str, **_kwargs) -> None:
+        self._mode = mode
+
+    def is_running(self) -> bool:
+        return self._running
+
+    def activate(self) -> bool:
+        self._running = True
+        return True
+
+    def stop_if_running(self) -> None:
+        self._running = False
 
 
 class _Host:
     def __init__(self, segment: _Segment, ambient: _AmbientUi) -> None:
         self.ambient_profile_segment = segment
         self._ambient_ui = ambient
+        self._fusion_ui = _FusionUi()
         self._music_ui = None
         self._software_fx_ui = None
         self._diy_ui = None

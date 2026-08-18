@@ -254,6 +254,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "color_temperature": 4500,
     "language": "ru",
     "ambient": {"region": "full", "saturation": 55, "smoothing": 65, "monitor": 0, "profile": "desktop"},
+    "fusion": {"mode": "screen"},
     "music": {
         "saturation": 60,
         "smoothing": 50,
@@ -514,6 +515,22 @@ def _coerce_time_text(value: Any, default: str) -> str:
     if not 0 <= hour <= 23 or not 0 <= minute <= 59:
         return default
     return f"{hour:02d}:{minute:02d}"
+
+
+def validate_fusion(data: Any) -> dict[str, Any]:
+    """What the strip follows: the screen alone, or the screen with the music.
+
+    A choice the user made on the card, so it has to survive a restart like any
+    other. Anything unrecognised falls back to the screen — the mode that needs
+    nothing beyond what Screen Sync already needs.
+    """
+    defaults = DEFAULT_SETTINGS["fusion"]
+    if not isinstance(data, dict):
+        data = {}
+    mode = _coerce_str(data.get("mode"), str(defaults["mode"]))
+    if mode not in {"screen", "screen_music"}:
+        mode = str(defaults["mode"])
+    return {"mode": mode}
 
 
 def validate_ambient(data: Any) -> dict[str, Any]:
@@ -825,6 +842,7 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "color_temperature": _coerce_int(data.get("color_temperature"), 4500, 2000, 6500),
         "language": language,
         "ambient": validate_ambient(data.get("ambient", DEFAULT_SETTINGS["ambient"])),
+        "fusion": validate_fusion(data.get("fusion", DEFAULT_SETTINGS["fusion"])),
         "music": validate_music(data.get("music", DEFAULT_SETTINGS["music"])),
         "software_fx": validate_software_fx(data.get("software_fx", DEFAULT_SETTINGS["software_fx"])),
         "app_triggers": validate_app_triggers(data.get("app_triggers", DEFAULT_SETTINGS["app_triggers"])),

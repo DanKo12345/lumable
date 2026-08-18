@@ -155,32 +155,39 @@ def test_starting_screen_sync_stops_music(window) -> None:
     assert not window._music_ui.is_running()
 
 
-def test_turning_the_light_off_by_hand_takes_the_strip_back(window) -> None:
-    """A manual command outranks everything. This one is probably right as it
-    stands, and is pinned so a change to it has to be deliberate."""
+def test_turning_the_light_off_by_hand_stops_the_capture(window) -> None:
+    """A manual command still outranks everything: nothing is captured and
+    nothing is written while the strip is off."""
     _start_screen_sync(window)
 
     window.power_button.setChecked(False)
     window._toggle_power()
 
-    assert not window._ambient_ui.is_running()
+    assert not window._fusion_ui.coordinator().output_allowed()
+    assert not window._ambient_ui._ambient.is_running(), "the screen was still being captured"
 
 
-def test_the_mode_is_not_remembered_across_a_power_cycle(window) -> None:
-    """Today "screen sync" is not a setting, it is a thing that is running. Turn
-    the strip off and on and it is simply gone — nothing knows it was chosen.
+def test_the_mode_survives_a_power_cycle(window) -> None:
+    """The change 0.4.0 makes on purpose, and the reason this file was written.
 
-    Fusion needs the difference between *chosen*, *capturing* and *allowed to
-    write*, and this is what there is instead of it right now.
+    Before, "screen sync" was not a setting but a running object: switching the
+    strip off destroyed it and switching back on left a dark strip and a card
+    claiming nothing was on. Now power moves only the third of the three states
+    — permission to write — and the mode comes back with its capture.
     """
     _start_screen_sync(window)
 
     window.power_button.setChecked(False)
     window._toggle_power()
+    assert window._fusion_ui.is_running(), "the mode was destroyed rather than paused"
+    assert not window._fusion_ui.coordinator().output_allowed()
+
     window.power_button.setChecked(True)
     window._toggle_power()
 
-    assert not window._ambient_ui.is_running()
+    assert window._fusion_ui.is_running()
+    assert window._fusion_ui.coordinator().output_allowed()
+    assert window._ambient_ui._ambient.is_running(), "the capture did not come back"
 
 
 # ── nothing gives the strip back ──────────────────────────────────────

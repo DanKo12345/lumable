@@ -202,15 +202,45 @@ def test_going_back_to_screen_only_leaves_music_its_own_card(window) -> None:
     assert window._settings["fusion"]["mode"] == "screen"
 
 
-def test_the_saved_mode_comes_back_on_the_next_run(window) -> None:
+def test_the_saved_mode_comes_back_through_the_settings_file(window) -> None:
+    """Reloading the same dictionary this window is already holding proves
+    nothing: the choice has to survive the file, and the file is validated on
+    the way in. A key the validator does not know about is dropped there,
+    silently, and the mode comes back as Screen on the next launch."""
+    from app.storage import load_settings
+
     _click_second_segment(window.fusion_mode_segment)
 
+    reloaded = load_settings()
+
+    assert reloaded.get("fusion", {}).get("mode") == "screen_music", (
+        f"the choice did not survive the file: {reloaded.get('fusion')}"
+    )
+
+    # And a fresh controller reading that file lands on the same mode.
     window._fusion_ui.set_mode("screen", persist=False)
+    window._settings = reloaded
     window._fusion_ui.load_settings()
     window._ambient_ui.sync_mode_segment()
 
     assert window._fusion_ui.mode() == "screen_music"
     assert window.fusion_mode_segment.current_key() == "screen_music"
+
+
+def test_the_mode_travels_in_a_backup(window) -> None:
+    """It is a choice someone made, so it belongs with the scenes and the
+    hotkeys rather than with the machine's own settings."""
+    import json
+
+    from app.backup import build_backup, inspect_backup, restore_into
+
+    _click_second_segment(window.fusion_mode_segment)
+    document = build_backup(window._settings)
+
+    check = inspect_backup(json.dumps(document))
+    restored, _report = restore_into({"fusion": {"mode": "screen"}}, check.payload)
+
+    assert restored["fusion"]["mode"] == "screen_music"
 
 
 def test_the_tray_and_a_hotkey_do_not_tear_music_out_of_the_shared_mode(window) -> None:

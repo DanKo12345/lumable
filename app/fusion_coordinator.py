@@ -106,12 +106,18 @@ class FusionCoordinator(QObject):
         return self._timer.isActive()
 
     def start(self, sink: Callable[..., None], *, mode: str, initial: RGB = (0, 0, 0)) -> None:
-        """Take the output. ``sink`` is the only route to the strip from here."""
+        """Take the output. ``sink`` is the only route to the strip from here.
+
+        The engine is not started here. It writes as soon as it is running, and
+        at this moment there is no screen frame yet — so it would put ``initial``
+        on the strip, a colour from before the mode began. The first frame worth
+        sending wakes it and seeds it with that frame; ``initial`` is kept only
+        as the fallback seed for a caller that asks for one.
+        """
         self._compositor.set_mode(mode)
         self._compositor.set_sources_running(True)
         self._sink = sink
         self._initial = initial
-        self._engine.start(sink, initial=initial)
         self._timer.start()
 
     def stop(self) -> None:

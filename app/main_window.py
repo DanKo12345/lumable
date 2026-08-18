@@ -1080,13 +1080,34 @@ class MainWindow(QMainWindow):
         """Stop every streaming owner — used when the strip goes away (BLE drop)."""
         self.stop_streams()
 
+    def apply_power_to_streams(self, enabled: bool) -> None:
+        """What power means for whatever is streaming, in one place.
+
+        Fusion keeps the mode that was chosen: power stops its capture and
+        refuses its output, and switching back on resumes both and waits for a
+        fresh frame. Everything else — music on its own, DIY, software effects,
+        the timers — is stopped outright, because none of them has a "chosen but
+        paused" state to come back to.
+
+        Every route to power goes through here, including the one the local API
+        and a scene take. A targeted power-off that only wrote to the strip left
+        the capture running and the colour still going out, which is a strip
+        that switches itself back on a moment later.
+        """
+        for owner in self._stream_owners():
+            if owner is None or owner is self._fusion_ui:
+                continue
+            stop = getattr(owner, "stop_if_running", None)
+            if callable(stop):
+                stop()
+        self._fusion_ui.set_powered(bool(enabled))
+
     def _toggle_power(self):
         self._sync_power_button()
         if self._initializing:
             return
-        # Power is a manual override: any running stream yields the strip.
-        self.stop_streams()
         enabled = self.power_button.isChecked()
+        self.apply_power_to_streams(enabled)
         self._ble.set_power(enabled)
         self._remember_power_setting(enabled)
         self._sync_aurora_accent(enabled=enabled)

@@ -184,7 +184,7 @@ class AmbientUiController:
             self._ambient.stop()
             self._host.ambient_preview.clear()
 
-    def activate(self, profile_id: str | None = None) -> bool:
+    def activate(self, profile_id: str | None = None, mode: str | None = None) -> bool:
         """Start screen sync as if the card's toggle was pressed (keeps the
         licence/connection gates and stops any other active stream). A scene can
         pin ``profile_id`` (desktop/game/movie) — it is selected first, so
@@ -192,6 +192,12 @@ class AmbientUiController:
         sync is already running. Returns whether it is running — a gate may have
         silently blocked it."""
         host = self._host
+        if mode is not None:
+            # An explicit mode from a scene or the API. Set before the gate, so
+            # the gate is asked about the mode being requested rather than the
+            # one this machine happens to be showing.
+            host._fusion_ui.set_mode(mode)
+            self.sync_mode_segment()
         # Gate before touching the saved profile: if a Free licence or a missing
         # connection will refuse the start, the user's profile must not be
         # silently changed as a side effect. When already running, the gates

@@ -194,9 +194,7 @@ class FusionCompositor:
         """Choose what the strip is doing. Nothing else clears this."""
         if mode != self._mode:
             self._mode = mode
-            self._base = None
-            self._music = None
-            self._activity = 0.0
+            self.forget_inputs()
 
     @property
     def sources_running(self) -> bool:
@@ -234,6 +232,11 @@ class FusionCompositor:
         self._base = None
         self._music = None
         self._activity = 0.0
+        # The clock reading too, or the pause counts as elapsed time on the next
+        # frame: five minutes of "dt" makes the smoothing step 1.0 and the very
+        # first block after a gap arrives at full influence, which is the jump
+        # the fade exists to prevent.
+        self._last_tick = None
 
     # ── inputs ────────────────────────────────────────────────────────
     def submit_base(self, sample: BaseSample) -> None:

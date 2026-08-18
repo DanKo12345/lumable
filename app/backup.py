@@ -50,6 +50,7 @@ PORTABLE_KEYS: tuple[str, ...] = (
     "quick_mode",
     "hotkeys",
     "ambient",
+    "fusion",
     "music",
     "software_fx",
     "timers",
