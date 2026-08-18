@@ -254,16 +254,23 @@ def _fusion_section(fusion: dict[str, Any] | None) -> list[str]:
     """
     if not fusion or not (fusion.get("running") or fusion.get("errors")):
         return []
+
+    def flag(value: object) -> str:
+        # English, like the Live Sync and Music Sync blocks above. A report is
+        # pasted into an issue and read by whoever answers it, so its numbers
+        # and their labels stay in one language regardless of the interface.
+        return "yes" if value else "no"
+
     lines = [
         "",
         "Fusion",
         f"mode: {fusion.get('mode', '-')}",
-        f"running: {_yes_no(fusion.get('running'))}",
+        f"running: {flag(fusion.get('running'))}",
         f"last frame: {fusion.get('frame_reason', '-')}",
         f"strip brightness: {fusion.get('strip_brightness', '-')}",
         f"fusion brightness factor: {fusion.get('brightness_factor', '-')}",
         f"music activity: {fusion.get('music_activity', '-')}",
-        f"music stale: {_yes_no(fusion.get('music_stale'))}",
+        f"music stale: {flag(fusion.get('music_stale'))}",
         f"stream errors: {int(fusion.get('errors', 0) or 0)}",
     ]
     dropped_screen = int(fusion.get("dropped_screen_samples", 0) or 0)
