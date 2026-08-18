@@ -228,3 +228,32 @@ def test_the_worst_frame_is_placed_in_the_run() -> None:
     text = _text(metrics.report(140.0), running=True)
 
     assert "worst frame: 250.0 ms at 2.0s into the run" in text
+
+
+def test_the_command_numbers_are_left_out_when_fusion_owns_the_writes() -> None:
+    """The capture is still this controller's and its frames are still counted.
+    The writes are not: they leave through the composer, and one write can carry
+    several frames. Printing zeros there would report a run that plainly lit the
+    strip as having sent nothing.
+    """
+    metrics = LiveSyncMetrics()
+    token = metrics.start(100.0)
+    for index in range(1, 61):
+        at = 100.0 + index / 30.0
+        metrics.frame_captured(token, at)
+        metrics.frame_processed(token, at, frame_ms=4.0)
+        if index % 3 == 0:
+            metrics.command_submitted(token, at)
+            metrics.command_succeeded(token, at)
+    report = metrics.report(102.0)
+
+    owned = format_live_sync(report, running=True, link_measured=True)
+    borrowed = format_live_sync(report, running=True, link_measured=False)
+
+    assert any("frames:" in line for line in borrowed), "the frames stopped being counted"
+    assert any("capture:" in line for line in borrowed)
+    assert not any("link rejections:" in line for line in borrowed)
+    assert not any("drop ratio:" in line for line in borrowed)
+    assert any("commands: written by Fusion" in line for line in borrowed)
+    # And nothing was lost from the normal case.
+    assert any("submitted" in line for line in owned)

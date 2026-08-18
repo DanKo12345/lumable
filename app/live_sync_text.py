@@ -111,12 +111,19 @@ def format_live_sync(
     running: bool = False,
     window_seconds: float = RECENT_WINDOW_SECONDS,
     settings: Mapping | None = None,
+    link_measured: bool = True,
 ) -> list[str]:
     """Two blocks of report lines, or nothing at all.
 
     An empty list when no session has ever run: a block of zeros would say
     "measured, all quiet" when the truth is "never measured", and the report
     already leaves out sections it has no data for.
+
+    ``link_measured`` is False when the capture is feeding a composer rather
+    than writing to the strip itself. The frames are still counted here; the
+    commands are not, because they are no longer this controller's. Printing
+    their zeros would be the same lie in a smaller place — a run that plainly
+    lit the strip, reported as having sent nothing.
     """
     if not _has_anything(report):
         return []
@@ -144,10 +151,17 @@ def format_live_sync(
         f"{session.frames_coalesced} coalesced",
         f"frame errors: {session.capture_errors} capture, "
         f"{session.processing_errors} processing",
-        f"commands: {session.commands_submitted} submitted, {settled}",
-        f"link rejections: {session.link_rejections} (link busy, not a write error)",
-        f"reconnects: {session.reconnects}",
     ]
+    if link_measured:
+        lines.extend(
+            [
+                f"commands: {session.commands_submitted} submitted, {settled}",
+                f"link rejections: {session.link_rejections} (link busy, not a write error)",
+            ]
+        )
+    else:
+        lines.append("commands: written by Fusion — see the Fusion block")
+    lines.append(f"reconnects: {session.reconnects}")
     if session.worst_frame_ms:
         lines.append(
             f"worst frame: {session.worst_frame_ms} ms at {session.worst_frame_at}s into the run"
@@ -164,10 +178,21 @@ def format_live_sync(
             heading,
             f"measured over: {recent.seconds}s",
             f"capture: {recent.capture_fps} fps",
-            f"commands: {recent.command_rate}/s",
+            *(
+                [f"commands: {recent.command_rate}/s"]
+                if link_measured
+                else []
+            ),
             f"processing time: {recent.frame_ms_avg} ms avg, {recent.frame_ms_p95} ms p95",
-            f"drop ratio: {recent.drop_ratio} (frames displaced before sending)",
-            f"link rejection rate: {recent.rejection_rate} (share of attempts refused)",
+            *(
+                [
+                    f"drop ratio: {recent.drop_ratio} (frames displaced before sending)",
+                    f"link rejection rate: {recent.rejection_rate} "
+                    "(share of attempts refused)",
+                ]
+                if link_measured
+                else []
+            ),
         ]
     )
     return lines

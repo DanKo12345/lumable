@@ -731,6 +731,7 @@
         "ambient.capture_status": "Capturing · {fps} fps",
         "fusion.status.screen": "Following the screen",
         "fusion.status.screen_music": "Screen and music",
+        "fusion.audio_lost": "The audio device stopped. The screen keeps going.",
         "fusion.mode.screen": "Screen",
         "fusion.mode.screen_music": "Screen + music",
         "fusion.needs_pro": "Screen + music is part of Pro.",

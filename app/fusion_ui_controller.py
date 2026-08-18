@@ -40,6 +40,10 @@ class FusionUiController:
         self._mode = SCREEN
         self._sink = None
         self._reason = ""
+        self._submitted = 0
+        self._succeeded = 0
+        self._failed = 0
+        self._audio_lost = False
 
     def wire(self) -> None:
         """Point both sources at the coordinator, once and for good.
@@ -131,9 +135,19 @@ class FusionUiController:
             # The only route to the strip from a streaming mode. Colour only:
             # the brightness slider is the strip's own ceiling and the composed
             # factor rides inside these three numbers.
-            return host._ble.set_color_stream(red, green, blue)
+            #
+            # Counted here rather than by the screen's own metrics: a composed
+            # write is not a screen frame — several frames can coalesce into one
+            # — so attributing an outcome back to a frame id would be inventing a
+            # correspondence that does not exist.
+            self._submitted += 1
+            return host._ble.set_color_stream(red, green, blue, observer=self._note_result)
 
         self._sink = sink
+        self._audio_lost = False
+        self._submitted = 0
+        self._succeeded = 0
+        self._failed = 0
         seed = host._current_color()
         self._coordinator.attach_sources(start=self._start_sources, stop=self._stop_sources)
         self._coordinator.start(
@@ -178,6 +192,23 @@ class FusionUiController:
         host._ambient_ui.stop_listening()
         host._music_ui.stop_listening()
 
+    def note_audio_lost(self) -> None:
+        """The audio device has gone. Keep the screen, drop the claim to music.
+
+        The mode the user chose is not changed — they still want screen and
+        music, and plugging the device back in should resume it. What must stop
+        is the interface saying "Экран + музыка" while nothing is listening, and
+        the coordinator waiting for a token no source will ever send.
+        """
+        if not self.is_running():
+            return
+        self._audio_lost = True
+        self._coordinator.expect_music(0)
+
+    def audio_lost(self) -> bool:
+        """Whether the combined mode is running with its audio half missing."""
+        return self._audio_lost and self.is_running() and self._mode == SCREEN_MUSIC
+
     def restart_audio(self) -> None:
         """Take the audio source again, leaving the screen and the strip alone.
 
@@ -189,10 +220,17 @@ class FusionUiController:
             return
         host = self._host
         host._music_ui.stop_listening()
+        self._audio_lost = False
         self._coordinator.expect_music(host._music_ui.start_listening())
 
     def set_beat_gain(self, gain: float) -> None:
         self._coordinator.set_beat_gain(gain)
+
+    def _note_result(self, ok: bool) -> None:
+        if ok:
+            self._succeeded += 1
+        else:
+            self._failed += 1
 
     def _strip_brightness(self) -> str:
         """The hardware brightness, as the card shows it."""
@@ -207,6 +245,9 @@ class FusionUiController:
             "running": self.is_running(),
             "mode": self._mode,
             "errors": self._coordinator.stream_error_count(),
+            "commands_submitted": self._submitted,
+            "commands_succeeded": self._succeeded,
+            "commands_failed": self._failed,
             "last_error": self._coordinator.last_stream_error(),
             "frame_reason": frame.reason,
             # Two brightnesses, never one. The strip keeps the hardware level a
@@ -217,6 +258,7 @@ class FusionUiController:
             "brightness_factor": round(frame.brightness_factor, 3),
             "music_activity": round(frame.activity, 3),
             "music_stale": frame.music_stale,
+            "audio_lost": self.audio_lost(),
             "dropped_screen_samples": dropped_screen,
             "dropped_music_samples": dropped_music,
         }

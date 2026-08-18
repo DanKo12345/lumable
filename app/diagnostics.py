@@ -138,6 +138,7 @@ def _ambient_section(ambient: dict[str, Any] | None) -> list[str]:
         format_live_sync(
             live_sync,
             running=bool(ambient.get("running")),
+            link_measured=not bool(ambient.get("link_owned_by_fusion")),
             settings=settings if isinstance(settings, dict) else None,
         )
         if isinstance(live_sync, LiveSyncReport)
@@ -271,6 +272,9 @@ def _fusion_section(fusion: dict[str, Any] | None) -> list[str]:
         f"fusion brightness factor: {fusion.get('brightness_factor', '-')}",
         f"music activity: {fusion.get('music_activity', '-')}",
         f"music stale: {flag(fusion.get('music_stale'))}",
+        f"commands: {int(fusion.get('commands_submitted', 0) or 0)} submitted, "
+        f"{int(fusion.get('commands_succeeded', 0) or 0)} succeeded, "
+        f"{int(fusion.get('commands_failed', 0) or 0)} failed",
         f"stream errors: {int(fusion.get('errors', 0) or 0)}",
     ]
     dropped_screen = int(fusion.get("dropped_screen_samples", 0) or 0)

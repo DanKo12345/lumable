@@ -365,6 +365,9 @@ class MusicUiController:
     def _shared_with_screen(self) -> bool:
         return self._host._fusion_ui.mode() == "screen_music"
 
+    def _audio_lost(self) -> bool:
+        return self._host._fusion_ui.audio_lost()
+
     def is_standalone_running(self) -> bool:
         """Whether the old mode — music owning the strip by itself — is on.
 
@@ -381,7 +384,7 @@ class MusicUiController:
         hotkey both read this, and answering with the standalone capture would
         show music as off while the strip is plainly reacting to it.
         """
-        if self._shared_with_screen():
+        if self._shared_with_screen() and not self._audio_lost():
             return self._host._fusion_ui.is_running()
         return self._music.is_running()
 
@@ -423,12 +426,16 @@ class MusicUiController:
         """
         host = self._host
         shared = host._fusion_ui.mode() == "screen_music"
+        lost = host._fusion_ui.audio_lost()
         button = getattr(host, "music_toggle_button", None)
         status = getattr(host, "music_status_label", None)
         if button is not None:
-            button.setEnabled(not shared)
+            # With the device gone there is nothing shared to point at, so the
+            # card's own button comes back rather than staying disabled with an
+            # explanation that is no longer true.
+            button.setEnabled(not shared or lost)
         if status is not None and shared:
-            status.setText(host._tr("fusion.music_shared"))
+            status.setText(host._tr("fusion.audio_lost" if lost else "fusion.music_shared"))
             status.setVisible(True)
         elif status is not None and not self._music.is_running():
             status.setText(host._tr("music.status_off"))
@@ -641,6 +648,15 @@ class MusicUiController:
 
     def _on_failed(self, reason: str) -> None:
         host = self._host
+        if host._fusion_ui.is_running():
+            # The screen half is still working and should keep working. What
+            # stops is the claim that music is part of it.
+            host._fusion_ui.note_audio_lost()
+            self.refresh_shared_state()
+            host._ambient_ui.refresh_status()
+            host._log(host._tr("music.error", error=reason))
+            host._show_error(host._tr("fusion.audio_lost"))
+            return
         self._stop()
         # Log the raw reason (incl. the underlying import/capture error) so a
         # failure is diagnosable, but show the user a friendly message.

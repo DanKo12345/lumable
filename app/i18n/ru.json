@@ -731,6 +731,7 @@
         "ambient.capture_status": "Захват активен · {fps} к/с",
         "fusion.status.screen": "Синхронизация экрана",
         "fusion.status.screen_music": "Экран и музыка",
+        "fusion.audio_lost": "Аудиоустройство пропало. Экран продолжает работать.",
         "fusion.mode.screen": "Экран",
         "fusion.mode.screen_music": "Экран + музыка",
         "fusion.needs_pro": "«Экран + музыка» входит в Pro.",

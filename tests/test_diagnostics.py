@@ -404,3 +404,32 @@ def test_a_stream_error_goes_through_the_same_scrubbing() -> None:
     assert "stream errors: 3" in report
     assert home not in report
     assert "~" in report
+
+
+def test_the_screen_block_stops_reporting_writes_it_no_longer_makes() -> None:
+    """While Fusion owns the output the capture is still Screen Sync's and its
+    frames are still counted, but the commands are not — and zeros there would
+    describe a run that plainly lit the strip as having sent nothing."""
+    from app.live_sync_metrics import LiveSyncMetrics
+
+    metrics = LiveSyncMetrics()
+    token = metrics.start(100.0)
+    for index in range(1, 31):
+        at = 100.0 + index / 30.0
+        metrics.frame_captured(token, at)
+        metrics.frame_processed(token, at, frame_ms=4.0)
+    report = metrics.report(101.0)
+
+    alone = build_diagnostics_report(
+        {}, [], include_crashes=False,
+        ambient={"running": True, "live_sync": report, "link_owned_by_fusion": False},
+    )
+    borrowed = build_diagnostics_report(
+        {}, [], include_crashes=False,
+        ambient={"running": True, "live_sync": report, "link_owned_by_fusion": True},
+    )
+
+    assert "link rejections:" in alone
+    assert "link rejections:" not in borrowed
+    assert "written by Fusion" in borrowed
+    assert "frames:" in borrowed, "the frames stopped being reported too"

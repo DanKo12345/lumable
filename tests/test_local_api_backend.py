@@ -180,6 +180,7 @@ class _FakeMode:
         self._running = running
         self._starts = starts  # whether activate() actually turns it on
         self.activated = 0
+        self.activated_standalone = 0
         self.activated_mode = None
         self._fusion = fusion or _FakeFusion()
 
@@ -204,7 +205,10 @@ class _FakeMode:
 
     def activate_standalone(self) -> bool:
         """What "music" means as an API mode: the reaction on its own."""
-        return self.activate()
+        self.activated_standalone += 1
+        self.activated += 1
+        self._running = self._starts
+        return self._running
 
     def is_standalone_running(self) -> bool:
         return self._running
@@ -251,7 +255,23 @@ def test_asking_for_music_does_not_start_the_combined_mode() -> None:
 
     assert QtApiBackend(host).set_pc_mode("music") is True
 
+    assert host._music_ui.activated_standalone == 1, (
+        "the shared-mode entry point was used, so the card's chooser decided this"
+    )
     assert host._music_ui.activated == 1
+
+
+def test_a_targeted_power_off_reaches_the_streams() -> None:
+    """An address-targeted command still means the primary strip, and the
+    streams belong to it. Writing only to the strip left the capture running
+    and the colour going out to something that had just been switched off."""
+    host = _Host()
+    applied: list[bool] = []
+    host.apply_power_to_streams = applied.append
+
+    QtApiBackend(host).set_power(False, device_id="AA:BB")
+
+    assert applied == [False], "the streams never heard about the power command"
 
 
 def test_set_pc_mode_off_stops_all_streams() -> None:

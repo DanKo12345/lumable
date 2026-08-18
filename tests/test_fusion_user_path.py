@@ -286,58 +286,75 @@ def test_the_standalone_music_mode_is_untouched_when_the_screen_is_alone(window)
 
 def test_losing_the_audio_device_leaves_the_screen_running(window) -> None:
     """A microphone unplugged mid-run is the audio source's problem, not the
-    mode's: the picture still drives the strip, the modulation fades out, and
-    the tray still shows the mode as on rather than claiming it stopped.
+    mode's: the picture still drives the strip. But the interface must stop
+    claiming "screen and music" while nothing is listening — and the music card
+    must offer its own button back, because there is no longer anything shared
+    to point at.
     """
     app = QApplication.instance()
     _click_second_segment(window.fusion_mode_segment)
     QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
     _pump(app, 5.0, until=lambda: window._strip.count() >= 3)
     assert window._strip.count() >= 1
+    assert window.music_status_label.text() == window._tr("fusion.music_shared")
 
-    # The device goes away; the music controller stops itself.
-    window._music_ui.stop_listening()
+    # The device goes away, the way the controller really reports it.
+    window._music_ui._music.stop()
+    window._music_ui._on_failed("audio_capture_unavailable: device gone")
     app.processEvents()
-    assert window._music_ui._music.is_running() is False
 
     before = window._strip.count()
-    # Waited on the thing being asserted, not on a write count: the staleness
-    # window is a quarter of a second and two more frames can arrive well inside
-    # it, which would make the check pass or fail on how fast the machine is.
-    _pump(app, 3.0, until=lambda: window._fusion_ui.stats()["music_stale"])
+    _pump(app, 3.0, until=lambda: window._strip.count() > before)
 
-    assert window._fusion_ui.is_running() is True
-    assert window._music_ui.is_running() is True, "the tray would claim the mode had stopped"
+    assert window._fusion_ui.is_running() is True, "the screen half stopped too"
     assert window._ambient_ui.is_running() is True
-    assert window._strip.count() > before, "the screen stopped reaching the strip too"
-    assert window._fusion_ui.stats()["music_stale"] is True
+    assert window._strip.count() > before, "the screen stopped reaching the strip"
+
+    assert window._fusion_ui.audio_lost() is True
+    assert window._fusion_ui.stats()["audio_lost"] is True
+    assert window._music_ui.is_running() is False, "the card still claimed music was on"
+    assert window.music_toggle_button.isEnabled() is True, "no way back to music"
+    assert window.music_status_label.text() == window._tr("fusion.audio_lost")
+    assert window.ambient_status_label.text() == window._tr("fusion.audio_lost")
+
+    # The mode itself is untouched: plugging the device back in resumes it.
+    assert window._fusion_ui.mode() == "screen_music"
+    assert window._settings["fusion"]["mode"] == "screen_music"
 
 
-def test_the_cards_sliders_land_on_a_running_combined_mode(window) -> None:
-    """Nothing on either card may need a restart to take effect.
+def test_taking_the_audio_source_again_clears_the_lost_state(window) -> None:
+    app = QApplication.instance()
+    _click_second_segment(window.fusion_mode_segment)
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    _pump(app, 5.0, until=lambda: window._strip.count() >= 2)
 
-    The screen sliders reconfigure the live capture; the beat slider is the one
-    that leaves the analysis and is applied where the frame is composed, so it
-    has its own route and its own way of quietly doing nothing.
-    """
+    window._music_ui._music.stop()
+    window._music_ui._on_failed("audio_capture_unavailable: device gone")
+    app.processEvents()
+    assert window._fusion_ui.audio_lost() is True
+
+    window._fusion_ui.restart_audio()
+    app.processEvents()
+
+    assert window._fusion_ui.audio_lost() is False
+    assert window._music_ui._music.is_running() is True
+
+
+def test_the_report_does_not_credit_screen_sync_with_fusion_writes(window) -> None:
+    """The numbers have to come from the controller that is actually asked, not
+    from a flag a test passed in by hand. While Fusion owns the output, Screen
+    Sync's own report must say so rather than print zeros for commands it never
+    made."""
     app = QApplication.instance()
     _click_second_segment(window.fusion_mode_segment)
     QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
     _pump(app, 5.0, until=lambda: window._strip.count() >= 2)
     assert window._fusion_ui.is_running()
 
-    # Screen: the live capture takes the new profile without stopping.
-    window.ambient_saturation_slider.setValue(90)
-    app.processEvents()
-    assert window._ambient_ui._ambient.options().intensity == 90
-    assert window._fusion_ui.is_running(), "changing a screen slider restarted the mode"
+    stats = window._ambient_ui.stats()
+    assert stats["link_owned_by_fusion"] is True
 
-    # Music: the beat slider reaches the compositor, not just the options.
-    window.music_beat_slider.setValue(0)
-    app.processEvents()
-    assert window._fusion_ui.coordinator()._beat_gain == 0.0
-
-    window.music_beat_slider.setValue(100)
-    app.processEvents()
-    assert window._fusion_ui.coordinator()._beat_gain > 0.0
-    assert window._music_ui._music.is_running(), "the audio capture was restarted"
+    report = window._diagnostics_ctrl.text(include_crashes=False)
+    assert "link rejections:" not in report
+    assert "Fusion" in report
+    assert "commands:" in report, "the Fusion block did not report its own writes"

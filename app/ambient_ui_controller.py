@@ -114,14 +114,14 @@ class AmbientUiController:
         segment.blockSignals(True)
         segment.set_current(host._fusion_ui.mode(), animate=False)
         segment.blockSignals(False)
-        self._refresh_status()
+        self.refresh_status()
 
     def _on_mode_changed(self, key: str) -> None:
         self._host._fusion_ui.set_mode(key)
-        self._refresh_status()
+        self.refresh_status()
         self._host._music_ui.refresh_shared_state()
 
-    def _refresh_status(self) -> None:
+    def refresh_status(self) -> None:
         """The one line under the row title, and the one place it is decided.
 
         Three things it can say, in order of what a person needs to know:
@@ -138,6 +138,8 @@ class AmbientUiController:
         reason = host._fusion_ui.unavailable_reason(mode)
         if reason:
             label.setText(host._tr(reason))
+        elif self.is_running() and host._fusion_ui.audio_lost():
+            label.setText(host._tr("fusion.audio_lost"))
         elif self.is_running():
             label.setText(host._tr(f"fusion.status.{mode}"))
         else:
@@ -147,6 +149,11 @@ class AmbientUiController:
     def stats(self) -> dict:
         return {
             "running": self._ambient.is_running(),
+            # The frames are this controller's; the writes are not, once the
+            # capture is feeding a composer. Said out loud so the report can
+            # leave out numbers it is no longer measuring instead of printing
+            # their zeros.
+            "link_owned_by_fusion": self._host._fusion_ui.is_running(),
             "errors": self._ambient.stream_error_count(),
             "last_error": self._ambient.last_stream_error(),
             # The last run's numbers survive its stop, so a report exported
@@ -250,14 +257,14 @@ class AmbientUiController:
         host = self._host
         if not host._fusion_ui.activate():
             host.ambient_toggle_button.setChecked(False)
-            self._refresh_status()
+            self.refresh_status()
             reason = host._fusion_ui.last_reason()
             if reason:
                 host._show_error(host._tr(reason))
             return
         self._set_manual_controls_enabled(False)
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_on"))
-        self._refresh_status()
+        self.refresh_status()
         host._music_ui.refresh_shared_state()
         host._log(host._tr("ambient.started_log"))
 
@@ -270,7 +277,7 @@ class AmbientUiController:
         self._set_manual_controls_enabled(True)
         host.ambient_toggle_button.setChecked(False)
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_off"))
-        self._refresh_status()
+        self.refresh_status()
         host._music_ui.refresh_shared_state()
         if was_running:
             host._log(host._tr("ambient.stopped_log"))
@@ -317,7 +324,7 @@ class AmbientUiController:
         host.ambient_mode_title_label.setText(host._tr("ambient.mode_title"))
         host.ambient_profile_title_label.setText(host._tr("ambient.profile_title"))
         self._refresh_profile_description()
-        self._refresh_status()
+        self.refresh_status()
 
     def _persist(self) -> None:
         host = self._host

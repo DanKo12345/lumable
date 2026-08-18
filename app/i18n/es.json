@@ -731,6 +731,7 @@
         "ambient.capture_status": "Capturando · {fps} fps",
         "fusion.status.screen": "Siguiendo la pantalla",
         "fusion.status.screen_music": "Pantalla y música",
+        "fusion.audio_lost": "El dispositivo de audio se detuvo. La pantalla sigue.",
         "fusion.mode.screen": "Pantalla",
         "fusion.mode.screen_music": "Pantalla + música",
         "fusion.needs_pro": "«Pantalla + música» forma parte de Pro.",
