@@ -24,11 +24,34 @@ ROOT = Path(__file__).resolve().parent.parent
 TOOL = ROOT / "tools" / "measure_mode_row.py"
 
 
+def decide_outcome(returncode: int, *, headless: bool) -> str:
+    """What a failed measurement means: "skip" only where it is expected.
+
+    A rule rather than a line inside a fixture, because a fixture that skips is
+    invisible in a green run — and a guarantee that quietly stops being checked
+    on the one machine where the layout is actually looked at is worse than no
+    guarantee.
+    """
+    if returncode == 0:
+        return "ok"
+    return "skip" if headless else "fail"
+
+
 @pytest.fixture(scope="module")
 def measurements():
-    if not TOOL.exists():
-        pytest.skip("the measuring tool is not present")
+    """Run the measuring tool with the real platform plugin.
+
+    A machine with no desktop is skipped, but only when it says so: an
+    environment that cannot open a window sets ``LUMABLE_HEADLESS``. Anything
+    else — a window that failed to open under load, a tool that raised — is a
+    failure. Skipping on any error would let this guarantee quietly stop being
+    checked on the one machine where the layout is actually seen, and a test
+    that stops checking without saying so is worse than no test.
+    """
     import os
+
+    if not TOOL.exists():
+        pytest.fail(f"the measuring tool is missing: {TOOL}")
 
     env = dict(os.environ)
     # The real plugin, whatever conftest set for the suite.
@@ -42,8 +65,15 @@ def measurements():
         cwd=str(ROOT),
         timeout=300,
     )
-    if result.returncode != 0:
-        pytest.skip(f"no display to measure on: {result.stderr.strip()[-200:]}")
+    outcome = decide_outcome(result.returncode, headless=bool(os.environ.get("LUMABLE_HEADLESS")))
+    if outcome != "ok":
+        detail = (result.stderr or "").strip()[-400:]
+        if outcome == "skip":
+            pytest.skip(f"no desktop to measure on: {detail}")
+        pytest.fail(
+            "the row could not be measured with the real platform plugin. "
+            "Set LUMABLE_HEADLESS=1 on a machine with no desktop. " + detail
+        )
     return json.loads(result.stdout)
 
 
@@ -89,3 +119,13 @@ def test_everything_in_the_row_really_is_translated(measurements) -> None:
     assert len(set(labels.values())) == len(labels), (
         f"the mode control kept one language's labels: {labels}"
     )
+
+
+def test_a_window_that_merely_failed_to_open_is_a_failure() -> None:
+    """On an ordinary desktop the tool not running means something is wrong,
+    not that the check does not apply. Only an environment that declares itself
+    headless may be excused."""
+    assert decide_outcome(0, headless=False) == "ok"
+    assert decide_outcome(0, headless=True) == "ok"
+    assert decide_outcome(1, headless=False) == "fail"
+    assert decide_outcome(1, headless=True) == "skip"

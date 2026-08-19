@@ -15,10 +15,47 @@ directory refuses to open at all.
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
 from tests.conftest import production_data_dir
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(scope="module")
+def child_data_dir_before_any_test():
+    """Where a subprocess lands when it is spawned from a module-scoped fixture.
+
+    This is the exact shape of the original mistake: higher-scoped fixtures run
+    before the per-test isolation, so whatever protects this moment has to come
+    from the session, not from the test. Captured here and asserted below.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", "from app import storage; print(storage.DATA_DIR)"],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    return Path(result.stdout.strip()).resolve()
+
+
+def test_a_child_spawned_before_the_per_test_isolation_is_still_safe(
+    child_data_dir_before_any_test,
+) -> None:
+    production = production_data_dir()
+    child = child_data_dir_before_any_test
+
+    assert child != production and production not in child.parents, (
+        f"a subprocess started from a module fixture reached the real data: {child}"
+    )
 
 
 def test_the_storage_paths_point_somewhere_temporary() -> None:
@@ -40,11 +77,20 @@ def test_reading_the_real_settings_is_refused() -> None:
         target.open("r", encoding="utf-8")
 
 
-def test_writing_into_the_real_directory_is_refused() -> None:
-    target = production_data_dir() / "settings.json"
+def test_the_guard_recognises_a_path_in_the_real_directory() -> None:
+    """Checked against a made-up name, never by writing.
 
-    with pytest.raises(AssertionError, match="real LumaBLE data"):
-        target.write_text("{}", encoding="utf-8")
+    An earlier version of this test proved the guard by calling write_text on
+    the real settings and expecting the refusal. It got the refusal — and an
+    emptied settings file, because the audit event is raised after the file has
+    been truncated. A test for a safety net must not be the thing that tears it.
+    """
+    from tests.conftest import is_production_path
+
+    assert is_production_path(production_data_dir() / "settings.json")
+    assert is_production_path(str(production_data_dir() / "nothing-here.json"))
+    assert not is_production_path(Path.cwd() / "settings.json")
+    assert not is_production_path(None)
 
 
 def test_saving_settings_never_reaches_the_real_file() -> None:
@@ -64,10 +110,61 @@ def test_saving_settings_never_reaches_the_real_file() -> None:
     assert production_data_dir() not in SETTINGS_PATH.resolve().parents
 
 
-def test_the_real_settings_file_is_never_modified_by_a_run() -> None:
-    """Stated as a property rather than a hope. Nothing here can even measure
-    the real file without tripping the guard — which is the point."""
+def test_even_reading_the_real_settings_trips_the_guard() -> None:
+    """Reading is safe to attempt — it cannot damage anything — so this one is
+    allowed to reach for the real file and be refused."""
     target = production_data_dir() / "settings.json"
 
     with pytest.raises(AssertionError, match="real LumaBLE data"):
         target.read_bytes()
+
+
+def test_a_child_process_lands_in_the_temporary_directory_too() -> None:
+    """The gap the audit hook does not cover: hooks are not inherited, so a
+    subprocess starts with a clean interpreter and a fresh import of the storage
+    module. An environment variable is inherited, which is why the redirect
+    lives there as well as on the module."""
+    import subprocess
+    import sys
+
+    from app import storage
+
+    result = subprocess.run(
+        [sys.executable, "-c", "from app import storage; print(storage.DATA_DIR)"],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+    child_dir = Path(result.stdout.strip()).resolve()
+    assert child_dir == storage.DATA_DIR.resolve(), (
+        f"the child went to {child_dir}, the parent is using {storage.DATA_DIR}"
+    )
+    assert production_data_dir() != child_dir
+    assert production_data_dir() not in child_dir.parents
+
+
+def test_a_child_process_without_the_variable_would_use_the_real_directory() -> None:
+    """The other half of the claim: the variable is doing the work, not luck.
+
+    Without it a child resolves the installed location — which is correct for a
+    person running the app, and is exactly what must never happen under test.
+    """
+    import subprocess
+    import sys
+
+    env = dict(os.environ)
+    env.pop("LUMABLE_DATA_DIR", None)
+    result = subprocess.run(
+        [sys.executable, "-c", "from app import storage; print(storage.DATA_DIR)"],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        env=env,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()).resolve() == production_data_dir()

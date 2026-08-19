@@ -22,6 +22,28 @@ def production_data_dir() -> Path:
     return Path(user_data_dir("LumaBLE", False, roaming=True)).resolve()
 
 
+def is_production_path(candidate: object) -> bool:
+    """Whether a path being opened belongs to the installed app's data.
+
+    Separate from the hook so it can be checked against a made-up path. Proving
+    the guard by actually writing to the real settings is not a proof, it is the
+    accident: the audit event is raised after the operating system has already
+    truncated the file, so the call fails *and* the data is gone. That is not a
+    hypothetical either — it is how this file was emptied while testing the
+    guard meant to protect it.
+    """
+    if not isinstance(candidate, (str, bytes, os.PathLike)):
+        return False
+    text = os.fspath(candidate)
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
+    try:
+        production = str(production_data_dir()).lower()
+    except Exception:
+        return False
+    return text.lower().startswith(production)
+
+
 def _guard_production_data() -> None:
     """Refuse, loudly, any attempt to open a file in the real data directory.
 
@@ -32,29 +54,26 @@ def _guard_production_data() -> None:
     was a test failing because of what the developer had last chosen in the app.
 
     Redirecting at session scope fixes the ordering, but a wrongly scoped
-    fixture could reach the path some other way — through a saved constant, a
-    subprocess helper, or a module that captured it at import. This closes the
-    door at the file itself: nothing in a test process may open it, whatever
-    route it took. An audit hook cannot be removed once installed, which is
-    exactly the property wanted here.
+    fixture could reach the path some other way — through a saved constant or a
+    module that captured it at import. This closes the door at the file itself:
+    nothing in *this* process may open it, whatever route it took. An audit hook
+    cannot be removed once installed, which is exactly the property wanted here.
+
+    It stops the call, not the damage: the event is raised after the file has
+    already been opened for writing, so a truncating mode has already emptied
+    it. The guard is a tripwire that names the culprit, and the redirects above
+    are what actually keep the data safe.
+
+    It does not reach a child process: audit hooks are not inherited. That gap
+    is covered separately, by ``LUMABLE_DATA_DIR`` in the environment, which is.
     """
     import sys as _sys
-
-    try:
-        production = str(production_data_dir()).lower()
-    except Exception:  # no platformdirs, or no home — nothing to protect
-        return
 
     def _hook(event: str, args) -> None:
         if event != "open" or not args:
             return
-        target = args[0]
-        if not isinstance(target, (str, bytes, os.PathLike)):
-            return
-        text = os.fspath(target)
-        if isinstance(text, bytes):
-            text = text.decode("utf-8", "replace")
-        if text.lower().startswith(production):
+        if is_production_path(args[0]):
+            text = os.fspath(args[0])
             raise AssertionError(
                 "a test tried to open the real LumaBLE data: "
                 f"{text}. Isolate the storage paths in the fixture that reached "
@@ -75,6 +94,9 @@ def _isolate_user_data_for_the_whole_session(tmp_path_factory):
     Session scope on purpose: this has to be in place before a module-scoped
     fixture builds its window, and those are set up before any function-scoped
     fixture. The per-test isolation still gives each test a fresh directory.
+
+    Set in the environment as well as on the module, because a subprocess starts
+    with a fresh import of ``app.storage`` and inherits nothing else.
     """
     try:
         from app import storage
@@ -86,6 +108,10 @@ def _isolate_user_data_for_the_whole_session(tmp_path_factory):
     storage.DATA_DIR = data_dir
     storage.SETTINGS_PATH = data_dir / "settings.json"
     storage.PROFILES_PATH = data_dir / "profiles.json"
+    # And in the environment, which a child process inherits and a patched
+    # module attribute does not. Every helper the suite runs as a subprocess
+    # resolves its data directory from here.
+    os.environ["LUMABLE_DATA_DIR"] = str(data_dir)
     yield
 
 
@@ -112,6 +138,11 @@ def _isolate_user_data(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "PROFILES_PATH", data_dir / "profiles.json", raising=False)
     monkeypatch.setattr(storage, "_legacy_migration_pairs", lambda: [], raising=False)
     monkeypatch.setattr(storage, "_migration_done", True, raising=False)
+    # In the environment too, so a helper this test runs as a subprocess reads
+    # and writes the same directory the test does. Without it the child would
+    # land in the session directory — safe, but describing different data than
+    # the test that spawned it.
+    monkeypatch.setenv("LUMABLE_DATA_DIR", str(data_dir))
 
     feature_gate.invalidate_pro_cache()
     yield

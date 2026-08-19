@@ -24,7 +24,12 @@ from app.scenes import normalize_scene, unwrap_scene, wrap_scene
 from app.screen_profiles import normalize_profile_id
 
 APP_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = Path(user_data_dir("LumaBLE", False, roaming=True))
+# Where the settings live. ``LUMABLE_DATA_DIR`` moves them, which is what makes
+# the test suite safe: an environment variable is inherited by child processes,
+# and patching a module attribute is not. A subprocess helper that builds a
+# window would otherwise reach the real installation however carefully the
+# parent had redirected itself.
+DATA_DIR = Path(os.environ.get("LUMABLE_DATA_DIR") or user_data_dir("LumaBLE", False, roaming=True))
 PROFILES_PATH = DATA_DIR / "profiles.json"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 
