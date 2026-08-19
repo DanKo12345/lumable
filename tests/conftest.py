@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +15,78 @@ os.environ.setdefault("LUMABLE_DISABLE_SCHTASKS", "1")
 os.environ.setdefault("LUMABLE_NO_STARTUP_SERVICES", "1")
 
 
+def production_data_dir() -> Path:
+    """Where the installed app keeps its data on this machine."""
+    from platformdirs import user_data_dir
+
+    return Path(user_data_dir("LumaBLE", False, roaming=True)).resolve()
+
+
+def _guard_production_data() -> None:
+    """Refuse, loudly, any attempt to open a file in the real data directory.
+
+    The per-test isolation below is function-scoped, and pytest builds
+    higher-scoped fixtures first — so a module- or session-scoped fixture that
+    builds a MainWindow runs *before* it and reads and writes the developer's
+    own settings. That is not hypothetical: it happened, and the only symptom
+    was a test failing because of what the developer had last chosen in the app.
+
+    Redirecting at session scope fixes the ordering, but a wrongly scoped
+    fixture could reach the path some other way — through a saved constant, a
+    subprocess helper, or a module that captured it at import. This closes the
+    door at the file itself: nothing in a test process may open it, whatever
+    route it took. An audit hook cannot be removed once installed, which is
+    exactly the property wanted here.
+    """
+    import sys as _sys
+
+    try:
+        production = str(production_data_dir()).lower()
+    except Exception:  # no platformdirs, or no home — nothing to protect
+        return
+
+    def _hook(event: str, args) -> None:
+        if event != "open" or not args:
+            return
+        target = args[0]
+        if not isinstance(target, (str, bytes, os.PathLike)):
+            return
+        text = os.fspath(target)
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", "replace")
+        if text.lower().startswith(production):
+            raise AssertionError(
+                "a test tried to open the real LumaBLE data: "
+                f"{text}. Isolate the storage paths in the fixture that reached "
+                "it — see _isolate_user_data, and note that a module- or "
+                "session-scoped fixture runs before the function-scoped one."
+            )
+
+    _sys.addaudithook(_hook)
+
+
+_guard_production_data()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_user_data_for_the_whole_session(tmp_path_factory):
+    """Point the storage paths away from the real data before anything runs.
+
+    Session scope on purpose: this has to be in place before a module-scoped
+    fixture builds its window, and those are set up before any function-scoped
+    fixture. The per-test isolation still gives each test a fresh directory.
+    """
+    try:
+        from app import storage
+    except Exception:
+        yield
+        return
+
+    data_dir = tmp_path_factory.mktemp("lumable-session")
+    storage.DATA_DIR = data_dir
+    storage.SETTINGS_PATH = data_dir / "settings.json"
+    storage.PROFILES_PATH = data_dir / "profiles.json"
+    yield
 
 
 @pytest.fixture(autouse=True)

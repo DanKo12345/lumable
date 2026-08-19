@@ -15,6 +15,7 @@ threads only have to stay alive for ``is_running`` to mean what it means.
 
 from __future__ import annotations
 
+import pathlib
 import sys
 import threading
 import types
@@ -68,14 +69,28 @@ def _app_window():
     Building seven of them and relying on teardown to unpick each one is how a
     test file starts hanging for reasons that have nothing to do with what it
     is testing.
+
+    It also has to isolate the data directory itself. The suite's autouse
+    isolation is function-scoped, and pytest builds higher-scoped fixtures
+    first — so a window built here would read and write the developer's real
+    LumaBLE settings, and their saved Fusion mode would decide what these tests
+    see. That is not a hypothetical: it is how this file started failing.
     """
+    import tempfile
+
     import app.ambient_ui_controller as ambient_module
     import app.fusion_ui_controller as fusion_module
     import app.music_ui_controller as music_module
+    from app import storage
     from app.main_window import MainWindow
     from app.music_controller import MusicController
 
     app = QApplication.instance() or QApplication([])
+    data_dir = pathlib.Path(tempfile.mkdtemp(prefix="lumable-ownership-"))
+    real_paths = (storage.DATA_DIR, storage.SETTINGS_PATH, storage.PROFILES_PATH)
+    storage.DATA_DIR = data_dir
+    storage.SETTINGS_PATH = data_dir / "settings.json"
+    storage.PROFILES_PATH = data_dir / "profiles.json"
     real_mss = sys.modules.get("mss")
     sys.modules["mss"] = types.SimpleNamespace(mss=_FakeSct)
     ambient_can_use = ambient_module.can_use
@@ -107,6 +122,7 @@ def _app_window():
         music_module.can_use = music_can_use
         MusicController._open_loopback_reader = loopback
         MusicController._open_mic_reader = mic
+        storage.DATA_DIR, storage.SETTINGS_PATH, storage.PROFILES_PATH = real_paths
         if real_mss is None:
             sys.modules.pop("mss", None)
         else:

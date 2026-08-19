@@ -28,7 +28,6 @@ TOOL = ROOT / "tools" / "measure_mode_row.py"
 def measurements():
     if not TOOL.exists():
         pytest.skip("the measuring tool is not present")
-    env = {"PATH": ""}
     import os
 
     env = dict(os.environ)
