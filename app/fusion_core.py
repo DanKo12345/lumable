@@ -62,11 +62,20 @@ RGB = tuple[int, int, int]
 # visible on a wall and shallow enough that a quiet passage still lights a room.
 MODULATION_FLOOR = 0.65
 
-# How much a beat may add on top, at full "Бит". Headroom, not a target: it is
-# added to an already-modulated factor and the result is clipped, so a beat
-# in a loud passage is a smaller jump than a beat in a quiet one — which is how
-# a beat sounds.
-BEAT_HEADROOM = 0.35
+# A beat has to be visible against a picture that is already moving, and the
+# two things that stopped it being visible are worth naming.
+#
+# On a bright frame there was nowhere to go: the level was already at the
+# ceiling and the impulse was clipped away — at full volume it was measurably
+# *zero*. So while music is being heard, the level is held below the ceiling by
+# this much, and the beat is what spends the reserve.
+MAX_BEAT_RESERVE = 0.18
+# On a dark frame the reserve buys little: returning to full simply restores the
+# same dark colour. So a beat also amplifies the colour itself, limited by the
+# brightest channel so the ratios between them survive — an unlimited gain would
+# clip red first on a warm frame and slide the hue toward yellow, which is the
+# one thing this mode promises not to do.
+MAX_BEAT_GAIN = 1.35
 
 # How quickly the music's influence arrives and leaves. Arrival is quick enough
 # to feel like a response; departure is slow, because silence between tracks or
@@ -158,6 +167,9 @@ class ComposedFrame:
     # a third of full, which is correct and is why the two are never added up or
     # reported as one number.
     brightness_factor: float = 0.0
+    # What a beat multiplies the colour by, already limited so no channel
+    # clips. 1.0 whenever there is no beat, which is most frames.
+    beat_boost: float = 1.0
     should_send: bool = False
     reason: str = "no_base"
     activity: float = 0.0
@@ -319,7 +331,9 @@ class FusionCompositor:
                 base_source=base.source,
             )
 
+        beat_gain = _clamp(beat_gain)
         brightness_factor = _clamp(base.brightness_factor)
+        boost = 1.0
         if activity > 0.0 and music is not None:
             # The last known modulation keeps being applied while the influence
             # fades. Dropping it the instant the audio goes stale would make
@@ -328,16 +342,27 @@ class FusionCompositor:
             # frame. The influence reaching zero is what ends it, and it reaches
             # zero exactly.
             # Quiet music pulls the factor down toward the floor; loud music
-            # leaves it where the base put it. The factor passes through exactly
-            # 1.0 at zero influence, which is what makes silence a true return.
-            factor = MODULATION_FLOOR + (1.0 - MODULATION_FLOOR) * _clamp(music.level)
+            # takes it up to the ceiling. The factor passes through exactly 1.0
+            # at zero influence, which is what makes silence a true return — and
+            # it is why the reserve costs nothing while nothing is playing.
+            #
+            # The reserve scales with the slider rather than switching on above
+            # zero: a step from 0% to 1% would otherwise darken every loud
+            # passage by a fifth, in one jump, for a slider nudge.
+            ceiling = 1.0 - MAX_BEAT_RESERVE * beat_gain
+            factor = MODULATION_FLOOR + (ceiling - MODULATION_FLOOR) * _clamp(music.level)
             brightness_factor *= 1.0 + activity * (factor - 1.0)
-            brightness_factor += (
-                activity * _clamp(music.beat_envelope) * _clamp(beat_gain) * BEAT_HEADROOM
-            )
+            impulse = activity * _clamp(music.beat_envelope) * beat_gain
+            boost = 1.0 + impulse * (MAX_BEAT_GAIN - 1.0)
         brightness_factor = _clamp(brightness_factor)
 
         rgb = base.rgb
+        if boost > 1.0:
+            # Limited by whichever channel would reach 255 first. Scaling all
+            # three by the same number is what keeps the hue; scaling until one
+            # of them saturates and the others carry on is what loses it.
+            headroom = 255.0 / max(1.0, max(rgb) * brightness_factor)
+            boost = min(boost, max(1.0, headroom))
         reason = "composed"
         if overlay_weight > 0.0 and overlay is not None:
             rgb = (
@@ -351,6 +376,7 @@ class FusionCompositor:
         return ComposedFrame(
             rgb=(_clamp8(rgb[0]), _clamp8(rgb[1]), _clamp8(rgb[2])),
             brightness_factor=_clamp(brightness_factor),
+            beat_boost=boost,
             should_send=True,
             reason=reason,
             activity=activity,

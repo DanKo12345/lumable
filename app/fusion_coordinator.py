@@ -289,8 +289,16 @@ class FusionCoordinator(QObject):
         self._last_frame = frame
         if frame.should_send:
             red, green, blue = frame.rgb
-            scale = frame.brightness_factor
-            colour = (round(red * scale), round(green * scale), round(blue * scale))
+            # The factor dims, the beat's boost lifts. The boost is already
+            # limited by the brightest channel, so this multiplication cannot
+            # clip one channel while the others keep rising — which is what
+            # would turn a beat into a hue change.
+            scale = frame.brightness_factor * frame.beat_boost
+            colour = (
+                min(255, round(red * scale)),
+                min(255, round(green * scale)),
+                min(255, round(blue * scale)),
+            )
             if not self._engine.is_running() and self._sink is not None:
                 # Woken by the first frame there is actually something to send,
                 # and seeded with that frame. Restarting it when the light comes

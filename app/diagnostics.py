@@ -270,6 +270,7 @@ def _fusion_section(fusion: dict[str, Any] | None) -> list[str]:
         f"last frame: {fusion.get('frame_reason', '-')}",
         f"strip brightness: {fusion.get('strip_brightness', '-')}",
         f"fusion brightness factor: {fusion.get('brightness_factor', '-')}",
+        f"beat boost: {fusion.get('beat_boost', '-')}",
         f"music activity: {fusion.get('music_activity', '-')}",
         f"music stale: {flag(fusion.get('music_stale'))}",
         f"commands: {int(fusion.get('commands_submitted', 0) or 0)} submitted, "
