@@ -69,6 +69,30 @@ def test_the_storage_paths_point_somewhere_temporary() -> None:
         )
 
 
+def test_the_paths_copied_at_import_are_temporary_too() -> None:
+    """The window a fixture cannot close.
+
+    These are computed once, when the module is first imported — and a test
+    module imports the app during collection, before any fixture runs. A value
+    copied from the real installation at that moment is held for the life of the
+    process, and repointing storage.DATA_DIR afterwards never reaches it. Which
+    is why the directory is chosen when conftest is loaded, not in a fixture.
+    """
+    from app import crash_logging, localization
+
+    production = production_data_dir()
+    captured = {
+        "crash_logging.CRASH_LOG_DIR": crash_logging.CRASH_LOG_DIR,
+        "crash_logging.FATAL_LOG_PATH": crash_logging.FATAL_LOG_PATH,
+        "localization.USER_I18N_DIR": localization.USER_I18N_DIR,
+    }
+    for name, value in captured.items():
+        path = Path(value).resolve()
+        assert production not in path.parents and path != production, (
+            f"{name} was captured from the real installation: {path}"
+        )
+
+
 def test_reading_the_real_settings_is_refused() -> None:
     """Deliberately reaching for it, the way a wrongly scoped fixture would."""
     target = production_data_dir() / "settings.json"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -13,6 +14,20 @@ os.environ.setdefault("LUMABLE_DISABLE_SCHTASKS", "1")
 # update check, local API) are tested directly against their controllers, so a
 # widget test should not schedule them as background work.
 os.environ.setdefault("LUMABLE_NO_STARTUP_SERVICES", "1")
+
+# Set here, at conftest import, and not in a fixture — because by the time any
+# fixture runs, pytest has already imported every test module, and a test module
+# imports the app. Two modules copy the directory at import time:
+#
+#     crash_logging:  CRASH_LOG_DIR = DATA_DIR / "crash_logs"
+#     localization:   USER_I18N_DIR = DATA_DIR / "i18n"
+#
+# A value copied from the real installation is held for the life of the process,
+# and repointing storage.DATA_DIR afterwards does not reach it. conftest.py is
+# loaded before collection, which is the only moment early enough.
+os.environ.setdefault(
+    "LUMABLE_DATA_DIR", tempfile.mkdtemp(prefix="lumable-tests-")
+)
 
 
 def production_data_dir() -> Path:
@@ -88,15 +103,14 @@ _guard_production_data()
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _isolate_user_data_for_the_whole_session(tmp_path_factory):
-    """Point the storage paths away from the real data before anything runs.
+def _isolate_user_data_for_the_whole_session():
+    """Keep the storage attributes on the directory chosen at conftest import.
 
-    Session scope on purpose: this has to be in place before a module-scoped
-    fixture builds its window, and those are set up before any function-scoped
-    fixture. The per-test isolation still gives each test a fresh directory.
-
-    Set in the environment as well as on the module, because a subprocess starts
-    with a fresh import of ``app.storage`` and inherits nothing else.
+    The environment variable above is what actually protects the data — it is
+    read when ``app.storage`` is first imported, which is early enough for the
+    modules that copy the directory then, and it is inherited by subprocesses.
+    This only mirrors it onto the module attributes so a test that reads them
+    sees the same place, and creates the directory.
     """
     try:
         from app import storage
@@ -104,14 +118,16 @@ def _isolate_user_data_for_the_whole_session(tmp_path_factory):
         yield
         return
 
-    data_dir = tmp_path_factory.mktemp("lumable-session")
+    # The directory chosen at import, above — the same one every module that
+    # copied it at import time is already pointing at. Read defensively so a
+    # missing variable surfaces as the test that checks the captured paths
+    # failing with its own explanation, rather than as a KeyError in setup that
+    # says nothing about what went wrong.
+    data_dir = Path(os.environ.get("LUMABLE_DATA_DIR") or storage.DATA_DIR)
+    data_dir.mkdir(parents=True, exist_ok=True)
     storage.DATA_DIR = data_dir
     storage.SETTINGS_PATH = data_dir / "settings.json"
     storage.PROFILES_PATH = data_dir / "profiles.json"
-    # And in the environment, which a child process inherits and a patched
-    # module attribute does not. Every helper the suite runs as a subprocess
-    # resolves its data directory from here.
-    os.environ["LUMABLE_DATA_DIR"] = str(data_dir)
     yield
 
 
