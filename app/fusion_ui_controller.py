@@ -50,8 +50,9 @@ class FusionUiController:
         # on another thread. Held under the same lock that counts the command,
         # so a snapshot can never show a success for a write that does not exist.
         self._result_lock = threading.Lock()
-        self._registering: int | None = None
+        self._registering: tuple[int, int] | None = None
         self._held: bool | None = None
+        self._next_command = 0
         self._audio_lost = False
 
     def wire(self) -> None:
@@ -142,6 +143,7 @@ class FusionUiController:
         self._succeeded = 0
         self._failed = 0
         self._link_rejections = 0
+        self._next_command = 0
         if not host.power_button.isChecked():
             host.power_button.setChecked(True)
             host._toggle_power()
@@ -163,12 +165,19 @@ class FusionUiController:
             # calls the observer before the call returns. Counted then, a
             # snapshot taken from within the observer shows a success for a
             # command that does not exist yet.
+            #
+            # Held against this command, not merely this run. An earlier write
+            # can settle while a later one is being submitted, and holding it as
+            # though it belonged to the later one loses it entirely when that
+            # later one is refused.
             with self._result_lock:
-                self._registering = run
+                self._next_command += 1
+                command = self._next_command
+                self._registering = (run, command)
                 self._held = None
             try:
                 accepted = host._ble.set_color_stream(
-                    red, green, blue, observer=lambda ok: self._note_result(run, ok)
+                    red, green, blue, observer=lambda ok: self._note_result(run, command, ok)
                 )
             except BaseException:
                 with self._result_lock:
@@ -278,20 +287,23 @@ class FusionUiController:
     def set_beat_gain(self, gain: float) -> None:
         self._coordinator.set_beat_gain(gain)
 
-    def _note_result(self, run: int, ok: bool) -> None:
-        """An outcome, credited to the run that asked for it.
+    def _note_result(self, run: int, command: int, ok: bool) -> None:
+        """An outcome, credited to the run and the command that asked for it.
 
         Results arrive on the BLE thread and can land after a stop. Without the
         run, a write from the previous session would settle into the counters of
         the new one, which have just been zeroed.
 
-        A result for the write currently being submitted is held instead of
-        counted, and the sink counts it once the command it belongs to exists.
+        Only the command currently being submitted is held; anything else is
+        counted straight away. An earlier write settling during a later
+        submission is a real outcome of a command that already exists — holding
+        it as though it belonged to the later one throws it away whenever that
+        later one is refused.
         """
         with self._result_lock:
             if run != self._run_token:
                 return
-            if self._registering == run:
+            if self._registering == (run, command):
                 self._held = bool(ok)
                 return
             if ok:

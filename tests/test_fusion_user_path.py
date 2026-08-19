@@ -532,3 +532,42 @@ def test_a_result_arriving_inside_its_own_write_cannot_outrun_it(window) -> None
     assert settled["commands_succeeded"] == settled["commands_submitted"], (
         f"the held results were never counted: {settled}"
     )
+
+
+def test_an_earlier_write_settling_during_a_refusal_is_not_lost(window) -> None:
+    """The sequence that loses a success.
+
+    A is accepted and its result is still on the way. B is attempted, and A
+    settles inside that attempt. B is then refused — and if the held result is
+    addressed only to the run, A's success is discarded as though it belonged
+    to B. One accepted command would then have no outcome at all, for ever.
+    """
+    app = QApplication.instance()
+    pending: list = []
+    attempts = {"count": 0}
+
+    def link(red, green, blue, observer=None, **_kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            pending.append(observer)  # A: accepted, result still to come
+            return True
+        if attempts["count"] == 2:
+            # B: A's result lands inside this attempt, and then B is refused.
+            for settle in pending:
+                settle(True)
+            pending.clear()
+            return False
+        return False
+
+    window._ble.set_color_stream = link
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    _pump(app, 3.0, until=lambda: attempts["count"] >= 2)
+    assert attempts["count"] >= 2, "the second attempt never happened"
+
+    stats = window._fusion_ui.stats()
+    assert stats["commands_submitted"] == 1, stats
+    assert stats["commands_succeeded"] == 1, (
+        "the accepted write's success was thrown away with the refused one: " + str(stats)
+    )
+    assert stats["commands_failed"] == 0, stats
+    assert stats["link_rejections"] >= 1, stats
