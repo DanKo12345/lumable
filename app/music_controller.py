@@ -11,7 +11,7 @@ from PySide6.QtCore import QObject, Signal
 from app.color_stream import ColorStreamEngine
 from app.music_analysis import MusicAnalyzer, MusicSyncReport
 from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb
-from app.onset_detection import SuperFluxOnset
+from app.onset_detection import OnsetAgreement, SuperFluxOnset
 
 
 @lru_cache(maxsize=8)
@@ -216,7 +216,7 @@ class MusicController(QObject):
         # on real music can be compared with what the strip actually did, before
         # anything is swapped over.
         self._onset = SuperFluxOnset()
-        self._onset_agreements = 0
+        self._onset_agreement = OnsetAgreement()
         # Bumped by every start, so a block emitted just before a stop can be
         # recognised as belonging to the previous run and dropped.
         self._session_token = 0
@@ -250,7 +250,7 @@ class MusicController(QObject):
         self._ema = None
         self._analyzer.reset()
         self._onset.reset()
-        self._onset_agreements = 0
+        self._onset_agreement.reset()
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -309,6 +309,7 @@ class MusicController(QObject):
         after switching music off still describes the run being asked about.
         """
         stats = self._analyzer.stats
+        comparison = self._onset_agreement.totals(monotonic() * 1000.0)
         started = self._started_at
         ended = self._stopped_at if self._stopped_at is not None else monotonic()
         return MusicSyncReport(
@@ -320,8 +321,10 @@ class MusicController(QObject):
             blocks=stats.blocks,
             peak_level=round(stats.peak_level, 3),
             onset_blocks=self._onset.stats.blocks,
-            onset_candidates=self._onset.stats.onsets,
-            onset_agreements=self._onset_agreements,
+            onset_matched=comparison.matched,
+            onset_shadow_only=comparison.shadow_only,
+            onset_old_only=comparison.old_only,
+            onset_candidates=comparison.shadow_candidates,
         )
 
     def stream_error_count(self) -> int:
@@ -502,8 +505,12 @@ class MusicController(QObject):
             window = np.hanning(mono.size).astype(np.float32)
             magnitudes = np.abs(np.fft.rfft(mono * window))
             freqs = np.fft.rfftfreq(mono.size, d=1.0 / max(1, samplerate))
-            if self._onset.feed(magnitudes, freqs, now_ms).onset and heard_beat:
-                self._onset_agreements += 1
+            # One audio block of tolerance: the two detectors read the strike
+            # from different things — the change into a block, and the block's
+            # own content — so the same drum can land a block apart in them.
+            self._onset_agreement.set_tolerance_ms(mono.size / max(1, samplerate) * 1000.0)
+            candidate = self._onset.feed(magnitudes, freqs, now_ms).onset
+            self._onset_agreement.note(old=heard_beat, shadow=candidate, now_ms=now_ms)
         except Exception:
             # An experiment that cannot run is an experiment with no numbers,
             # not a broken music mode.

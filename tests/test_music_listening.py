@@ -336,12 +336,21 @@ def test_a_trial_detector_that_cannot_run_does_not_stop_the_music(controller) ->
 
 
 def test_the_trial_counts_reach_the_report(controller) -> None:
+    """Fed as events rather than written into the report by hand: numbers put
+    there directly would have satisfied any invariant I cared to claim, and the
+    first version of this test did exactly that."""
+    agreement = controller._onset_agreement
+    agreement.set_tolerance_ms(25.0)
+    agreement.note(old=True, shadow=True, now_ms=0.0)      # both heard it
+    agreement.note(old=True, shadow=False, now_ms=100.0)   # only the old one
+    agreement.note(old=False, shadow=True, now_ms=110.0)   # ...a block later
+    agreement.note(old=False, shadow=True, now_ms=400.0)   # only the trial
     controller._onset.stats.blocks = 900
-    controller._onset.stats.onsets = 61
-    controller._onset_agreements = 44
 
     report = controller.music_report()
 
     assert report.onset_blocks == 900
-    assert report.onset_candidates == 61
-    assert report.onset_agreements == 44
+    assert report.onset_candidates == 3
+    assert report.onset_matched == 2, "the strike heard a block apart was not paired"
+    assert report.onset_shadow_only == 1
+    assert report.onset_old_only == 0

@@ -30,13 +30,21 @@ voice still looks like a strike, and no amount of spectral arithmetic changes
 that without knowing what a voice is. What it does remove is the sustained
 singing, the vibrato and the slow swells, which is most of what was false.
 
+**How coarse this really is.** At 1024 samples and 48 kHz a bin is 46.9 Hz
+wide, so the 35-120 Hz band is *two bins* — 46.9 and 93.8. The published method
+works on a far more detailed frequency representation, with the maximum filter
+applied across many narrow bands; this borrows the two ideas that carry most of
+the benefit and applies them to what the capture already computes. It is a study
+of whether the approach helps here, not an accurate separation of a kick from a
+low male voice, and the numbers it reports should be read that way.
+
 Pure: numpy in, numbers out, no audio device and no Qt, so a vibrato that would
 take four seconds to sing can be played through it in a millisecond.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Neighbouring bins the previous block is maximised over. Three is one bin
 # either side: enough to cover the wobble of a sung note at this resolution
@@ -216,9 +224,107 @@ class SuperFluxOnset:
 class OnsetComparison:
     """How the two detectors agreed over a run, for the diagnostics block."""
 
-    blocks: int = 0
-    candidates: int = 0
-    agreements: int = 0
-    extra: int = 0
-    missed: int = 0
-    detail: dict = field(default_factory=dict)
+    old_beats: int = 0
+    shadow_candidates: int = 0
+    matched: int = 0
+    shadow_only: int = 0
+    old_only: int = 0
+
+
+class OnsetAgreement:
+    """Pairs up what the two detectors heard, one strike to one strike.
+
+    Counting agreement as "both fired in the same block" is wrong here, because
+    the two do not have to land in the same block: this detector reads the onset
+    from the change *into* a block and the old one from the block's own content,
+    so the same drum can be a block apart in the two. Counted strictly, that one
+    strike becomes a miss and an extra — two errors invented from one agreement.
+
+    So events are matched within a tolerance, and matched *once*: an old beat
+    that has already confirmed a candidate cannot confirm the next one too, or
+    a detector that fires twice as often would look twice as accurate.
+
+    Nothing here keeps audio, and the waiting lists hold a handful of timestamps
+    at most — an event that has waited longer than the tolerance can never find
+    a partner, so it is settled and dropped.
+    """
+
+    def __init__(self, *, tolerance_ms: float = 25.0, max_waiting: int = 8) -> None:
+        self._tolerance_ms = float(tolerance_ms)
+        self._max_waiting = int(max_waiting)
+        self.reset()
+
+    def reset(self) -> None:
+        self._waiting_old: list[float] = []
+        self._waiting_shadow: list[float] = []
+        self._old_beats = 0
+        self._shadow_candidates = 0
+        self._matched = 0
+        self._old_only = 0
+        self._shadow_only = 0
+
+    def set_tolerance_ms(self, tolerance_ms: float) -> None:
+        """One audio block, whatever the device's block turns out to be."""
+        self._tolerance_ms = max(1.0, float(tolerance_ms))
+
+    def note(self, *, old: bool, shadow: bool, now_ms: float) -> None:
+        """Record what each detector said about one block."""
+        self._settle(now_ms)
+        if old and shadow:
+            # The same block: no search needed, and no chance of either being
+            # paired with something else first.
+            self._old_beats += 1
+            self._shadow_candidates += 1
+            self._matched += 1
+            return
+        if old:
+            self._old_beats += 1
+            if not self._take(self._waiting_shadow):
+                self._park(self._waiting_old, now_ms)
+        if shadow:
+            self._shadow_candidates += 1
+            if not self._take(self._waiting_old):
+                self._park(self._waiting_shadow, now_ms)
+
+    def _take(self, waiting: list[float]) -> bool:
+        """Pair with the oldest event waiting, and use it up.
+
+        Everything past its tolerance has already been settled by ``_settle`` at
+        the top of ``note``, so whatever is still here is close enough. Checking
+        again would read as caution and be unreachable — a line that can never
+        run is a line nobody can trust.
+        """
+        if not waiting:
+            return False
+        waiting.pop(0)
+        self._matched += 1
+        return True
+
+    def _park(self, waiting: list[float], now_ms: float) -> None:
+        if len(waiting) >= self._max_waiting:
+            # Cannot happen with a tolerance of one block and events this rare,
+            # but a list on the audio path is not left to grow on a promise.
+            self._settle_one(waiting.pop(0), waiting)
+        waiting.append(now_ms)
+
+    def _settle(self, now_ms: float) -> None:
+        for waiting in (self._waiting_old, self._waiting_shadow):
+            while waiting and now_ms - waiting[0] > self._tolerance_ms:
+                self._settle_one(waiting.pop(0), waiting)
+
+    def _settle_one(self, _when: float, waiting: list[float]) -> None:
+        if waiting is self._waiting_old:
+            self._old_only += 1
+        else:
+            self._shadow_only += 1
+
+    def totals(self, now_ms: float) -> OnsetComparison:
+        """The comparison so far, with everything past its chance settled."""
+        self._settle(now_ms)
+        return OnsetComparison(
+            old_beats=self._old_beats,
+            shadow_candidates=self._shadow_candidates,
+            matched=self._matched,
+            shadow_only=self._shadow_only + len(self._waiting_shadow),
+            old_only=self._old_only + len(self._waiting_old),
+        )

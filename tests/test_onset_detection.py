@@ -190,3 +190,108 @@ def test_starting_over_forgets_the_previous_run() -> None:
 
     assert detector.stats.blocks == 0
     assert detector._previous is None
+
+
+# ── pairing what the two detectors heard ──────────────────────────────
+def _agreement(tolerance_ms: float = 25.0):
+    from app.onset_detection import OnsetAgreement
+
+    return OnsetAgreement(tolerance_ms=tolerance_ms)
+
+
+def test_a_strike_heard_a_block_apart_is_one_agreement() -> None:
+    """The two read the strike from different things — the change into a block,
+    and the block's own content — so the same drum can land a block apart.
+    Counted strictly that is a miss and an extra: two errors invented from one
+    agreement, which would make the trial look worse and busier than it is."""
+    pairs = _agreement()
+
+    pairs.note(old=True, shadow=False, now_ms=0.0)
+    pairs.note(old=False, shadow=True, now_ms=21.0)
+    totals = pairs.totals(1000.0)
+
+    assert totals.matched == 1
+    assert totals.old_only == 0 and totals.shadow_only == 0
+
+
+def test_a_strike_is_one_agreement_whichever_detector_heard_it_first() -> None:
+    """Both orders. Which of the two is early depends on where the strike fell
+    inside a block, so a pairing that only works one way round would report half
+    the agreements as misses on some tracks and not on others."""
+    old_first = _agreement()
+    old_first.note(old=True, shadow=False, now_ms=0.0)
+    old_first.note(old=False, shadow=True, now_ms=21.0)
+
+    shadow_first = _agreement()
+    shadow_first.note(old=False, shadow=True, now_ms=0.0)
+    shadow_first.note(old=True, shadow=False, now_ms=21.0)
+
+    assert old_first.totals(1000.0).matched == 1
+    assert shadow_first.totals(1000.0).matched == 1, "only one order was paired"
+
+
+def test_one_old_beat_cannot_confirm_two_candidates() -> None:
+    """Otherwise a detector that fires twice as often looks twice as accurate."""
+    pairs = _agreement()
+
+    pairs.note(old=True, shadow=False, now_ms=0.0)
+    pairs.note(old=False, shadow=True, now_ms=10.0)
+    pairs.note(old=False, shadow=True, now_ms=20.0)
+    totals = pairs.totals(1000.0)
+
+    assert totals.matched == 1
+    assert totals.shadow_only == 1
+    assert totals.old_beats == 1 and totals.shadow_candidates == 2
+
+
+def test_matched_can_never_exceed_either_side() -> None:
+    """The invariant that makes the five numbers readable at all."""
+    import random
+
+    rng = random.Random(20260820)
+    for _ in range(200):
+        pairs = _agreement(tolerance_ms=25.0)
+        now = 0.0
+        for _ in range(40):
+            now += rng.choice((5.0, 21.0, 40.0, 300.0))
+            pairs.note(old=rng.random() < 0.4, shadow=rng.random() < 0.4, now_ms=now)
+        totals = pairs.totals(now + 10_000.0)
+
+        assert totals.matched <= min(totals.old_beats, totals.shadow_candidates)
+        assert totals.matched + totals.old_only == totals.old_beats
+        assert totals.matched + totals.shadow_only == totals.shadow_candidates
+
+
+def test_an_event_too_far_apart_is_not_a_pair() -> None:
+    pairs = _agreement(tolerance_ms=25.0)
+
+    pairs.note(old=True, shadow=False, now_ms=0.0)
+    pairs.note(old=False, shadow=True, now_ms=200.0)
+    totals = pairs.totals(1000.0)
+
+    assert totals.matched == 0
+    assert totals.old_only == 1 and totals.shadow_only == 1
+
+
+def test_events_still_waiting_are_counted_when_the_run_is_read() -> None:
+    """A report is asked for while the last events are still in hand. They have
+    to appear somewhere, or the totals quietly lose them."""
+    pairs = _agreement()
+
+    pairs.note(old=True, shadow=False, now_ms=1000.0)
+    totals = pairs.totals(1000.0)
+
+    assert totals.old_beats == 1
+    assert totals.matched + totals.old_only == 1
+
+
+def test_nothing_is_kept_but_a_handful_of_timestamps() -> None:
+    """It sits on the audio path. A list that grows with the evening is a leak,
+    and audio must never be held at all."""
+    pairs = _agreement(tolerance_ms=25.0)
+
+    for index in range(5000):
+        pairs.note(old=True, shadow=False, now_ms=index * 1.0)
+
+    assert len(pairs._waiting_old) <= 8
+    assert len(pairs._waiting_shadow) <= 8

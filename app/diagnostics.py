@@ -247,9 +247,12 @@ def _music_section(music: dict[str, Any] | None) -> list[str]:
         # needed: candidates on their own say how often it would have fired,
         # agreements say how much of that was the same music the strip reacted
         # to. A run on a voice with no drums is the interesting one.
+        # Paired one to one within a block of tolerance, so a strike the two
+        # heard a block apart is one agreement rather than a miss and an extra.
         lines.append(
-            f"onset trial (shadow, drives nothing): {report.onset_candidates} candidates, "
-            f"{report.onset_agreements} agreed with the {report.beats} beats used"
+            f"onset trial (shadow, drives nothing): {report.beats} old beats, "
+            f"{report.onset_candidates} shadow candidates, {report.onset_matched} matched, "
+            f"{report.onset_shadow_only} shadow-only, {report.onset_old_only} old-only"
         )
     return lines
 

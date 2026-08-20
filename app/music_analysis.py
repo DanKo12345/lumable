@@ -260,8 +260,10 @@ class MusicSyncReport:
     # What the experimental onset detector would have said, had it been the one
     # driving the strip. It is not: it runs beside the working detector and is
     # only counted, so a run on real music can be compared before anything
-    # changes. ``agreements`` are the blocks both called a strike.
+    # changes. The five figures are one-to-one — see OnsetAgreement.
     onset_blocks: int = 0
+    onset_matched: int = 0
+    onset_shadow_only: int = 0
+    onset_old_only: int = 0
     onset_candidates: int = 0
-    onset_agreements: int = 0
     settings: dict = field(default_factory=dict)
