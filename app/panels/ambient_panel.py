@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QHBoxLayout, QLabel
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
 
 from app.capture_regions import REGION_IDS
 from app.panels.card_header import add_pro_badge
@@ -16,6 +16,45 @@ from app.widgets.segmented_control import SegmentedControl
 
 _SYNC_TINT = "#8fbfff"
 _PROFILE_TINT = "#b6a3ff"
+
+
+def _build_fusion_tune_row(host: PanelHost):
+    """The combined mode's settings, unadorned and hidden until asked for.
+
+    Deliberately not a card and not a permanent row: these are set once and then
+    left alone. The controls here are *views* of the music card's values, not a
+    second set — one slider, one saved number, one handler. A copy would drift,
+    and the first person to notice would be someone whose beat behaved
+    differently depending on which screen they had set it from.
+    """
+    host.fusion_tune_row = QWidget()
+    host.fusion_tune_row.setObjectName("fusionTuneRow")
+    layout = QHBoxLayout(host.fusion_tune_row)
+    layout.setContentsMargins(host._sz(52), host._sz(2), host._sz(14), host._sz(8))
+    layout.setSpacing(host._sz(10))
+
+    host.fusion_source_segment = SegmentedControl([
+        ("system", host._tr("music.source_system")),
+        ("mic", host._tr("music.source_mic")),
+    ])
+    host.fusion_source_segment.set_metrics(pad=host._sz(10))
+    host.fusion_source_segment.setAccessibleName(host._tr("music.source_title"))
+
+    host.fusion_beat_label = QLabel(host._tr("music.beat"))
+    host.fusion_beat_label.setObjectName("sliderLabel")
+    host.fusion_beat_slider = host._slider("green")
+    host.fusion_beat_slider.setRange(0, 100)
+    host.fusion_beat_slider.setAccessibleName(host._tr("music.beat"))
+    host.fusion_beat_value = host._pill("40%")
+
+    layout.addWidget(host.fusion_source_segment, 0, Qt.AlignVCenter)
+    layout.addSpacing(host._sz(6))
+    layout.addWidget(host.fusion_beat_label, 0, Qt.AlignVCenter)
+    layout.addWidget(host.fusion_beat_slider, 1)
+    layout.addWidget(host.fusion_beat_value, 0, Qt.AlignVCenter)
+
+    host.fusion_tune_row.setVisible(False)
+    return host.fusion_tune_row
 
 
 def build_ambient_section(host: PanelHost) -> GlassCard:
@@ -49,17 +88,33 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
     # the power button, and "Captura de pantalla · Pantalla + música" is a good
     # deal wider than the English it was laid out against. Measured at 860 wide
     # in all four languages — see tools/measure_mode_row.py.
-    host.fusion_mode_segment.set_metrics(pad=12)
+    host.fusion_mode_segment.set_metrics(pad=9)
     mode_row, mode_layout, host.ambient_mode_title_label, host.ambient_status_label, _ = list_row(
         host, "monitor", _SYNC_TINT, host._tr("ambient.mode_title")
     )
     assert host.ambient_status_label is not None
     host.ambient_status_label.setText(host._tr("ambient.status_off"))
+    # The combined mode's own settings, one press away instead of one tab away.
+    # A mode chosen here whose main dial lives on another card asks the user to
+    # know how the app is built; a whole extra row on the card costs height
+    # every day for something set once. Collapsed by default, so neither the
+    # card nor the guided tour changes size until it is asked for.
+    host.fusion_tune_button = host._button("", "ghost")
+    host.fusion_tune_button.set_icon_kind("sliders-horizontal")
+    host.fusion_tune_button.setIconSize(QSize(host._sz(16), host._sz(16)))
+    host.fusion_tune_button.setCheckable(True)
+    host.fusion_tune_button.setFixedSize(host._sz(26), host._sz(34))
+    host.fusion_tune_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+    host.fusion_tune_button.setAccessibleName(host._tr("fusion.tune"))
+    host.fusion_tune_button.setToolTip(host._tr("fusion.tune"))
+
     # Mode first, then power: the choice describes what would run, the button
     # says whether it is running.
     mode_layout.addWidget(host.fusion_mode_segment, 0, Qt.AlignVCenter)
+    mode_layout.addWidget(host.fusion_tune_button, 0, Qt.AlignVCenter)
     mode_layout.addWidget(host.ambient_toggle_button, 0, Qt.AlignVCenter)
     settings_layout.addWidget(mode_row)
+    settings_layout.addWidget(_build_fusion_tune_row(host))
     settings_layout.addWidget(divider(host))
 
     profile_row, profile_layout, host.ambient_profile_title_label, host.ambient_profile_description, _ = list_row(

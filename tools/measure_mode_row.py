@@ -62,6 +62,11 @@ def main() -> int:
         window.show()
         select_section(window, "ambient")
         row = _row_of(window.fusion_mode_segment)
+        # Measured in the combined mode: that is when the settings button is
+        # shown, and a row that fits without it proves nothing about the row a
+        # person actually sees while using the mode.
+        window._fusion_ui.set_mode("screen_music", persist=False)
+        window._ambient_ui.sync_mode_segment()
         for language in LANGUAGES:
             localization_manager.set_language(language)
             # Through the app's own retranslation, not just the manager: a label
@@ -74,6 +79,17 @@ def main() -> int:
                     app.processEvents()
                 card = window.ambient_card
                 label = window.ambient_mode_title_label
+                # How much the collapsed panel costs, and how much it costs
+                # open. Measured on a shown window, because a hidden one never
+                # recomputes its layout and would report the two as equal.
+                collapsed_height = card.height()
+                window.fusion_tune_button.setChecked(True)
+                for _ in range(6):
+                    app.processEvents()
+                opened_height = card.height()
+                window.fusion_tune_button.setChecked(False)
+                for _ in range(6):
+                    app.processEvents()
                 results.append(
                     {
                         "language": language,
@@ -87,6 +103,12 @@ def main() -> int:
                             window.fusion_mode_segment._labels[key]
                             for key in ("screen", "screen_music")
                         ],
+                        "panel_labels": [
+                            window.fusion_source_segment._labels["system"],
+                            window.fusion_source_segment._labels["mic"],
+                            window.fusion_beat_label.text(),
+                            window.fusion_tune_button.toolTip(),
+                        ],
                         "segment_right": window.fusion_mode_segment.mapTo(
                             card, window.fusion_mode_segment.rect().topRight()
                         ).x(),
@@ -95,6 +117,10 @@ def main() -> int:
                         ).x(),
                         "card_width": card.width(),
                         "card_height": card.height(),
+                        "tune_button_shown": bool(window.fusion_tune_button.isVisible()),
+                        "tune_row_shown": bool(window.fusion_tune_row.isVisible()),
+                        "card_height_collapsed": collapsed_height,
+                        "card_height_open": opened_height,
                     }
                 )
     finally:

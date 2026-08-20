@@ -28,6 +28,7 @@ class AmbientUiController:
         host.ambient_toggle_button.clicked.connect(self._toggle)
         host.ambient_profile_segment.selected.connect(lambda _key: self._on_options_changed())
         host.fusion_mode_segment.selected.connect(self._on_mode_changed)
+        host.fusion_tune_button.toggled.connect(self._on_tune_toggled)
         host.ambient_area_selector.selected.connect(lambda _region: self._on_options_changed())
         host.ambient_saturation_slider.valueChanged.connect(self._on_options_changed)
         host.ambient_smoothing_slider.valueChanged.connect(self._on_options_changed)
@@ -115,11 +116,36 @@ class AmbientUiController:
         segment.set_current(host._fusion_ui.mode(), animate=False)
         segment.blockSignals(False)
         self.refresh_status()
+        self._refresh_tune_visibility()
 
     def _on_mode_changed(self, key: str) -> None:
         self._host._fusion_ui.set_mode(key)
         self.refresh_status()
+        self._refresh_tune_visibility()
         self._host._music_ui.refresh_shared_state()
+
+    def _on_tune_toggled(self, opened: bool) -> None:
+        row = getattr(self._host, "fusion_tune_row", None)
+        if row is not None:
+            row.setVisible(bool(opened))
+
+    def _refresh_tune_visibility(self) -> None:
+        """The settings belong to the combined mode, so they appear with it.
+
+        Collapsed again on the way out rather than merely hidden: coming back to
+        the mode later should look the way it looked the first time, not the way
+        it was left in a session someone has forgotten.
+        """
+        host = self._host
+        button = getattr(host, "fusion_tune_button", None)
+        row = getattr(host, "fusion_tune_row", None)
+        if button is None or row is None:
+            return
+        combined = host._fusion_ui.mode() == "screen_music"
+        button.setVisible(combined)
+        if not combined and button.isChecked():
+            button.setChecked(False)
+        row.setVisible(combined and button.isChecked())
 
     def refresh_status(self) -> None:
         """The one line under the row title, and the one place it is decided.

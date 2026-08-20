@@ -120,6 +120,17 @@ def test_everything_in_the_row_really_is_translated(measurements) -> None:
         f"the mode control kept one language's labels: {labels}"
     )
 
+    # And every control in the compact panel, each checked on its own. Taken
+    # together they stay unique as long as *any* of them is translated, so one
+    # forgotten widget hides behind its neighbours — which is exactly the kind
+    # of gap this is here to find.
+    names = ("source: system", "source: microphone", "beat", "settings button")
+    for index, name in enumerate(names):
+        seen = {row["language"]: row["panel_labels"][index] for row in measurements}
+        assert len(set(seen.values())) == len(seen), (
+            f"{name} kept one language's text: {seen}"
+        )
+
 
 def test_a_window_that_merely_failed_to_open_is_a_failure() -> None:
     """On an ordinary desktop the tool not running means something is wrong,
@@ -129,3 +140,16 @@ def test_a_window_that_merely_failed_to_open_is_a_failure() -> None:
     assert decide_outcome(0, headless=True) == "ok"
     assert decide_outcome(1, headless=False) == "fail"
     assert decide_outcome(1, headless=True) == "skip"
+
+
+def test_the_settings_panel_costs_nothing_until_it_is_opened(measurements) -> None:
+    """The whole reason it collapses. A permanently taller card would spend the
+    height every day for something set once — and the guided tour frames the
+    card, so a card that outgrows the viewport changes what the tour shows.
+    """
+    for row in measurements:
+        assert row["tune_button_shown"] is True, row["language"]
+        assert row["tune_row_shown"] is False, "the panel was open by default"
+        assert row["card_height_open"] > row["card_height_collapsed"], (
+            f"{row['language']} at {row['size']}: opening the panel took no room"
+        )

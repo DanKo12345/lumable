@@ -732,6 +732,7 @@
         "fusion.status.screen": "正在跟随屏幕",
         "fusion.status.screen_music": "屏幕与音乐",
         "fusion.audio_lost": "音频设备已停止。屏幕继续工作。",
+        "fusion.tune": "“屏幕 + 音乐”设置",
         "fusion.mode.screen": "屏幕",
         "fusion.mode.screen_music": "屏幕 + 音乐",
         "fusion.needs_pro": "“屏幕 + 音乐”属于 Pro 功能。",

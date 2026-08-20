@@ -39,6 +39,12 @@ class MusicUiController:
         host.music_source_combo.currentIndexChanged.connect(self._on_source_changed)
         host.music_speed_slider.valueChanged.connect(self._on_options_changed)
         host.music_beat_slider.valueChanged.connect(self._on_options_changed)
+        # The compact controls on the screen card. Views of the same values, not
+        # a second set: they hand the change to the same handler and are written
+        # back from the same refresh, so there is one saved number and one place
+        # that decides what it means.
+        host.fusion_beat_slider.valueChanged.connect(self._on_shared_beat_changed)
+        host.fusion_source_segment.selected.connect(self._on_shared_source_changed)
         host.music_gate_slider.valueChanged.connect(self._on_options_changed)
         host.music_saturation_slider.valueChanged.connect(self._on_options_changed)
         host.music_smoothing_slider.valueChanged.connect(self._on_options_changed)
@@ -267,6 +273,7 @@ class MusicUiController:
 
     def _on_source_type_changed(self, key: str) -> None:
         self._source = "mic" if key == "mic" else "system"
+        self._refresh_shared_views()
         self._refresh_source_description()
         self._animate_gate(opening=self._source == "mic")
         self._populate_sources()
@@ -633,10 +640,54 @@ class MusicUiController:
         # a slider that silently does nothing while you drag it.
         self._host._fusion_ui.set_beat_gain(self.beat_strength())
 
+    def _on_shared_beat_changed(self, value: int) -> None:
+        """The screen card's beat slider moved. Same value, same handler."""
+        slider = self._host.music_beat_slider
+        if slider.value() == int(value):
+            return
+        slider.blockSignals(True)
+        slider.setValue(int(value))
+        slider.blockSignals(False)
+        self._on_options_changed()
+
+    def _on_shared_source_changed(self, key: str) -> None:
+        """The screen card's source segment moved. Same path as the card's own,
+        including reopening the device — nothing about switching source is
+        reimplemented here."""
+        segment = self._host.music_source_segment
+        if segment.current_key() == key:
+            return
+        segment.set_current(key, animate=False)
+        self._on_source_type_changed(key)
+
+    def _refresh_shared_views(self) -> None:
+        """Write the current values back onto the screen card's copies.
+
+        Called from the same refresh that updates this card's own labels, so the
+        two can never show different numbers — whichever of them was moved.
+        """
+        host = self._host
+        beat = int(host.music_beat_slider.value())
+        mirror = getattr(host, "fusion_beat_slider", None)
+        if mirror is not None and int(mirror.value()) != beat:
+            mirror.blockSignals(True)
+            mirror.jump_to(beat)
+            mirror.blockSignals(False)
+        pill = getattr(host, "fusion_beat_value", None)
+        if pill is not None:
+            pill.setText(f"{beat}%")
+        segment = getattr(host, "fusion_source_segment", None)
+        source = host.music_source_segment.current_key()
+        if segment is not None and segment.current_key() != source:
+            segment.blockSignals(True)
+            segment.set_current(source, animate=False)
+            segment.blockSignals(False)
+
     def _refresh_value_labels(self) -> None:
         host = self._host
         host.music_speed_value.setText(f"{host.music_speed_slider.value()}%")
         host.music_beat_value.setText(f"{host.music_beat_slider.value()}%")
+        self._refresh_shared_views()
         host.music_gate_value.setText(f"{host.music_gate_slider.value()}%")
         host.music_saturation_value.setText(f"{host.music_saturation_slider.value()}%")
         host.music_smoothing_value.setText(f"{host.music_smoothing_slider.value()}%")

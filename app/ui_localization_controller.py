@@ -311,6 +311,17 @@ class UiLocalizationController:
             host.fusion_mode_segment.set_labels(
                 {key: host._tr(f"fusion.mode.{key}") for key in ("screen", "screen_music")}
             )
+        if getattr(host, "fusion_source_segment", None) is not None:
+            host.fusion_source_segment.set_labels(
+                {"system": host._tr("music.source_system"), "mic": host._tr("music.source_mic")}
+            )
+            host.fusion_source_segment.setAccessibleName(host._tr("music.source_title"))
+        if getattr(host, "fusion_beat_label", None) is not None:
+            host.fusion_beat_label.setText(host._tr("music.beat"))
+            host.fusion_beat_slider.setAccessibleName(host._tr("music.beat"))
+        if getattr(host, "fusion_tune_button", None) is not None:
+            host.fusion_tune_button.setAccessibleName(host._tr("fusion.tune"))
+            host.fusion_tune_button.setToolTip(host._tr("fusion.tune"))
         host._ambient_ui.refresh_texts()
         running = host._ambient_ui.is_running()
         host.ambient_toggle_button.setText(host._tr("ambient.toggle_on" if running else "ambient.toggle_off"))

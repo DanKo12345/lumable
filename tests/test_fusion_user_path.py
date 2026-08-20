@@ -571,3 +571,97 @@ def test_an_earlier_write_settling_during_a_refusal_is_not_lost(window) -> None:
     )
     assert stats["commands_failed"] == 0, stats
     assert stats["link_rejections"] >= 1, stats
+
+
+# ── the combined mode's settings, where the mode is ───────────────────
+def test_the_settings_button_belongs_to_the_combined_mode(window) -> None:
+    """Nothing appears on the card until the mode that owns it is chosen, and
+    the panel is collapsed — so the card and the guided tour are the size they
+    always were."""
+    # isHidden rather than isVisible: the window is never shown in a test, so
+    # every widget in it reports invisible and the check would pass for the
+    # wrong reason.
+    assert window.fusion_tune_button.isHidden() is True
+    assert window.fusion_tune_row.isHidden() is True
+
+    _click_second_segment(window.fusion_mode_segment)
+
+    assert window.fusion_tune_button.isHidden() is False
+    assert window.fusion_tune_row.isHidden() is True, "the panel opened by itself"
+
+    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    assert window.fusion_tune_row.isHidden() is False
+
+    # Back to Screen: the settings go with the mode, and come back collapsed.
+    segment = window.fusion_mode_segment
+    segment.resize(200, 40)
+    QTest.mouseClick(segment, Qt.LeftButton, pos=QPoint(50, 20))
+
+    assert window.fusion_tune_button.isHidden() is True
+    assert window.fusion_tune_row.isHidden() is True
+    _click_second_segment(window.fusion_mode_segment)
+    assert window.fusion_tune_row.isHidden() is True, "it remembered being open"
+
+
+def test_the_two_beat_sliders_are_one_value(window) -> None:
+    """Not two settings that happen to agree. Whichever is moved, the other
+    follows, one number is saved, and the running mode is told once."""
+    app = QApplication.instance()
+    _click_second_segment(window.fusion_mode_segment)
+    QTest.mouseClick(window.ambient_toggle_button, Qt.LeftButton)
+    _pump(app, 5.0, until=lambda: window._strip.count() >= 2)
+
+    window.fusion_beat_slider.setValue(90)
+    app.processEvents()
+    assert window.music_beat_slider.value() == 90, "the music card did not follow"
+    assert window.music_beat_value.text() == "90%"
+    assert window.fusion_beat_value.text() == "90%"
+    assert window._settings["music"]["beat"] == 90, "one number was not saved"
+    assert window._fusion_ui.coordinator()._beat_gain == pytest.approx(0.9)
+
+    window.music_beat_slider.setValue(20)
+    app.processEvents()
+    assert window.fusion_beat_slider.value() == 20, "the screen card did not follow"
+    assert window.fusion_beat_value.text() == "20%"
+    assert window._settings["music"]["beat"] == 20
+    assert window._fusion_ui.coordinator()._beat_gain == pytest.approx(0.2)
+
+
+def test_the_two_source_choosers_are_one_value(window) -> None:
+    """The same for the audio source, including reopening the device: the
+    compact control hands the change to the music card's own handler rather
+    than repeating what switching source means."""
+    app = QApplication.instance()
+    _click_second_segment(window.fusion_mode_segment)
+    assert window.fusion_source_segment.current_key() == "system"
+
+    window.fusion_source_segment.resize(200, 40)
+    QTest.mouseClick(window.fusion_source_segment, Qt.LeftButton, pos=QPoint(150, 20))
+    app.processEvents()
+
+    assert window.music_source_segment.current_key() == "mic"
+    assert window._music_ui._source == "mic"
+
+    window.music_source_segment.set_current("system", animate=False)
+    window._music_ui._on_source_type_changed("system")
+    app.processEvents()
+
+    assert window.fusion_source_segment.current_key() == "system"
+
+
+def test_the_collapsed_panel_holds_no_room_open(window) -> None:
+    """What can be checked without a shown window: the row is genuinely hidden
+    rather than merely empty, and it has a real size waiting for it. How much
+    height it actually costs is measured with the real platform plugin — see
+    test_fusion_mode_row_layout.
+    """
+    app = QApplication.instance()
+    _click_second_segment(window.fusion_mode_segment)
+    app.processEvents()
+
+    assert window.fusion_tune_row.isHidden() is True
+    assert window.fusion_tune_row.sizeHint().height() > 0, "the panel has nothing in it"
+
+    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    app.processEvents()
+    assert window.fusion_tune_row.isHidden() is False
