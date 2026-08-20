@@ -1658,7 +1658,15 @@ class MainWindow(QMainWindow):
         try:
             self._save_window_settings()
         except Exception:
-            pass
+            # Closing is not blocked and nothing is shown: the file itself is
+            # safe — the write is atomic, so a failure leaves the previous
+            # settings intact and only this session's unsaved changes are lost.
+            # What was wrong was that it happened invisibly. A close is exactly
+            # when a write is most likely to fail — a held lock, a full disk —
+            # and until now that left no trace at all.
+            from app.crash_logging import write_current_exception
+
+            write_current_exception(context="close_save_settings")
         if self._tray_controller.should_minimize_on_close():
             event.ignore()
             self.hide()
