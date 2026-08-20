@@ -257,4 +257,11 @@ class MusicSyncReport:
     silent_blocks: int = 0
     blocks: int = 0
     peak_level: float = 0.0
+    # What the experimental onset detector would have said, had it been the one
+    # driving the strip. It is not: it runs beside the working detector and is
+    # only counted, so a run on real music can be compared before anything
+    # changes. ``agreements`` are the blocks both called a strike.
+    onset_blocks: int = 0
+    onset_candidates: int = 0
+    onset_agreements: int = 0
     settings: dict = field(default_factory=dict)

@@ -232,7 +232,7 @@ def _music_section(music: dict[str, Any] | None) -> list[str]:
     if not isinstance(report, MusicSyncReport) or not report.blocks:
         return []
     heard = report.blocks - report.silent_blocks
-    return [
+    lines = [
         "",
         "Music Sync",
         f"source: {report.source or '-'}",
@@ -242,6 +242,16 @@ def _music_section(music: dict[str, Any] | None) -> list[str]:
         f"blocks: {report.blocks} ({heard} with sound, {report.silent_blocks} silent)",
         f"peak level: {report.peak_level}",
     ]
+    if report.onset_blocks:
+        # The experimental detector, which drove nothing. Both numbers are
+        # needed: candidates on their own say how often it would have fired,
+        # agreements say how much of that was the same music the strip reacted
+        # to. A run on a voice with no drums is the interesting one.
+        lines.append(
+            f"onset trial (shadow, drives nothing): {report.onset_candidates} candidates, "
+            f"{report.onset_agreements} agreed with the {report.beats} beats used"
+        )
+    return lines
 
 
 def _fusion_section(fusion: dict[str, Any] | None) -> list[str]:

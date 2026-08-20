@@ -272,3 +272,76 @@ def test_a_capture_failure_stops_the_modulation_too(controller) -> None:
 
     assert failures, "the failure was swallowed"
     assert seen == []
+
+
+# ── the experimental detector runs beside, and drives nothing ─────────
+def test_the_trial_detector_never_touches_what_the_strip_shows(controller) -> None:
+    """It is an experiment. Whatever it decides, the colour and the beat handed
+    over are the working detector's — otherwise the A/B would be comparing a
+    thing against itself."""
+    from app.onset_detection import OnsetReading
+
+    options = MusicOptions(source="system", beat_strength=0.9)
+    original = module.analyze_block
+    fed = []
+
+    class _AlwaysHears:
+        stats = type("S", (), {"blocks": 0, "onsets": 0})()
+
+        def feed(self, magnitudes, freqs, now_ms):
+            fed.append(now_ms)
+            self.stats.blocks += 1
+            self.stats.onsets += 1
+            return OnsetReading(onset=True, flux=1.0, low_flux=1.0, low_share=1.0)
+
+        def reset(self):
+            pass
+
+    controller._onset = _AlwaysHears()
+    try:
+        module.analyze_block = lambda _b, _s: (0.2, 0.2, 0.2, 0.05)
+        quiet = controller._process_block([[0.0, 0.0]] * 512, 48000, options)
+    finally:
+        module.analyze_block = original
+
+    assert quiet.beat_envelope == 0.0, "the trial detector reached the strip"
+    assert quiet.beat_id == 0
+    assert fed, "the trial detector was never asked"
+
+
+def test_a_trial_detector_that_cannot_run_does_not_stop_the_music(controller) -> None:
+    """It is wrapped for one reason: an experiment that fails must cost a
+    measurement, not a frame the strip is waiting for."""
+    options = MusicOptions(source="system")
+    original = module.analyze_block
+
+    class _Broken:
+        stats = type("S", (), {"blocks": 0, "onsets": 0})()
+
+        def feed(self, *_args):
+            raise RuntimeError("no numpy today")
+
+        def reset(self):
+            pass
+
+    controller._onset = _Broken()
+    try:
+        module.analyze_block = lambda _b, _s: (0.9, 0.2, 0.2, 0.3)
+        result = controller._process_block([[0.4, 0.4]] * 512, 48000, options)
+    finally:
+        module.analyze_block = original
+
+    assert result.rgb is not None
+    assert isinstance(result.level, float)
+
+
+def test_the_trial_counts_reach_the_report(controller) -> None:
+    controller._onset.stats.blocks = 900
+    controller._onset.stats.onsets = 61
+    controller._onset_agreements = 44
+
+    report = controller.music_report()
+
+    assert report.onset_blocks == 900
+    assert report.onset_candidates == 61
+    assert report.onset_agreements == 44

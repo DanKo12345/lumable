@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Signal
 from app.color_stream import ColorStreamEngine
 from app.music_analysis import MusicAnalyzer, MusicSyncReport
 from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb
+from app.onset_detection import SuperFluxOnset
 
 
 @lru_cache(maxsize=8)
@@ -211,6 +212,11 @@ class MusicController(QObject):
         # One source's idea of silence and of a beat. Reset whenever the source
         # changes or capture restarts — see _reset_analysis.
         self._analyzer = MusicAnalyzer()
+        # Runs beside the working detector and drives nothing. Counted so a run
+        # on real music can be compared with what the strip actually did, before
+        # anything is swapped over.
+        self._onset = SuperFluxOnset()
+        self._onset_agreements = 0
         # Bumped by every start, so a block emitted just before a stop can be
         # recognised as belonging to the previous run and dropped.
         self._session_token = 0
@@ -243,6 +249,8 @@ class MusicController(QObject):
         self._band_peak = 1e-6
         self._ema = None
         self._analyzer.reset()
+        self._onset.reset()
+        self._onset_agreements = 0
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -311,6 +319,9 @@ class MusicController(QObject):
             silent_blocks=stats.silent_blocks,
             blocks=stats.blocks,
             peak_level=round(stats.peak_level, 3),
+            onset_blocks=self._onset.stats.blocks,
+            onset_candidates=self._onset.stats.onsets,
+            onset_agreements=self._onset_agreements,
         )
 
     def stream_error_count(self) -> int:
@@ -473,6 +484,31 @@ class MusicController(QObject):
             return f"mic_capture_failed: {reason}"
         return reason
 
+    def _shadow_onset(self, block, samplerate: int, now_ms: float, heard_beat: bool) -> None:
+        """Ask the experimental detector the same block, and only count it.
+
+        Wrapped because it must never be able to stop the music: it is an
+        experiment running alongside, and a spectrum it cannot compute — no
+        numpy, a block shape it did not expect — is a reason to skip it, not to
+        drop a frame the strip is waiting for.
+        """
+        try:
+            import numpy as np
+
+            arr = np.asarray(block, dtype=np.float32)
+            mono = arr.mean(axis=1) if arr.ndim == 2 else arr.reshape(-1)
+            if mono.size == 0:
+                return
+            window = np.hanning(mono.size).astype(np.float32)
+            magnitudes = np.abs(np.fft.rfft(mono * window))
+            freqs = np.fft.rfftfreq(mono.size, d=1.0 / max(1, samplerate))
+            if self._onset.feed(magnitudes, freqs, now_ms).onset and heard_beat:
+                self._onset_agreements += 1
+        except Exception:
+            # An experiment that cannot run is an experiment with no numbers,
+            # not a broken music mode.
+            return
+
     def _process_block(self, block, samplerate: int, options: MusicOptions) -> BlockResult:
         bass, mid, treble, rms = analyze_block(block, samplerate)
         # Silence and onsets are judged on the raw block: a transient does not
@@ -486,6 +522,7 @@ class MusicController(QObject):
             now_ms=monotonic() * 1000.0,
             manual_gate=self._manual_gate(options),
         )
+        self._shadow_onset(block, samplerate, monotonic() * 1000.0, reading.beat)
         # Ease the raw energies toward each reading (EMA) so the colour glides;
         # the factor is the user's "speed": low = calm, high = snappy.
         factor = options.reactivity
