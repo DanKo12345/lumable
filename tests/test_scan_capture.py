@@ -14,8 +14,13 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtWidgets import QApplication
+
 from app.app_info import APP_VERSION
-from app.ble import BleController
+from app.ble import (
+    BleController,
+    _strongest_signal_first,
+)
 from app.scan_snapshot import SNAPSHOT_VERSION, ScanSnapshot, save_snapshot, snapshot_from_dict
 
 
@@ -56,6 +61,124 @@ def _run_scan(ble, monkeypatch, found: dict) -> None:
     asyncio.run_coroutine_threadsafe(ble._scan(), ble._loop).result(timeout=5)
 
 
+def test_scan_choices_are_ordered_by_signal_strength() -> None:
+    devices = [
+        {"name": "Other room", "rssi": "-78"},
+        {"name": "No reading", "rssi": "-"},
+        {"name": "Desk", "rssi": "-41"},
+    ]
+
+    assert [item["name"] for item in _strongest_signal_first(devices)] == [
+        "Desk",
+        "Other room",
+        "No reading",
+    ]
+
+
+def test_a_named_non_controller_stays_out_of_the_main_picker(controller, monkeypatch) -> None:
+    _run_scan(
+        controller,
+        monkeypatch,
+        {
+            "possible": (
+                _Device("SP630E", "AA:BB"),
+                _Advertisement(rssi=-75),
+            ),
+            "appliance": (
+                _Device("L/A_MitsubishiAdp", "CC:DD"),
+                _Advertisement(rssi=-35),
+            ),
+        },
+    )
+
+    assert [item["name"] for item in controller._unknown_devices] == ["SP630E"]
+    assert {record.name for record in controller.scan_snapshot().records} == {
+        "SP630E",
+        "L/A_MitsubishiAdp",
+    }
+
+
+def test_an_unnamed_controller_with_a_known_signature_is_offered(
+    controller, monkeypatch
+) -> None:
+    _run_scan(
+        controller,
+        monkeypatch,
+        {
+            "known": (
+                _Device(None, "AA:BB"),
+                _Advertisement(manufacturer_data={0x5053: b"\x1f\x10"}),
+            ),
+        },
+    )
+
+    assert len(controller._unknown_devices) == 1
+    assert controller._unknown_devices[0]["known_name"] == "BanlanX SP630E"
+
+
+def test_picker_receives_supported_controllers_nearest_first(controller, monkeypatch) -> None:
+    offered: list[list[dict]] = []
+    controller.devices_discovered.connect(offered.append)
+
+    _run_scan(
+        controller,
+        monkeypatch,
+        {
+            "far_strip": (
+                _Device("ELK-BLEDOM", "AA:01"),
+                _Advertisement(rssi=-76),
+            ),
+            "unknown": (
+                _Device("SP630E", "AA:02"),
+                _Advertisement(rssi=-35),
+            ),
+            "near_strip": (
+                _Device("ELK-BLEDOM", "AA:03"),
+                _Advertisement(rssi=-42),
+            ),
+        },
+    )
+    QApplication.instance().processEvents()
+
+    assert offered, "the completed scan never reached the device picker"
+    assert [item["address"] for item in offered[-1]] == ["AA:03", "AA:01", "AA:02"]
+    assert [item["supported"] for item in offered[-1]] == [True, True, False]
+
+
+def test_a_failed_capture_cannot_reuse_the_previous_devices_identity(
+    controller, monkeypatch
+) -> None:
+    class _BrokenAdvertisement:
+        local_name = "Neighbour appliance"
+        rssi = -40
+        service_uuids = []
+        service_data = {}
+        tx_power = None
+
+        @property
+        def manufacturer_data(self):
+            raise RuntimeError("malformed advertisement")
+
+    _run_scan(
+        controller,
+        monkeypatch,
+        {
+            "controller": (
+                _Device("SP630E", "AA:01"),
+                _Advertisement(rssi=-60),
+            ),
+            "appliance": (
+                _Device("Neighbour appliance", "AA:02"),
+                _BrokenAdvertisement(),
+            ),
+        },
+    )
+
+    assert [item["name"] for item in controller._unknown_devices] == [
+        "SP630E"
+    ]
+
+
 def test_a_scan_records_every_device_including_the_ones_it_filters_out(controller, monkeypatch) -> None:
     """The controller nobody recognises is exactly the one a snapshot exists
     for, and it is the first thing dropped from the visible lists."""
@@ -82,10 +205,8 @@ def test_a_scan_records_every_device_including_the_ones_it_filters_out(controlle
     assert names == ["", "ELK-BLEDOM", "SP630E", "Someone's Earbuds"]
 
     offered = {device["name"] for device in controller._unknown_devices}
-    # Named devices are offered even when they are plainly not strips: the user
-    # can dismiss those at a glance, whereas a hidden controller is unreachable.
     assert "SP630E" in offered
-    assert "Someone's Earbuds" in offered
+    assert "Someone's Earbuds" not in offered
     # The anonymous one is not, and it is still in the snapshot above.
     assert "Unknown BLE Device" not in offered
 

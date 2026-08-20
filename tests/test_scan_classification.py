@@ -30,27 +30,30 @@ def _shown(snapshot):
     return [record for record in snapshot.records if is_possible_controller(record)]
 
 
-def test_anonymous_noise_stays_out_of_the_list() -> None:
-    """A device with neither a name nor a service gives the user nothing to
-    recognise it by, and a block of flats is full of them."""
+def test_devices_without_controller_evidence_stay_out_of_the_list() -> None:
+    """Generic services and anonymous radio noise belong in diagnostics, not
+    beside the user's controllers."""
     hidden = [record for record in _snapshot().records if not is_possible_controller(record)]
 
-    assert [record.address for record in hidden] == ["…:00:05", "…:00:06", "…:00:07"]
+    assert [record.address for record in hidden] == [
+        "…:00:04",
+        "…:00:05",
+        "…:00:06",
+        "…:00:07",
+    ]
 
 
-def test_a_named_unknown_device_is_still_offered() -> None:
-    """Hiding a controller is the expensive mistake; a named device the user can
-    dismiss at a glance is the cheap one."""
+def test_a_named_led_controller_is_still_offered() -> None:
     names = [record.name for record in _shown(_snapshot())]
 
     assert "SP630E" in names
     assert "ELK-BLEDOM CE" in names
 
 
-def test_an_unnamed_device_that_advertises_a_service_is_offered() -> None:
-    shown = [record.address for record in _shown(_snapshot())]
+def test_an_unrelated_service_is_not_controller_evidence() -> None:
+    hidden = [record.address for record in _snapshot().records if not is_possible_controller(record)]
 
-    assert "…:00:04" in shown
+    assert "…:00:04" in hidden
 
 
 def test_hidden_devices_are_still_in_the_snapshot() -> None:
@@ -59,7 +62,7 @@ def test_hidden_devices_are_still_in_the_snapshot() -> None:
     snapshot = _snapshot()
 
     assert len(snapshot.records) == 7
-    assert len(_shown(snapshot)) == 4
+    assert len(_shown(snapshot)) == 3
 
 
 def test_a_known_strip_is_still_detected_as_before() -> None:

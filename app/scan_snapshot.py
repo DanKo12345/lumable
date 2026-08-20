@@ -26,6 +26,34 @@ from typing import Any
 
 SNAPSHOT_VERSION = "scan.v1"
 
+# Evidence that an unrecognised advertisement may still be an LED controller.
+# Generic named BLE devices do not belong in the controller picker; they remain
+# in the complete snapshot for diagnostics.
+_CONTROLLER_NAME_HINTS = (
+    "led",
+    "rgb",
+    "strip",
+    "light",
+    "lamp",
+    "neon",
+    "glow",
+    "triones",
+    "ledble",
+    "lednet",
+    "elk",
+    "melk",
+    "magic",
+    "banlanx",
+    "ihoment",
+    "govee",
+    "minger",
+    "wled",
+    "sp1",
+    "sp6",
+    "qhm",
+    "isp",
+)
+
 # Kept out of the exported file: enough to distinguish devices within one
 # capture, not enough to identify the hardware afterwards.
 _MASK = "…"
@@ -273,20 +301,20 @@ def snapshot_state(snapshot: ScanSnapshot, unsupported_count: int) -> str:
 def is_possible_controller(record: AdvertisementRecord) -> bool:
     """Worth offering as an unrecognised controller.
 
-    Two rules, both about what the user can act on:
-
-    * A device with neither a name nor a service UUID gives them nothing to
-      recognise it by, and there are a lot of those in any block of flats. It
-      stays out of the list — but never out of the snapshot.
-    * Anything with a name or advertised services is shown, even if it is
-      plainly somebody's laptop. Hiding a controller is the expensive mistake;
-      a named device the user can dismiss at a glance is the cheap one.
-
-    Manufacturer id is deliberately not used either way: chips and identifiers
-    are shared across unrelated products, so it proves nothing in both
-    directions.
+    The main picker is for controllers, not every named Bluetooth appliance in
+    radio range. A familiar LED name or the vendor-specific 0xFFxx service range
+    is enough to offer an unrecognised device for inspection. Everything else
+    remains in the complete scan snapshot, where it can still help diagnostics
+    without competing with the user's strips.
     """
-    return bool(record.name.strip()) or bool(record.service_uuids)
+    name = record.name.strip().lower()
+    if name and any(hint in name for hint in _CONTROLLER_NAME_HINTS):
+        return True
+    for uuid in record.service_uuids:
+        text = str(uuid).strip().lower()
+        if text.startswith("0000ff") or (len(text) == 4 and text.startswith("ff")):
+            return True
+    return False
 
 
 def sort_for_display(records):

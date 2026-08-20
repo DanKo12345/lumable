@@ -69,15 +69,6 @@ class ConnectionLostError(RuntimeError):
 BLE_OPERATION_ERRORS = (asyncio.TimeoutError, BleakError, ConnectionLostError, OSError, ProtocolCompatibilityError, RuntimeError)
 DRIVER_CAPABILITY_ERRORS = (AttributeError, LookupError, NotImplementedError, TypeError, ValueError)
 
-# Name fragments that strongly suggest a cheap BLE LED controller, used to flag
-# unrecognised-but-plausible devices during a scan so the user can report them.
-_LED_NAME_HINTS = (
-    "led", "rgb", "ble", "strip", "light", "lamp", "neon", "glow",
-    "triones", "ledble", "lednet", "elk", "melk", "magic", "banlanx",
-    "ihoment", "govee", "minger", "wled", "sp1", "sp6", "qhm", "isp",
-)
-
-
 def _rssi_value(text) -> int:
     try:
         return int(str(text))
@@ -85,23 +76,9 @@ def _rssi_value(text) -> int:
         return -999  # unknown signal sorts last
 
 
-def _looks_like_led_controller(name: str, service_uuids: Iterable[str]) -> bool:
-    """Name/service heuristic, kept for the supported-controller hints only.
-
-    No longer decides what the scan offers the user: every nameless device
-    arrives here as "Unknown BLE Device", and the "ble" token matched it.
-
-    Matches on common name fragments or the 0xFFxx vendor service range these
-    clones use, so we surface likely controllers without listing every phone.
-    """
-    lowered = (name or "").strip().lower()
-    if lowered and any(hint in lowered for hint in _LED_NAME_HINTS):
-        return True
-    for uuid in service_uuids:
-        text = str(uuid).lower()
-        if text.startswith("0000ff") or (len(text) == 4 and text.startswith("ff")):
-            return True
-    return False
+def _strongest_signal_first(devices: Iterable[dict]) -> list[dict]:
+    """Return scan choices ordered from strongest to weakest signal."""
+    return sorted(devices, key=lambda item: -_rssi_value(item.get("rssi")))
 
 
 @dataclass
@@ -955,13 +932,16 @@ class BleController(QObject):
             # exactly the one a snapshot exists for, and it is the first thing
             # dropped from the lists below. Best-effort — a capture that raises
             # must never cost the user their scan.
+            record = None
             try:
-                captured.append(record_from_advertisement(device, advertisement))
+                record = record_from_advertisement(device, advertisement)
+                captured.append(record)
             except Exception:
                 pass
             name = device.name or advertisement.local_name or "Unknown BLE Device"
             service_uuids = [uuid.lower() for uuid in (advertisement.service_uuids or [])]
             driver = detect_scan_driver(name, service_uuids)
+            known = identify_record(record) if record is not None else None
             if driver is not None:
                 self._scan_driver_hints[device.address] = driver.id
                 results.append(
@@ -973,7 +953,9 @@ class BleController(QObject):
                         "supported": True,
                     }
                 )
-            elif captured and is_possible_controller(captured[-1]):
+            elif record is not None and (
+                known is not None or is_possible_controller(record)
+            ):
                 # Judged on the *captured* record, not on `name` above: that one
                 # has already been given the "Unknown BLE Device" placeholder,
                 # and the old heuristic matched the "ble" in it — which offered
@@ -982,7 +964,6 @@ class BleController(QObject):
                 # the command protocol is not verified. Naming it is far more
                 # useful than "unknown device" and far more honest than
                 # pretending it works.
-                known = identify_record(captured[-1])
                 unknown.append(
                     {
                         "name": name,
@@ -994,8 +975,11 @@ class BleController(QObject):
                     }
                 )
 
-        # Closest first, so a strip in the room outranks one through a wall.
-        unknown.sort(key=lambda item: -_rssi_value(item.get("rssi")))
+        # Supported controllers always lead the picker; within each group the
+        # strongest signal comes first. RSSI is only an estimate of distance,
+        # but it is much more useful than Bleak's arbitrary dictionary order.
+        results = _strongest_signal_first(results)
+        unknown = _strongest_signal_first(unknown)
         self._unknown_devices = unknown[:12]
         # Replaces the previous capture rather than accumulating: a snapshot
         # describes one scan, and a stale device from ten minutes ago in the
