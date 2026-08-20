@@ -84,10 +84,16 @@ def main() -> int:
                 # recomputes its layout and would report the two as equal.
                 collapsed_height = card.height()
                 window.fusion_tune_button.setChecked(True)
+                window._ambient_ui._tune_anim.setCurrentTime(
+                    window._ambient_ui._tune_anim.totalDuration()
+                )
                 for _ in range(6):
                     app.processEvents()
                 opened_height = card.height()
                 window.fusion_tune_button.setChecked(False)
+                window._ambient_ui._tune_anim.setCurrentTime(
+                    window._ambient_ui._tune_anim.totalDuration()
+                )
                 for _ in range(6):
                     app.processEvents()
                 results.append(

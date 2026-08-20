@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
 
 from app.ambient_controller import AmbientController
 from app.feature_gate import can_use
 from app.screen_profiles import normalize_profile_id
 from app.storage import save_settings
+from app.widgets.animation_helpers import play_or_complete
 
 _DEFAULTS = {"region": "full", "saturation": 55, "smoothing": 65, "monitor": 0, "profile": "desktop"}
 
@@ -25,6 +26,7 @@ class AmbientUiController:
 
     def wire(self) -> None:
         host = self._host
+        self._setup_tune_reveal()
         host.ambient_toggle_button.clicked.connect(self._toggle)
         host.ambient_profile_segment.selected.connect(lambda _key: self._on_options_changed())
         host.fusion_mode_segment.selected.connect(self._on_mode_changed)
@@ -128,9 +130,68 @@ class AmbientUiController:
         button = getattr(self._host, "fusion_tune_button", None)
         if button is not None:
             button.set_role("accent_soft" if opened else "ghost")
+        self._animate_tune(opening=bool(opened))
+
+    def _setup_tune_reveal(self) -> None:
         row = getattr(self._host, "fusion_tune_row", None)
-        if row is not None:
-            row.setVisible(bool(opened))
+        if row is None:
+            return
+        row.setMaximumHeight(0)
+        self._tune_anim = QPropertyAnimation(row, b"maximumHeight", self._host)
+        self._tune_anim.setDuration(210)
+        self._tune_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._tune_hiding = False
+        self._tune_anim.finished.connect(self._finish_tune_animation)
+
+    def _set_tune_open_instant(self, opened: bool) -> None:
+        row = getattr(self._host, "fusion_tune_row", None)
+        animation = getattr(self, "_tune_anim", None)
+        if row is None or animation is None:
+            return
+        animation.stop()
+        if opened:
+            row.setVisible(True)
+            row.setMaximumHeight(16777215)
+            row.setMaximumHeight(row.sizeHint().height())
+        else:
+            row.setMaximumHeight(0)
+            row.setVisible(False)
+        self._tune_hiding = False
+
+    def _animate_tune(self, *, opening: bool) -> None:
+        row = getattr(self._host, "fusion_tune_row", None)
+        animation = getattr(self, "_tune_anim", None)
+        if row is None or animation is None:
+            if row is not None:
+                row.setVisible(opening)
+            return
+
+        animation.stop()
+        self._tune_hiding = not opening
+        if opening:
+            start = row.maximumHeight() if not row.isHidden() else 0
+            row.setVisible(True)
+            row.setMaximumHeight(16777215)
+            target = row.sizeHint().height()
+            row.setMaximumHeight(start)
+        else:
+            start = row.maximumHeight()
+            target = 0
+        animation.setStartValue(start)
+        animation.setEndValue(target)
+        play_or_complete(animation)
+
+    def _finish_tune_animation(self) -> None:
+        row = getattr(self._host, "fusion_tune_row", None)
+        if row is None:
+            return
+        if self._tune_hiding:
+            row.setMaximumHeight(0)
+            row.setVisible(False)
+            self._tune_hiding = False
+            return
+        row.setMaximumHeight(16777215)
+        row.setMaximumHeight(row.sizeHint().height())
 
     def _refresh_tune_visibility(self) -> None:
         """The settings belong to the combined mode, so they appear with it.
@@ -146,9 +207,12 @@ class AmbientUiController:
             return
         combined = host._fusion_ui.mode() == "screen_music"
         button.setVisible(combined)
-        if not combined and button.isChecked():
+        if not combined:
+            button.blockSignals(True)
             button.setChecked(False)
-        row.setVisible(combined and button.isChecked())
+            button.blockSignals(False)
+            button.set_role("ghost")
+            self._set_tune_open_instant(False)
 
     def refresh_status(self) -> None:
         """The one line under the row title, and the one place it is decided.

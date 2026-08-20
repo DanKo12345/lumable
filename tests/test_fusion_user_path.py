@@ -667,3 +667,53 @@ def test_the_collapsed_panel_holds_no_room_open(window) -> None:
     QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
     app.processEvents()
     assert window.fusion_tune_row.isHidden() is False
+
+
+def test_the_combined_settings_open_and_close_smoothly(
+    window, preserve_motion_policy
+) -> None:
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("full")
+    _click_second_segment(window.fusion_mode_segment)
+
+    row = window.fusion_tune_row
+    target = row.sizeHint().height()
+    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    assert row.isHidden() is False
+    assert row.maximumHeight() == 0
+
+    QTest.qWait(80)
+    opening_height = row.maximumHeight()
+    assert 0 < opening_height < target, "the settings appeared in one hard cut"
+
+    QTest.qWait(180)
+    assert row.maximumHeight() == target
+
+    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    assert row.isHidden() is False, "the row vanished before its closing motion"
+    QTest.qWait(80)
+    closing_height = row.maximumHeight()
+    assert 0 < closing_height < target
+
+    QTest.qWait(180)
+    assert row.maximumHeight() == 0
+    assert row.isHidden() is True
+
+
+def test_the_combined_settings_respect_reduced_motion(
+    window, preserve_motion_policy
+) -> None:
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("reduced")
+    _click_second_segment(window.fusion_mode_segment)
+
+    row = window.fusion_tune_row
+    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    assert row.isHidden() is False
+    assert row.maximumHeight() == row.sizeHint().height()
+
+    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    assert row.maximumHeight() == 0
+    assert row.isHidden() is True
