@@ -103,7 +103,7 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
     host.fusion_tune_button.set_icon_kind("sliders-horizontal")
     host.fusion_tune_button.setIconSize(QSize(host._sz(16), host._sz(16)))
     host.fusion_tune_button.setCheckable(True)
-    host.fusion_tune_button.setFixedSize(host._sz(26), host._sz(34))
+    host.fusion_tune_button.setFixedSize(host._sz(32), host._sz(34))
     host.fusion_tune_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
     host.fusion_tune_button.setAccessibleName(host._tr("fusion.tune"))
     host.fusion_tune_button.setToolTip(host._tr("fusion.tune"))

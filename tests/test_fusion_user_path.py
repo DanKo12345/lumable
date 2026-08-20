@@ -591,6 +591,7 @@ def test_the_settings_button_belongs_to_the_combined_mode(window) -> None:
 
     QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
     assert window.fusion_tune_row.isHidden() is False
+    assert window.fusion_tune_button._role == "accent_soft"
 
     # Back to Screen: the settings go with the mode, and come back collapsed.
     segment = window.fusion_mode_segment
@@ -599,6 +600,7 @@ def test_the_settings_button_belongs_to_the_combined_mode(window) -> None:
 
     assert window.fusion_tune_button.isHidden() is True
     assert window.fusion_tune_row.isHidden() is True
+    assert window.fusion_tune_button._role == "ghost"
     _click_second_segment(window.fusion_mode_segment)
     assert window.fusion_tune_row.isHidden() is True, "it remembered being open"
 

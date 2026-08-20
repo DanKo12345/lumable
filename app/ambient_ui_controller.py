@@ -125,6 +125,9 @@ class AmbientUiController:
         self._host._music_ui.refresh_shared_state()
 
     def _on_tune_toggled(self, opened: bool) -> None:
+        button = getattr(self._host, "fusion_tune_button", None)
+        if button is not None:
+            button.set_role("accent_soft" if opened else "ghost")
         row = getattr(self._host, "fusion_tune_row", None)
         if row is not None:
             row.setVisible(bool(opened))
