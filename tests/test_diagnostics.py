@@ -433,3 +433,25 @@ def test_the_screen_block_stops_reporting_writes_it_no_longer_makes() -> None:
     assert "link rejections:" not in borrowed
     assert "written by Fusion" in borrowed
     assert "frames:" in borrowed, "the frames stopped being reported too"
+
+
+def test_the_beat_delay_says_what_it_does_not_include() -> None:
+    """A figure called "latency" next to a beat will be read as the delay a
+    person hears. It is not: it starts when the audio block was handed over and
+    ends when the command was accepted, and three unmeasured stages sit outside
+    it. Saying so is part of the number."""
+    report = build_diagnostics_report(
+        {}, [], include_crashes=False, fusion=_fusion_stats(beat_delay=(48.0, 91.0, 37))
+    )
+
+    assert "beat -> command accepted (software): 48.0 ms p50, 91.0 ms p95, 37 beats" in report
+    assert "excludes audio device buffering, BLE transport" in report
+
+
+def test_no_beat_delay_line_before_any_beat_has_been_carried() -> None:
+    """Zeros would read as an instant response rather than as no measurement."""
+    report = build_diagnostics_report(
+        {}, [], include_crashes=False, fusion=_fusion_stats(beat_delay=(0.0, 0.0, 0))
+    )
+
+    assert "beat -> command accepted" not in report

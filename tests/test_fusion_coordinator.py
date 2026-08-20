@@ -956,3 +956,278 @@ def test_refused_samples_are_counted_per_run(app) -> None:
         coordinator.stop()
 
     assert coordinator.dropped_samples() == (0, 0), "last run's refusals came along"
+
+
+# ── the beat has to survive long enough to be composed ────────────────
+def test_the_strongest_onset_between_ticks_is_the_one_composed() -> None:
+    """Audio blocks arrive about every 21 ms and the tick composes about every
+    33, so keeping only the latest block loses the strike before anything has
+    looked at it: a peak of 1.0 is replaced by the next block's 0.82, and the
+    beat is a fifth weaker before the link has had any say."""
+    clock = _Clock()
+    coordinator = FusionCoordinator(clock=clock)
+    coordinator.expect_screen(1)
+    coordinator.expect_music(1)
+    coordinator.submit_screen(
+        ScreenSample(session_token=1, captured_at=clock.now, rgb=(200, 120, 40))
+    )
+
+    # The peak, then the same beat decaying — both inside one tick.
+    for envelope in (1.0, 0.82, 0.67):
+        coordinator.submit_music(
+            MusicModulationSample(
+                session_token=1, captured_at=clock.now, level=0.5,
+                beat_envelope=envelope, beat_id=7,
+            )
+        )
+    # Asserted on what arrived, before the hold has had a say: the hold would
+    # put the peak back and hide the fact that it had been dropped here.
+    assert coordinator._pending_music.beat_envelope == 1.0, "the peak was overwritten"
+    assert coordinator._pending_music.beat_id == 7
+
+    coordinator._tick()
+    assert coordinator._compositor._music.beat_envelope == 1.0
+
+
+def test_a_newer_beat_replaces_the_one_being_held() -> None:
+    """Holding the strongest ever seen would leave the strip stuck at a peak
+    from a beat that has passed. Only the *current* beat is kept whole."""
+    clock = _Clock()
+    coordinator = FusionCoordinator(clock=clock)
+    coordinator.expect_music(1)
+
+    coordinator.submit_music(
+        MusicModulationSample(
+            session_token=1, captured_at=clock.now, beat_envelope=1.0, beat_id=7
+        )
+    )
+    coordinator.submit_music(
+        MusicModulationSample(
+            session_token=1, captured_at=clock.now, beat_envelope=0.4, beat_id=8
+        )
+    )
+
+    assert coordinator._pending_music.beat_envelope == 0.4
+    assert coordinator._pending_music.beat_id == 8
+
+
+def test_the_loudness_is_the_latest_block_not_the_loudest() -> None:
+    """Level and onset are different kinds of number: one describes how loud it
+    is now, the other that something was struck. Keeping both as the maximum
+    would leave the strip bright through a passage that has gone quiet."""
+    clock = _Clock()
+    coordinator = FusionCoordinator(clock=clock)
+    coordinator.expect_music(1)
+
+    for level in (0.9, 0.5, 0.2):
+        coordinator.submit_music(
+            MusicModulationSample(
+                session_token=1, captured_at=clock.now, level=level, beat_id=3
+            )
+        )
+
+    assert coordinator._pending_music.level == 0.2
+
+
+# ── a struck beat waits for a write to carry it ───────────────────────
+def _beat_rig(*, accept: bool = True):
+    """A coordinator whose link can be told to accept or refuse."""
+    clock = _Clock()
+    state = {"accept": accept, "writes": [], "attempts": 0}
+
+    def sink(red, green, blue, *_labels):
+        state["attempts"] += 1
+        if not state["accept"]:
+            return False
+        state["writes"].append((red, green, blue))
+        return True
+
+    coordinator = FusionCoordinator(clock=clock, send_interval_ms=33)
+    coordinator.expect_screen(1)
+    coordinator.expect_music(1)
+    coordinator.start(sink, mode="screen_music")
+    return coordinator, clock, state
+
+
+def _play_block(coordinator, clock, *, envelope: float, beat_id: int, level: float = 0.5) -> None:
+    coordinator.submit_screen(
+        ScreenSample(session_token=1, captured_at=clock.now, rgb=(200, 120, 40))
+    )
+    coordinator.submit_music(
+        MusicModulationSample(
+            session_token=1, captured_at=clock.now, level=level,
+            beat_envelope=envelope, beat_id=beat_id,
+        )
+    )
+
+
+def test_a_beat_keeps_its_full_strength_until_a_write_carries_it(app) -> None:
+    """The strike lands wherever the paced write happens to fall — on average
+    two thirds of the way down its own decay, in the worst phase under half.
+    Held at its peak, every beat that is shown at all is shown whole."""
+    coordinator, clock, _state = _beat_rig()
+    try:
+        for _ in range(40):
+            clock.advance(0.05)
+            _play_block(coordinator, clock, envelope=0.0, beat_id=0)
+            coordinator._tick()
+
+        # The strike, then the same beat decaying while no write goes out.
+        clock.advance(0.02)
+        _play_block(coordinator, clock, envelope=1.0, beat_id=1)
+        struck = coordinator._tick() or coordinator.last_frame()
+
+        clock.advance(0.02)
+        _play_block(coordinator, clock, envelope=0.82, beat_id=1)
+        coordinator._tick()
+        later = coordinator.last_frame()
+    finally:
+        coordinator.stop()
+
+    assert struck.beat_id == 1
+    assert later.beat_id == 1
+    assert later.beat_boost == pytest.approx(struck.beat_boost, abs=0.01), (
+        "the beat faded before anything carried it"
+    )
+
+
+def test_a_refused_write_does_not_end_the_beat_s_turn(app) -> None:
+    """A busy link is not a beat that has been shown. It keeps its turn."""
+    coordinator, clock, state = _beat_rig(accept=False)
+    try:
+        # Settled first. The music's influence starts at zero and fades in, so a
+        # strike on the very first tick carries no boost at all and the frame
+        # would name no beat — the check would pass without meaning anything.
+        for _ in range(40):
+            clock.advance(0.05)
+            _play_block(coordinator, clock, envelope=0.0, beat_id=0)
+            coordinator._tick()
+
+        clock.advance(0.02)
+        _play_block(coordinator, clock, envelope=1.0, beat_id=1)
+        coordinator._tick()
+        assert coordinator.last_frame().beat_id == 1, "the frame carried no beat to release"
+
+        # Waited for the link to have actually been asked and to have refused:
+        # a hold that survives because nothing tried yet proves nothing.
+        deadline = time.monotonic() + 3.0
+        while state["attempts"] == 0 and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert state["attempts"] >= 1, "the link was never asked"
+        assert state["writes"] == [], "the refusal did not take"
+
+        assert coordinator._held_beat is not None, "a refusal ended the beat's turn"
+        assert coordinator._held_beat[0] == 1
+    finally:
+        coordinator.stop()
+
+
+def test_a_newer_beat_takes_the_turn_from_an_older_one(app) -> None:
+    """With the link busy the two cannot both be shown. The one still sounding
+    is the one worth showing, so nothing here promises every beat is seen."""
+    coordinator, clock, _state = _beat_rig(accept=False)
+    try:
+        clock.advance(0.05)
+        _play_block(coordinator, clock, envelope=1.0, beat_id=1)
+        coordinator._tick()
+        assert coordinator._held_beat[0] == 1
+
+        clock.advance(0.05)
+        _play_block(coordinator, clock, envelope=1.0, beat_id=2)
+        coordinator._tick()
+
+        assert coordinator._held_beat[0] == 2
+    finally:
+        coordinator.stop()
+
+
+def test_a_beat_that_missed_its_moment_is_not_shown_late(app) -> None:
+    """A strike arriving after the next has sounded reads as a stutter, and one
+    arriving seconds later — when a stalled screen comes back — reads as a
+    fault. The hold has an end."""
+    coordinator, clock, _state = _beat_rig(accept=False)
+    try:
+        clock.advance(0.05)
+        _play_block(coordinator, clock, envelope=1.0, beat_id=1)
+        coordinator._tick()
+        assert coordinator._held_beat is not None
+
+        clock.advance(5.0)
+        _play_block(coordinator, clock, envelope=0.0, beat_id=1)
+        coordinator._tick()
+
+        assert coordinator._held_beat is None, "a stale beat was still waiting to fire"
+        assert coordinator.last_frame().beat_boost == 1.0
+    finally:
+        coordinator.stop()
+
+
+def test_the_wait_is_measured_from_the_sound_not_from_the_tick(app) -> None:
+    """The figure has to describe the beat's own wait. Measuring from the tick
+    would hide exactly the delay the tick contributes, which is most of it."""
+    coordinator, clock, state = _beat_rig()
+    try:
+        for _ in range(40):
+            clock.advance(0.05)
+            _play_block(coordinator, clock, envelope=0.0, beat_id=0)
+            coordinator._tick()
+
+        struck_at = clock.now
+        _play_block(coordinator, clock, envelope=1.0, beat_id=1)
+        # Time passes before anything composes it, and more before it is written.
+        clock.advance(0.04)
+        coordinator._tick()
+        clock.advance(0.03)
+
+        deadline = time.monotonic() + 3.0
+        while state["attempts"] == 0 and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert state["writes"], "nothing carried the beat"
+
+        p50, p95, count = coordinator.beat_delays_ms()
+    finally:
+        coordinator.stop()
+
+    assert count == 1
+    expected = (clock.now - struck_at) * 1000.0
+    assert p50 == pytest.approx(expected, abs=1.0), (
+        f"measured {p50} ms for a beat that waited {expected:.0f} ms"
+    )
+    assert p95 == p50
+
+
+def test_nothing_is_measured_for_a_beat_no_command_carried(app) -> None:
+    """A beat the link refused was never shown, so it has no delay — counting it
+    as one would report a wait that ended when it did not."""
+    coordinator, clock, _state = _beat_rig(accept=False)
+    try:
+        for _ in range(40):
+            clock.advance(0.05)
+            _play_block(coordinator, clock, envelope=0.0, beat_id=0)
+            coordinator._tick()
+        clock.advance(0.02)
+        _play_block(coordinator, clock, envelope=1.0, beat_id=1)
+        coordinator._tick()
+        app.processEvents()
+        time.sleep(0.08)
+        app.processEvents()
+
+        assert coordinator.beat_delays_ms() == (0.0, 0.0, 0)
+    finally:
+        coordinator.stop()
+
+
+def test_the_delay_window_does_not_grow_without_end(app) -> None:
+    """It sits on the write path, so an unbounded list would be a leak that
+    grows with every beat of every evening."""
+    coordinator, clock, _state = _beat_rig()
+    try:
+        coordinator._beat_delays_ms = [1.0] * 500
+        coordinator._beat_struck_at = {9: clock.now}
+        coordinator._deliver(1, 2, 3, 0, 9)
+
+        assert len(coordinator._beat_delays_ms) <= 120
+    finally:
+        coordinator.stop()

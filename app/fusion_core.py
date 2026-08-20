@@ -128,6 +128,10 @@ class MusicModulation:
 
     level: float = 0.0
     beat_envelope: float = 0.0
+    # Which beat the envelope belongs to. A decaying value cannot be told from a
+    # weaker new one, so anything deciding "has this beat been shown yet" needs
+    # the identity rather than the number.
+    beat_id: int = 0
     at: float = 0.0
     block_seconds: float = 0.05
 
@@ -170,6 +174,9 @@ class ComposedFrame:
     # What a beat multiplies the colour by, already limited so no channel
     # clips. 1.0 whenever there is no beat, which is most frames.
     beat_boost: float = 1.0
+    # Which beat that boost belongs to, so whoever writes to the strip can say
+    # afterwards which strike actually went out. 0 when the frame carries none.
+    beat_id: int = 0
     should_send: bool = False
     reason: str = "no_base"
     activity: float = 0.0
@@ -334,6 +341,7 @@ class FusionCompositor:
         beat_gain = _clamp(beat_gain)
         brightness_factor = _clamp(base.brightness_factor)
         boost = 1.0
+        beat_id = 0
         if activity > 0.0 and music is not None:
             # The last known modulation keeps being applied while the influence
             # fades. Dropping it the instant the audio goes stale would make
@@ -354,6 +362,8 @@ class FusionCompositor:
             brightness_factor *= 1.0 + activity * (factor - 1.0)
             impulse = activity * _clamp(music.beat_envelope) * beat_gain
             boost = 1.0 + impulse * (MAX_BEAT_GAIN - 1.0)
+            if boost > 1.0:
+                beat_id = int(music.beat_id)
         brightness_factor = _clamp(brightness_factor)
 
         rgb = base.rgb
@@ -377,6 +387,7 @@ class FusionCompositor:
             rgb=(_clamp8(rgb[0]), _clamp8(rgb[1]), _clamp8(rgb[2])),
             brightness_factor=_clamp(brightness_factor),
             beat_boost=boost,
+            beat_id=beat_id,
             should_send=True,
             reason=reason,
             activity=activity,

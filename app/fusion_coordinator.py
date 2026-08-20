@@ -45,9 +45,11 @@ except through here.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -55,6 +57,17 @@ from app.color_stream import ColorStreamEngine
 from app.fusion_core import BaseSample, ComposedFrame, FusionCompositor, MusicModulation
 
 RGB = tuple[int, int, int]
+
+# How long a struck beat may wait for a write to carry it. The link paces itself
+# and can be busy, so a beat that missed its turn must not be shown late — a
+# strike arriving after the next one has already sounded reads as a stutter, and
+# one arriving seconds later, when a stalled screen comes back, reads as a
+# fault. Long enough to survive one paced write, short enough that it can only
+# ever be the beat currently sounding.
+_BEAT_HOLD_S = 0.15
+
+# How many recent beats the delay figures describe.
+_BEAT_DELAY_SAMPLES = 120
 
 
 class FusionCoordinator(QObject):
@@ -96,6 +109,16 @@ class FusionCoordinator(QObject):
         self._last_frame = ComposedFrame()
         self._dropped_screen = 0
         self._dropped_music = 0
+        # The strongest onset of the beat currently sounding, kept at its peak
+        # until a write has carried it. Without this a beat is sampled wherever
+        # the paced write happens to fall — on average two thirds of the way
+        # down its own decay, and in the worst phase under half.
+        self._held_beat: tuple[int, float] | None = None
+        self._hold_expires_at = 0.0
+        # When each waiting beat was captured, so the wait can be measured from
+        # the moment the sound was handed over rather than from the tick.
+        self._beat_struck_at: dict[int, float] = {}
+        self._beat_delays_ms: list[float] = []
         self._start_sources: Callable[[], tuple[int, int]] | None = None
         self._stop_sources: Callable[[], None] | None = None
         self._sink: Callable[..., None] | None = None
@@ -123,6 +146,9 @@ class FusionCoordinator(QObject):
         self._dropped_music = 0
         self._sink = sink
         self._initial = initial
+        self._held_beat = None
+        self._beat_struck_at = {}
+        self._beat_delays_ms = []
         self._timer.start()
 
     def stop(self) -> None:
@@ -178,6 +204,55 @@ class FusionCoordinator(QObject):
         """
         self._compositor.set_output_allowed(False)
         self._silence_engine()
+
+    def _deliver(self, red: int, green: int, blue: int, _token: int, beat_id: int) -> bool:
+        """Hand one colour to the strip and note which beat, if any, it carried.
+
+        Released on *acceptance*, not on the outcome: acceptance is the moment
+        the colour is on its way and the light will show it. Waiting for the
+        link's answer would hold the strike another few tens of milliseconds,
+        during which a newer beat would be suppressed by an older one.
+
+        A refused write releases nothing — the beat has not been shown, and it
+        keeps its turn until it is, or until it is too late to matter.
+        """
+        sink = self._sink
+        if sink is None:
+            return False
+        accepted = sink(red, green, blue)
+        if accepted is not False and beat_id:
+            struck_at = self._beat_struck_at.pop(beat_id, None)
+            if struck_at is not None:
+                delay = (self._clock() - struck_at) * 1000.0
+                self._beat_delays_ms.append(delay)
+                # A window, not a lifetime: what matters is how it is behaving
+                # now, and an unbounded list on a per-write path is a leak.
+                if len(self._beat_delays_ms) > _BEAT_DELAY_SAMPLES:
+                    del self._beat_delays_ms[:-_BEAT_DELAY_SAMPLES]
+            held = self._held_beat
+            if held is not None and held[0] == beat_id:
+                self._held_beat = None
+        return accepted
+
+    def beat_delays_ms(self) -> tuple[float, float, int]:
+        """How long a struck beat waited for a command to carry it: p50, p95, n.
+
+        Measured from the moment the audio block was handed over to the moment
+        the command was accepted. It is the part this application controls, and
+        it is *not* the delay a person hears: the device's own buffering before
+        the block arrived, the transport to the strip and the controller's own
+        reaction are all outside it and are not small.
+        """
+        samples = list(self._beat_delays_ms)
+        if not samples:
+            return (0.0, 0.0, 0)
+        ordered = sorted(samples)
+
+        def rank(fraction: float) -> float:
+            index = min(len(ordered), max(1, math.ceil(fraction * len(ordered))))
+            return ordered[index - 1]
+
+        return (round(rank(0.5), 1), round(rank(0.95), 1), len(ordered))
 
     def _silence_engine(self) -> None:
         """Cancel anything aimed but not yet written.
@@ -260,18 +335,71 @@ class FusionCoordinator(QObject):
             self._pending_base = base
 
     def submit_music(self, sample) -> None:
-        """Take an audio block as the modulation. Never sends anything."""
+        """Take an audio block as the modulation. Never sends anything.
+
+        The loudness is whatever arrived last, but the onset is the *strongest*
+        seen since the tick — they are different kinds of number and keeping
+        both as "latest" loses the beat before anything has looked at it.
+
+        Blocks arrive about every 21 ms and the tick composes about every 33, so
+        on a typical run one tick in three sees a peak of 1.0 replaced by the
+        next block's 0.82 before the frame is built. The strike was already a
+        fifth weaker than it should be, before the link had any say.
+        """
         if not sample.session_token or sample.session_token != self._music_token:
             self._dropped_music += 1
             return
-        modulation = MusicModulation(
-            level=sample.level,
-            beat_envelope=sample.beat_envelope,
-            at=sample.captured_at,
-            block_seconds=sample.block_seconds,
-        )
         with self._lock:
-            self._pending_music = modulation
+            previous = self._pending_music
+            envelope = float(sample.beat_envelope)
+            beat_id = int(sample.beat_id)
+            if (
+                previous is not None
+                and previous.beat_id == beat_id
+                and previous.beat_envelope > envelope
+            ):
+                # The same beat, further into its decay. Keep the peak; a newer
+                # beat replaces it outright, because that is what the ear hears.
+                envelope = previous.beat_envelope
+            self._pending_music = MusicModulation(
+                level=sample.level,
+                beat_envelope=envelope,
+                beat_id=beat_id,
+                at=sample.captured_at,
+                block_seconds=sample.block_seconds,
+            )
+            held = self._held_beat
+            if beat_id and (held is None or held[0] != beat_id):
+                # A beat that has not been held yet. A newer one replaces an
+                # older one outright: with the link busy the two cannot both be
+                # shown, and the one still sounding is the one worth showing.
+                self._held_beat = (beat_id, envelope)
+                self._hold_expires_at = self._clock() + _BEAT_HOLD_S
+                self._beat_struck_at = {beat_id: float(sample.captured_at)}
+            elif held is not None and held[0] == beat_id and envelope > held[1]:
+                self._held_beat = (beat_id, envelope)
+
+    def _with_held_beat(self, music: MusicModulation) -> MusicModulation:
+        """The modulation as composed, with a struck beat still at full strength.
+
+        The hold is on the *value*, not on a particular frame: the screen colour
+        keeps changing underneath and every frame composed while the hold lasts
+        carries the strike, so it does not matter which of them the paced write
+        happens to take. Holding one frame instead would simply let the engine
+        displace it with the next one.
+        """
+        held = self._held_beat
+        if held is None:
+            return music
+        if self._clock() >= self._hold_expires_at:
+            # Its moment has passed. Shown now it would land after the next beat
+            # had already sounded, or seconds late when a stalled screen returns.
+            self._held_beat = None
+            return music
+        beat_id, envelope = held
+        if music.beat_id != beat_id or music.beat_envelope >= envelope:
+            return music
+        return replace(music, beat_envelope=envelope)
 
     # ── the tick ──────────────────────────────────────────────────────
     def _tick(self) -> None:
@@ -283,7 +411,7 @@ class FusionCoordinator(QObject):
         if base is not None:
             self._compositor.submit_base(base)
         if music is not None:
-            self._compositor.submit_music(music)
+            self._compositor.submit_music(self._with_held_beat(music))
 
         frame = self._compositor.compose(beat_gain=self._beat_gain)
         self._last_frame = frame
@@ -304,8 +432,10 @@ class FusionCoordinator(QObject):
                 # and seeded with that frame. Restarting it when the light comes
                 # back on instead would put its starting colour — black — on the
                 # strip before the screen had been looked at.
-                self._engine.start(self._sink, initial=colour)
-            self._engine.set_target(*colour)
+                self._engine.start(self._deliver, initial=colour, labelled_sink=True)
+            # Labelled with the beat it carries, so the write's acceptance can
+            # release the hold for that beat and nothing else.
+            self._engine.set_target(*colour, 0, frame.beat_id)
         else:
             # Nothing should go out, including anything already aimed.
             self._silence_engine()

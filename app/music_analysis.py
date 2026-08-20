@@ -63,6 +63,13 @@ class Reading:
 
     level: float = 0.0
     beat: bool = False
+    # Which beat this envelope belongs to, counted from the start of the run.
+    #
+    # The envelope alone cannot say: a decaying value is indistinguishable from
+    # a weaker new one, so anything downstream that wants to know "is this still
+    # the beat I was waiting for" has nothing to compare. Zero until the first
+    # beat, and unchanged while one decays.
+    beat_id: int = 0
     envelope: float = 0.0
     silent: bool = True
     noise_floor: float = 0.0
@@ -109,6 +116,7 @@ class MusicAnalyzer:
         self._open = False
         self._share_avg = 0.0
         self._env = 0.0
+        self._beat_id = 0
         self._last_beat_ms: float | None = None
         self._seen = 0
         self.stats = AnalysisStats()
@@ -199,17 +207,29 @@ class MusicAnalyzer:
             # strip settles instead of pulsing on a beat that has passed.
             self._env = max(0.0, self._env * _ENVELOPE_DECAY)
             self.stats.silent_blocks += 1
-            return Reading(level=0.0, envelope=self._env, silent=True, noise_floor=floor)
+            return Reading(
+                level=0.0,
+                beat_id=self._beat_id,
+                envelope=self._env,
+                silent=True,
+                noise_floor=floor,
+            )
 
         beat = self._update_beat(bass, bass + mid + treble, now_ms)
         self._env = 1.0 if beat else max(0.0, self._env * _ENVELOPE_DECAY)
         if beat:
             self.stats.beats += 1
+            self._beat_id += 1
 
         level = normalize_above(rms, max(floor * _CLOSE_RATIO, manual_gate))
         self.stats.peak_level = max(self.stats.peak_level, level)
         return Reading(
-            level=level, beat=beat, envelope=self._env, silent=False, noise_floor=floor
+            level=level,
+            beat=beat,
+            beat_id=self._beat_id,
+            envelope=self._env,
+            silent=False,
+            noise_floor=floor,
         )
 
 

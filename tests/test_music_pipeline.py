@@ -406,3 +406,25 @@ def test_a_device_that_fails_mid_run_also_takes_its_profile_with_it() -> None:
 
     assert controller._analyzer.stats.blocks == 0
     assert controller._analyzer.stats.noise_floor == 0.0
+
+
+def test_each_beat_is_told_apart_from_the_one_before() -> None:
+    """A decaying envelope cannot say whether it is still the same strike or a
+    weaker new one. Anything holding a peak until it has been shown needs the
+    identity, and it has to actually advance."""
+    controller, options = _controller(beat_strength=1.0)
+    quiet_beat = [
+        (0.7 if index % 8 == 0 else 0.12, 0.14, 0.10, 0.030 + (0.004 if index % 8 == 0 else 0.0))
+        for index in range(200)
+    ]
+
+    with _Player(controller, options) as player:
+        results = player.play_results(quiet_beat)
+
+    ids = [result.beat_id for result in results]
+    assert ids == sorted(ids), "the identity went backwards"
+    assert max(ids) > 5, f"the beats were never told apart: {sorted(set(ids))}"
+    assert max(ids) == controller._analyzer.stats.beats
+
+    # And it stays put while a strike decays, rather than changing every block.
+    assert len(ids) > len(set(ids)), "a new identity on every block, beat or not"

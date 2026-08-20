@@ -143,6 +143,10 @@ class MusicModulationSample:
     captured_at: float = 0.0
     level: float = 0.0
     beat_envelope: float = 0.0
+    # Which beat the envelope belongs to. A composer holding a peak until it has
+    # been shown needs to know whether the value it is holding is still the same
+    # beat or has been overtaken by a newer one — a decaying envelope cannot say.
+    beat_id: int = 0
     block_seconds: float = 0.05
 
 
@@ -160,6 +164,7 @@ class BlockResult:
     rgb: tuple[int, int, int]
     level: float = 0.0
     beat_envelope: float = 0.0
+    beat_id: int = 0
 
 
 class MusicController(QObject):
@@ -506,7 +511,12 @@ class MusicController(QObject):
             colors=options.band_colors, saturation=options.saturation,
             floor_brightness=options.floor_brightness,
         )
-        return BlockResult(rgb=rgb, level=plain_level, beat_envelope=reading.envelope)
+        return BlockResult(
+            rgb=rgb,
+            level=plain_level,
+            beat_envelope=reading.envelope,
+            beat_id=reading.beat_id,
+        )
 
     @staticmethod
     def _frame_count(block) -> int:
@@ -562,6 +572,7 @@ class MusicController(QObject):
                         captured_at=captured_at,
                         level=result.level,
                         beat_envelope=result.beat_envelope,
+                        beat_id=result.beat_id,
                         block_seconds=frames / max(1, samplerate),
                     )
                 )

@@ -280,6 +280,19 @@ def _fusion_section(fusion: dict[str, Any] | None) -> list[str]:
         "(link busy, not a write error)",
         f"stream errors: {int(fusion.get('errors', 0) or 0)}",
     ]
+    delay = fusion.get("beat_delay")
+    if isinstance(delay, (tuple, list)) and len(delay) == 3 and delay[2]:
+        p50, p95, count = delay
+        # Named "software" on purpose. It measures from the audio block being
+        # handed over to the command being accepted — the part this application
+        # controls. The device's own buffering before that, the transport and the
+        # controller's reaction are outside it, and none of them is small.
+        lines.append(
+            f"beat -> command accepted (software): {p50} ms p50, {p95} ms p95, {count} beats"
+        )
+        lines.append(
+            "  excludes audio device buffering, BLE transport and the strip's own reaction"
+        )
     dropped_screen = int(fusion.get("dropped_screen_samples", 0) or 0)
     dropped_music = int(fusion.get("dropped_music_samples", 0) or 0)
     if dropped_screen or dropped_music:

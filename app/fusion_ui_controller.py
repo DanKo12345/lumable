@@ -346,6 +346,7 @@ class FusionUiController:
             "strip_brightness": self._strip_brightness(),
             "brightness_factor": round(frame.brightness_factor, 3),
             "beat_boost": round(frame.beat_boost, 3),
+            "beat_delay": self._coordinator.beat_delays_ms(),
             "music_activity": round(frame.activity, 3),
             "music_stale": frame.music_stale,
             "audio_lost": self.audio_lost(),
