@@ -58,13 +58,17 @@ from app.fusion_core import BaseSample, ComposedFrame, FusionCompositor, MusicMo
 
 RGB = tuple[int, int, int]
 
-# How long a struck beat may wait for a write to carry it. The link paces itself
-# and can be busy, so a beat that missed its turn must not be shown late — a
-# strike arriving after the next one has already sounded reads as a stutter, and
-# one arriving seconds later, when a stalled screen comes back, reads as a
-# fault. Long enough to survive one paced write, short enough that it can only
-# ever be the beat currently sounding.
-_BEAT_HOLD_S = 0.15
+# How long a struck beat may wait for a write to carry it, as a multiple of the
+# link's real cadence. Long enough that a refused attempt still leaves a second
+# one: a fixed 150 ms looked reasonable and was not, because the engine only
+# writes on a tick, so with a 70 ms interval and a 33 ms tick the attempts fall
+# at about 99 ms and 198 ms — the first refusal was the last chance.
+#
+# Nothing hangs on the far end of it: a newer beat replaces an older one
+# outright, so the only case that reaches the limit is a beat with no successor,
+# and showing that one late by a fifth of a second is better than not at all.
+_BEAT_HOLD_CADENCES = 2.2
+_MIN_BEAT_HOLD_S = 0.22
 
 # How many recent beats the delay figures describe.
 _BEAT_DELAY_SAMPLES = 120
@@ -115,6 +119,17 @@ class FusionCoordinator(QObject):
         # down its own decay, and in the worst phase under half.
         self._held_beat: tuple[int, float] | None = None
         self._hold_expires_at = 0.0
+        # The newest beat that has ever been held. A beat is armed once and
+        # never again: after it has been shown, or given up on, the blocks that
+        # follow still carry its id with a decaying envelope, and without this
+        # they would arm the same strike over and over — sending it repeatedly,
+        # smearing the tail into one long flare, and counting one strike several
+        # times in the delay figures.
+        self._latest_beat_id_seen = 0
+        # The engine writes only on a tick, so the real gap between attempts is
+        # the interval rounded up to whole ticks — 99 ms for the defaults, not 70.
+        cadence = math.ceil(max(1, send_interval_ms) / max(1, tick_ms)) * max(1, tick_ms)
+        self._beat_hold_s = max(_MIN_BEAT_HOLD_S, _BEAT_HOLD_CADENCES * cadence / 1000.0)
         # When each waiting beat was captured, so the wait can be measured from
         # the moment the sound was handed over rather than from the tick.
         self._beat_struck_at: dict[int, float] = {}
@@ -147,6 +162,7 @@ class FusionCoordinator(QObject):
         self._sink = sink
         self._initial = initial
         self._held_beat = None
+        self._latest_beat_id_seen = 0
         self._beat_struck_at = {}
         self._beat_delays_ms = []
         self._timer.start()
@@ -369,14 +385,16 @@ class FusionCoordinator(QObject):
                 block_seconds=sample.block_seconds,
             )
             held = self._held_beat
-            if beat_id and (held is None or held[0] != beat_id):
-                # A beat that has not been held yet. A newer one replaces an
-                # older one outright: with the link busy the two cannot both be
-                # shown, and the one still sounding is the one worth showing.
+            if beat_id > self._latest_beat_id_seen:
+                # A strike nobody has held yet. A newer one replaces an older
+                # one outright: with the link busy the two cannot both be shown,
+                # and the one still sounding is the one worth showing.
+                self._latest_beat_id_seen = beat_id
                 self._held_beat = (beat_id, envelope)
-                self._hold_expires_at = self._clock() + _BEAT_HOLD_S
+                self._hold_expires_at = self._clock() + self._beat_hold_s
                 self._beat_struck_at = {beat_id: float(sample.captured_at)}
             elif held is not None and held[0] == beat_id and envelope > held[1]:
+                # The same strike, arriving stronger than the block before it.
                 self._held_beat = (beat_id, envelope)
 
     def _with_held_beat(self, music: MusicModulation) -> MusicModulation:

@@ -1231,3 +1231,138 @@ def test_the_delay_window_does_not_grow_without_end(app) -> None:
         assert len(coordinator._beat_delays_ms) <= 120
     finally:
         coordinator.stop()
+
+
+def _settle_music(coordinator, clock, *, ticks: int = 40) -> None:
+    """Wind the music's influence in, so a strike actually produces a boost."""
+    for _ in range(ticks):
+        clock.advance(0.05)
+        _play_block(coordinator, clock, envelope=0.0, beat_id=0)
+        coordinator._tick()
+
+
+def test_a_beat_already_shown_is_not_armed_again_by_its_own_tail(app) -> None:
+    """The blocks after a strike still carry its id, with the envelope decaying.
+    Arming on those would send the same strike again and again — a tail smeared
+    into one long flare, and one physical beat counted several times as if the
+    link had carried several.
+    """
+    coordinator, clock, state = _beat_rig()
+    try:
+        _settle_music(coordinator, clock)
+
+        clock.advance(0.02)
+        _play_block(coordinator, clock, envelope=1.0, beat_id=1)
+        coordinator._tick()
+
+        deadline = time.monotonic() + 3.0
+        while not state["writes"] and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert state["writes"], "nothing carried the beat"
+        assert coordinator._held_beat is None, "acceptance did not end the turn"
+        carried = coordinator.beat_delays_ms()[2]
+
+        # The same beat, decaying, block after block.
+        boosts = []
+        for envelope in (0.82, 0.67, 0.55, 0.45, 0.37):
+            clock.advance(0.02)
+            _play_block(coordinator, clock, envelope=envelope, beat_id=1)
+            coordinator._tick()
+            boosts.append(coordinator.last_frame().beat_boost)
+            app.processEvents()
+
+        assert coordinator._held_beat is None, "the tail armed the strike again"
+        assert coordinator.beat_delays_ms()[2] == carried, (
+            "one strike was counted more than once"
+        )
+        assert boosts == sorted(boosts, reverse=True), f"the tail flared back up: {boosts}"
+        assert max(boosts) < 1.35, "the full impulse was sent a second time"
+    finally:
+        coordinator.stop()
+
+
+def test_a_beat_given_up_on_is_not_armed_again_either(app) -> None:
+    """After the hold has expired the same id must stay expired. Otherwise the
+    next block revives a strike the code has just decided was too late."""
+    coordinator, clock, _state = _beat_rig(accept=False)
+    try:
+        _settle_music(coordinator, clock)
+
+        clock.advance(0.02)
+        _play_block(coordinator, clock, envelope=1.0, beat_id=1)
+        coordinator._tick()
+        assert coordinator._held_beat is not None
+
+        clock.advance(5.0)
+        _play_block(coordinator, clock, envelope=0.3, beat_id=1)
+        coordinator._tick()
+        assert coordinator._held_beat is None, "the stale strike was still waiting"
+
+        clock.advance(0.02)
+        _play_block(coordinator, clock, envelope=0.25, beat_id=1)
+        coordinator._tick()
+
+        assert coordinator._held_beat is None, "a strike given up on was revived"
+    finally:
+        coordinator.stop()
+
+
+def test_a_refused_attempt_still_leaves_the_beat_a_second_one(app) -> None:
+    """The engine writes only on a tick, so with a 70 ms interval and a 33 ms
+    tick the attempts fall about 99 ms apart. A hold shorter than two of those
+    means the first refusal is the last chance — which a fixed 150 ms was."""
+    coordinator, clock, state = _beat_rig()
+    try:
+        assert coordinator._beat_hold_s >= 0.2, coordinator._beat_hold_s
+        _settle_music(coordinator, clock)
+
+        state["accept"] = False
+        clock.advance(0.02)
+        _play_block(coordinator, clock, envelope=1.0, beat_id=1)
+        coordinator._tick()
+
+        deadline = time.monotonic() + 3.0
+        while state["attempts"] == 0 and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert state["attempts"] >= 1 and not state["writes"], "the refusal never happened"
+
+        # The link frees up, and the beat is still waiting at full strength.
+        state["accept"] = True
+        clock.advance(0.02)
+        _play_block(coordinator, clock, envelope=0.55, beat_id=1)
+        coordinator._tick()
+        carried = coordinator.last_frame().beat_boost
+
+        deadline = time.monotonic() + 3.0
+        while not state["writes"] and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+    finally:
+        coordinator.stop()
+
+    assert state["writes"], "the second attempt never came"
+    assert carried == pytest.approx(1.35, abs=0.02), (
+        f"the beat arrived weakened after the refusal: boost {carried}"
+    )
+    assert coordinator.beat_delays_ms()[2] == 1, "the strike was counted more than once"
+
+
+def test_the_hold_is_measured_against_the_real_gap_between_attempts() -> None:
+    """Not against the interval. The engine writes only on a tick, so a 100 ms
+    interval on a 33 ms tick really means 132 ms between attempts, and a hold
+    sized from the interval alone would again leave a refusal with no second
+    chance. Checked where the floor does not hide it.
+    """
+    import math
+
+    for tick, interval in ((33, 70), (33, 100), (33, 200), (16, 70)):
+        coordinator = FusionCoordinator(tick_ms=tick, send_interval_ms=interval)
+        cadence_ms = math.ceil(interval / tick) * tick
+
+        assert coordinator._beat_hold_s * 1000.0 >= 2 * cadence_ms, (
+            f"tick {tick} interval {interval}: a hold of "
+            f"{coordinator._beat_hold_s * 1000:.0f} ms cannot outlast two "
+            f"attempts {cadence_ms} ms apart"
+        )
