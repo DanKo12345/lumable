@@ -649,6 +649,31 @@ def test_the_softest_strike_still_registers() -> None:
     )
 
 
+def test_the_baseline_rises_to_meet_the_bass_rather_than_jumping_to_it() -> None:
+    """Two blocks are enough to show it, and a run really can start this way.
+
+    The first block of a run seeds the level, and if that block is quiet the
+    level is zero. Re-seeding whenever the level *happens* to be zero then
+    hands the whole of the next block's bass to the baseline in one step — and
+    a level that has already jumped to a strike leaves that strike no attack at
+    all, so the hardest kick in the track registers as the softest.
+
+    The block-size test above cannot see this: a jump gives the same wrong
+    answer at every block size, and that test compares them with each other.
+    """
+    from app.music_analysis import MusicAnalyzer
+
+    analyzer = MusicAnalyzer()
+    analyzer.feed(bass=0.0, mid=0.0, treble=0.0, rms=0.0, now_ms=0.0)
+    assert analyzer._bass_baseline == 0.0, "the first block did not seed the level"
+
+    analyzer.feed(bass=4.0, mid=1.0, treble=1.0, rms=0.05, now_ms=21.3)
+
+    assert 0.0 < analyzer._bass_baseline < 4.0, (
+        f"the level jumped straight to {analyzer._bass_baseline} instead of rising"
+    )
+
+
 def test_the_baseline_follows_time_and_not_the_number_of_blocks() -> None:
     """A device is free to hand over 512 frames at a time or 4096. That is a
     fact about the sound card, not about the music.
