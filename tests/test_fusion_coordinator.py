@@ -1439,11 +1439,26 @@ def test_an_accent_reaches_the_strip_as_a_brighter_write(app, screen, music) -> 
     pytest.importorskip("numpy")
     audio = _ScriptedAudio()
     written: list[tuple[tuple[int, int, int], int]] = []
-    coordinator = FusionCoordinator(tick_ms=20, send_interval_ms=40)
 
-    def sink(red, green, blue, *_labels):
-        frame = coordinator.last_frame()
-        written.append(((red, green, blue), frame.beat_id))
+    class _Watched(FusionCoordinator):
+        """Reads the label off the command itself, not off the latest frame.
+
+        The engine smooths and sends a colour some time after the frame it came
+        from was composed, so asking the coordinator which beat is current at
+        the moment of the write can name the following one. The command already
+        carries its own label; recording that is the only way the colour and the
+        strike are certainly the same event.
+        """
+
+        def _deliver(self, red, green, blue, token, beat_id):
+            accepted = super()._deliver(red, green, blue, token, beat_id)
+            if accepted is not False:
+                written.append(((red, green, blue), beat_id))
+            return accepted
+
+    coordinator = _Watched(tick_ms=20, send_interval_ms=40)
+
+    def sink(_red, _green, _blue, *_labels):
         return True
 
     monkey = MusicController._open_loopback_reader

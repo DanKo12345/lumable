@@ -92,9 +92,10 @@ _TYPICAL_ATTACK_RATE = 0.2
 # between runs, not across a change made during one. Turning Windows up by half
 # while music plays doubles every attack at once, and until "typical" has caught
 # up the same drum reads harder: measured at 1.00, 0.91, 0.83 and so on back
-# down to 0.65 over the following strikes. Left as it is on purpose — it is a
-# handful of beats after an act the person themselves performed, and the cure
-# would be to stop adapting, which is what makes the accent visible at all.
+# down to 0.65 over the following strikes. An accepted residual case: it is a
+# handful of beats after an act the person themselves performed. Compensating
+# for the global gain — tracking it separately, or measuring the kick's
+# prominence against the whole mix — is outside this change, not impossible.
 #
 # The first strike of a run has nothing to be compared with. Neither extreme is
 # honest — full strength says "as hard as it gets" on no evidence, and nothing
