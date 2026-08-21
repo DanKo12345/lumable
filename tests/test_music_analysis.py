@@ -105,7 +105,10 @@ def test_the_envelope_keeps_falling_in_silence() -> None:
         _block(analyzer, bass=0.2, mid=0.2, treble=0.2, rms=0.1, now=now + index * 20)
     now += 200
     hit = _block(analyzer, bass=0.9, mid=0.05, treble=0.05, rms=0.12, now=now)
-    assert hit.beat and hit.envelope == 1.0
+    # Some strength, not full: how hard a strike registers now depends on how it
+    # compares with the ones around it, and this is the first of the run. What
+    # this test is about is what happens *after* it.
+    assert hit.beat and hit.envelope > 0.0
     now += 200
 
     first = _block(analyzer, bass=0.0, mid=0.0, treble=0.0, rms=0.0, now=now)

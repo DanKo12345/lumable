@@ -51,6 +51,31 @@ _MAX_FLOOR = 0.008
 # recent share, at least.
 _BEAT_RATIO = 1.28
 _SHARE_RATE = 0.08
+
+# How hard it was struck, and how that becomes a number.
+#
+# Measured as the *attack* — how far the low band rose above what it had been
+# sitting at — and never as the low band itself. That band holds a sustained
+# sub, a bass line and the bottom of a male voice as well as the drum, so a
+# track with a heavy bass line and a soft kick would flash at full strength for
+# the bass alone.
+_BASS_BASELINE_RATE = 0.08
+# The strongest attack recently heard, which is what the current one is measured
+# against. Halves in this many seconds: slow enough that a hard strike still
+# stands out against the softer ones around it, quick enough that a quiet track
+# following a loud one is not left flashing at nothing for a minute.
+ATTACK_PEAK_HALFLIFE_S = 4.0
+# Raised only by attacks. Following every block would let a loud sustained
+# passage set the bar that the drums are then judged against.
+#
+# The first strike of a run has nothing to be compared with. Neither extreme is
+# honest — full strength says "as hard as it gets" on no evidence, and nothing
+# says the opposite — so it is given a middling one and sets the bar for what
+# follows.
+FIRST_BEAT_STRENGTH = 0.65
+# The softest a strike can register. A beat that registered as nothing would
+# leave the rhythm unreadable, which is the opposite of the point.
+MIN_BEAT_STRENGTH = 0.25
 # The shortest gap between two beats. Fast enough for 200 bpm, slow enough that
 # one kick cannot be counted three times.
 MIN_BEAT_GAP_MS = 110.0
@@ -117,6 +142,9 @@ class MusicAnalyzer:
         self._share_avg = 0.0
         self._env = 0.0
         self._beat_id = 0
+        self._bass_baseline = 0.0
+        self._attack_peak = 0.0
+        self._peak_ms: float | None = None
         self._last_beat_ms: float | None = None
         self._seen = 0
         self.stats = AnalysisStats()
@@ -184,6 +212,35 @@ class MusicAnalyzer:
             self._last_beat_ms = now_ms
         return beat
 
+    def _decay_attack_peak(self, now_ms: float) -> None:
+        """Let the bar fall with time, so a loud passage does not set it for good."""
+        if self._peak_ms is None:
+            self._peak_ms = now_ms
+            return
+        elapsed = max(0.0, now_ms - self._peak_ms) / 1000.0
+        self._peak_ms = now_ms
+        if self._attack_peak > 0.0 and elapsed > 0.0:
+            self._attack_peak *= 0.5 ** (elapsed / ATTACK_PEAK_HALFLIFE_S)
+
+    def _strength_of(self, attack: float) -> float:
+        """How hard this strike was, against the hardest heard recently.
+
+        Relative rather than absolute: the volume of the machine, of the track
+        and of the room all scale the numbers, and none of them is a statement
+        about the music. What survives scaling is how this strike compares with
+        its neighbours, which is what a person hears as a hard beat.
+        """
+        if attack <= 0.0:
+            return MIN_BEAT_STRENGTH
+        if self._attack_peak <= 0.0:
+            self._attack_peak = attack
+            return FIRST_BEAT_STRENGTH
+        relative = min(1.0, attack / self._attack_peak)
+        # Raised by strikes only, and only upward: this is the hardest recently
+        # heard, and time is what brings it back down.
+        self._attack_peak = max(self._attack_peak, attack)
+        return MIN_BEAT_STRENGTH + (1.0 - MIN_BEAT_STRENGTH) * relative
+
     # ── one block ─────────────────────────────────────────────────────
     def feed(
         self,
@@ -215,11 +272,23 @@ class MusicAnalyzer:
                 noise_floor=floor,
             )
 
+        # Taken before the baseline is moved, or the strike would be measured
+        # against a level it has itself just raised.
+        attack = max(0.0, bass - self._bass_baseline)
+        self._decay_attack_peak(now_ms)
+
         beat = self._update_beat(bass, bass + mid + treble, now_ms)
-        self._env = 1.0 if beat else max(0.0, self._env * _ENVELOPE_DECAY)
+        if self._bass_baseline <= 0.0:
+            self._bass_baseline = bass
+        else:
+            self._bass_baseline += (bass - self._bass_baseline) * _BASS_BASELINE_RATE
+
         if beat:
+            self._env = self._strength_of(attack)
             self.stats.beats += 1
             self._beat_id += 1
+        else:
+            self._env = max(0.0, self._env * _ENVELOPE_DECAY)
 
         level = normalize_above(rms, max(floor * _CLOSE_RATIO, manual_gate))
         self.stats.peak_level = max(self.stats.peak_level, level)

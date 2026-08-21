@@ -428,3 +428,191 @@ def test_each_beat_is_told_apart_from_the_one_before() -> None:
 
     # And it stays put while a strike decays, rather than changing every block.
     assert len(ids) > len(set(ids)), "a new identity on every block, beat or not"
+
+
+# ── how hard it was struck ────────────────────────────────────────────
+class _Strikes:
+    """Drives the analyser directly, one block at a time, on a clock we own.
+
+    The strength lives in the analyser, and these are claims about it rather
+    than about the colour it eventually becomes.
+    """
+
+    def __init__(self, *, bed: float = 0.1, mid: float = 1.0, treble: float = 1.0) -> None:
+        from app.music_analysis import MusicAnalyzer
+
+        self.analyzer = MusicAnalyzer()
+        self._bed = bed
+        self._mid = mid
+        self._treble = treble
+        self._now_ms = 0.0
+        self.scale = 1.0
+
+    def quiet(self, blocks: int = 6, *, bed: float | None = None) -> None:
+        for _ in range(blocks):
+            self._feed(self._bed if bed is None else bed)
+
+    def strike(self, peak: float, *, bed: float | None = None) -> float | None:
+        """One block at ``peak``. Returns the envelope, or None if unheard."""
+        self.quiet(6, bed=bed)
+        reading = self._feed(peak)
+        return reading.envelope if reading.beat else None
+
+    def _feed(self, bass: float):
+        reading = self.analyzer.feed(
+            bass=bass * self.scale,
+            mid=self._mid * self.scale,
+            treble=self._treble * self.scale,
+            rms=0.05 * self.scale,
+            now_ms=self._now_ms,
+        )
+        self._now_ms += 21.3
+        return reading
+
+    def warm_up(self, peak: float, times: int = 4) -> None:
+        """Establish what a hard strike sounds like, as the first bars do."""
+        self.quiet(20)
+        for _ in range(times):
+            self.strike(peak)
+
+
+def test_a_harder_strike_registers_harder() -> None:
+    """The complaint this answers: every beat came out at full strength, so a
+    track that hits hard looked the same as one that taps."""
+    strikes = _Strikes()
+    strikes.warm_up(4.0)
+
+    weak = strikes.strike(0.6)
+    medium = strikes.strike(1.6)
+    strong = strikes.strike(4.0)
+
+    assert None not in (weak, medium, strong), "a strike went unheard"
+    assert weak < medium < strong, f"{weak} / {medium} / {strong}"
+
+
+def test_the_strength_survives_the_volume_being_changed() -> None:
+    """Half as loud or twice as loud is a fact about the machine, not about the
+    music. What a person hears as a hard beat is how it compares with its
+    neighbours, and that has to be what survives."""
+    readings = {}
+    for scale in (0.5, 1.0, 2.0):
+        strikes = _Strikes()
+        strikes.scale = scale
+        strikes.warm_up(4.0)
+        readings[scale] = (strikes.strike(0.6), strikes.strike(1.6), strikes.strike(4.0))
+
+    assert readings[0.5] == pytest.approx(readings[1.0], abs=0.01)
+    assert readings[2.0] == pytest.approx(readings[1.0], abs=0.01)
+
+
+def test_a_sustained_bass_line_does_not_pass_for_a_hard_strike() -> None:
+    """The low band holds a sub, a bass line and the bottom of a voice as well
+    as the drum. Measured as the whole band, a track with a heavy bass line and
+    a soft kick flashes at full strength for the bass alone — so it is measured
+    as the *rise* above what the band was already sitting at.
+
+    The kick here reaches a *higher* absolute level than the ones it is compared
+    with, and must still read as the softer strike, because it is.
+    """
+    strikes = _Strikes()
+    strikes.warm_up(2.4)
+    hard = strikes.strike(2.4)
+
+    # The sub enters and stays. The kick on top of it peaks higher than before.
+    strikes.quiet(8, bed=1.5)
+    strikes.strike(2.6, bed=1.5)
+    over_the_sub = strikes.strike(2.6, bed=1.5)
+
+    assert hard is not None and over_the_sub is not None
+    assert over_the_sub < hard * 0.85, (
+        f"a higher absolute level read as hard as a bigger attack: "
+        f"{over_the_sub} against {hard}"
+    )
+
+
+def test_a_soft_strike_after_a_hard_one_stays_soft() -> None:
+    strikes = _Strikes()
+    strikes.warm_up(4.0)
+
+    hard = strikes.strike(4.0)
+    soft = strikes.strike(0.6)
+    hard_again = strikes.strike(4.0)
+
+    assert soft < hard
+    assert hard_again > soft
+    assert hard_again == pytest.approx(hard, abs=0.05), "the hard strikes drifted apart"
+
+
+def test_the_first_strike_of_a_run_is_neither_extreme() -> None:
+    """It has nothing to be compared with. Full strength claims "as hard as it
+    gets" on no evidence; nothing claims the opposite."""
+    from app.music_analysis import FIRST_BEAT_STRENGTH
+
+    strikes = _Strikes()
+    strikes.quiet(20)
+
+    first = strikes.strike(4.0)
+
+    assert first == pytest.approx(FIRST_BEAT_STRENGTH, abs=0.01)
+
+
+def test_the_strength_stays_inside_the_range_a_frame_can_carry() -> None:
+    from app.music_analysis import MIN_BEAT_STRENGTH
+
+    strikes = _Strikes()
+    strikes.warm_up(1.0)
+    seen = [strikes.strike(peak) for peak in (0.2, 0.5, 1.0, 4.0, 40.0, 400.0)]
+
+    for envelope in seen:
+        if envelope is not None:
+            assert MIN_BEAT_STRENGTH - 1e-9 <= envelope <= 1.0, envelope
+
+
+def test_starting_over_forgets_how_hard_the_last_track_hit() -> None:
+    """A quiet track after a loud one must not be judged by the loud one."""
+    strikes = _Strikes()
+    strikes.warm_up(40.0)
+    assert strikes.strike(1.0) is not None
+
+    strikes.analyzer.reset()
+    strikes.quiet(20)
+
+    from app.music_analysis import FIRST_BEAT_STRENGTH
+
+    assert strikes.strike(1.0) == pytest.approx(FIRST_BEAT_STRENGTH, abs=0.01)
+
+
+def test_a_quiet_track_after_a_loud_one_flashes_again_before_long() -> None:
+    """The bar is the hardest strike heard recently, and "recently" has to end.
+    Held for good, a quiet track following a loud one would tap along at the
+    floor for as long as it played."""
+    from app.music_analysis import ATTACK_PEAK_HALFLIFE_S
+
+    strikes = _Strikes()
+    strikes.warm_up(40.0)
+    right_after = strikes.strike(2.0)
+
+    # Several half-lives of the track going on without a hard strike.
+    strikes.quiet(int(ATTACK_PEAK_HALFLIFE_S * 4 * 1000 / 21.3))
+    much_later = strikes.strike(2.0)
+
+    assert right_after is not None and much_later is not None
+    assert much_later > right_after + 0.2, (
+        f"the bar never came down: {right_after} then {much_later}"
+    )
+
+
+def test_the_softest_strike_still_registers() -> None:
+    """A beat that showed as nothing would leave the rhythm unreadable, which is
+    the opposite of the point. Soft is soft, not absent."""
+    from app.music_analysis import MIN_BEAT_STRENGTH
+
+    strikes = _Strikes()
+    strikes.warm_up(40.0)
+
+    barely = strikes.strike(0.5)
+
+    assert barely is not None, "the soft strike went unheard entirely"
+    assert barely == pytest.approx(MIN_BEAT_STRENGTH, abs=0.02), (
+        f"a strike far below the bar came out at {barely}, not the floor"
+    )
