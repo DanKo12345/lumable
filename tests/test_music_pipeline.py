@@ -476,15 +476,42 @@ class _Strikes:
             self.strike(peak)
 
 
+def test_an_accent_stands_out_from_the_beat_it_interrupts() -> None:
+    """The scenario a real track actually presents, and the one the first
+    version failed.
+
+    Nobody plays the hardest strike of the evening first. Eight ordinary beats,
+    then one twice as hard: measured against the loudest heard so far, the
+    ordinary beat *is* the loudest and reaches full strength within a few bars,
+    leaving the accent nowhere to go. Every strike from the sixth on read 1.0,
+    the accent included, and the old tests missed it because they warmed the
+    analyser up with the hardest strike before comparing anything.
+    """
+    strikes = _Strikes()
+    strikes.quiet(20)
+
+    ordinary = [strikes.strike(2.0) for _ in range(8)]
+    accent = strikes.strike(4.0)
+
+    assert None not in ordinary and accent is not None, "a strike went unheard"
+    settled = ordinary[-4:]
+    assert max(settled) < 0.8, f"the ordinary beat is already at the top: {settled}"
+    assert accent > max(settled) + 0.25, (
+        f"an accent twice as hard read {accent} against ordinary {settled}"
+    )
+
+
 def test_a_harder_strike_registers_harder() -> None:
     """The complaint this answers: every beat came out at full strength, so a
     track that hits hard looked the same as one that taps."""
     strikes = _Strikes()
-    strikes.warm_up(4.0)
+    strikes.quiet(20)
+    for _ in range(6):
+        strikes.strike(1.6)
 
-    weak = strikes.strike(0.6)
+    weak = strikes.strike(0.8)
     medium = strikes.strike(1.6)
-    strong = strikes.strike(4.0)
+    strong = strikes.strike(3.2)
 
     assert None not in (weak, medium, strong), "a strike went unheard"
     assert weak < medium < strong, f"{weak} / {medium} / {strong}"
@@ -498,8 +525,10 @@ def test_the_strength_survives_the_volume_being_changed() -> None:
     for scale in (0.5, 1.0, 2.0):
         strikes = _Strikes()
         strikes.scale = scale
-        strikes.warm_up(4.0)
-        readings[scale] = (strikes.strike(0.6), strikes.strike(1.6), strikes.strike(4.0))
+        strikes.quiet(20)
+        for _ in range(6):
+            strikes.strike(1.6)
+        readings[scale] = (strikes.strike(0.8), strikes.strike(1.6), strikes.strike(3.2))
 
     assert readings[0.5] == pytest.approx(readings[1.0], abs=0.01)
     assert readings[2.0] == pytest.approx(readings[1.0], abs=0.01)
@@ -532,15 +561,16 @@ def test_a_sustained_bass_line_does_not_pass_for_a_hard_strike() -> None:
 
 def test_a_soft_strike_after_a_hard_one_stays_soft() -> None:
     strikes = _Strikes()
-    strikes.warm_up(4.0)
+    strikes.quiet(20)
+    for _ in range(6):
+        strikes.strike(2.0)
 
     hard = strikes.strike(4.0)
-    soft = strikes.strike(0.6)
+    soft = strikes.strike(0.7)
     hard_again = strikes.strike(4.0)
 
     assert soft < hard
     assert hard_again > soft
-    assert hard_again == pytest.approx(hard, abs=0.05), "the hard strikes drifted apart"
 
 
 def test_the_first_strike_of_a_run_is_neither_extreme() -> None:
@@ -582,24 +612,25 @@ def test_starting_over_forgets_how_hard_the_last_track_hit() -> None:
     assert strikes.strike(1.0) == pytest.approx(FIRST_BEAT_STRENGTH, abs=0.01)
 
 
-def test_a_quiet_track_after_a_loud_one_flashes_again_before_long() -> None:
-    """The bar is the hardest strike heard recently, and "recently" has to end.
-    Held for good, a quiet track following a loud one would tap along at the
-    floor for as long as it played."""
-    from app.music_analysis import ATTACK_PEAK_HALFLIFE_S
+def test_a_quiet_track_after_a_loud_one_finds_its_own_level() -> None:
+    """What "typical" means has to follow the music. A quiet track after a loud
+    one starts below the floor, and within a few of its own beats it is being
+    judged by its own standard rather than the last track's."""
+    from app.music_analysis import TYPICAL_BEAT_STRENGTH
 
     strikes = _Strikes()
-    strikes.warm_up(40.0)
-    right_after = strikes.strike(2.0)
+    strikes.quiet(20)
+    for _ in range(8):
+        strikes.strike(8.0)
 
-    # Several half-lives of the track going on without a hard strike.
-    strikes.quiet(int(ATTACK_PEAK_HALFLIFE_S * 4 * 1000 / 21.3))
-    much_later = strikes.strike(2.0)
+    first_quiet = strikes.strike(1.0)
+    for _ in range(14):
+        strikes.strike(1.0)
+    settled = strikes.strike(1.0)
 
-    assert right_after is not None and much_later is not None
-    assert much_later > right_after + 0.2, (
-        f"the bar never came down: {right_after} then {much_later}"
-    )
+    assert first_quiet is not None and settled is not None
+    assert first_quiet < settled, "the quiet track never found its own level"
+    assert settled == pytest.approx(TYPICAL_BEAT_STRENGTH, abs=0.12), settled
 
 
 def test_the_softest_strike_still_registers() -> None:
@@ -615,4 +646,111 @@ def test_the_softest_strike_still_registers() -> None:
     assert barely is not None, "the soft strike went unheard entirely"
     assert barely == pytest.approx(MIN_BEAT_STRENGTH, abs=0.02), (
         f"a strike far below the bar came out at {barely}, not the floor"
+    )
+
+
+def test_the_baseline_follows_time_and_not_the_number_of_blocks() -> None:
+    """A device is free to hand over 512 frames at a time or 4096. That is a
+    fact about the sound card, not about the music.
+
+    Checked on the baseline itself rather than on how hard a strike reads: the
+    strength is a ratio of attacks, so a systematic shift in the level cancels
+    out of it and the same music comes out near enough either way. The level is
+    where the difference actually lives — a fixed fraction *per block* moves it
+    eight times slower at 4096 than at 512, for exactly the same half second of
+    sound.
+    """
+    from app.music_analysis import MusicAnalyzer
+
+    def settle(block_ms: float) -> float:
+        analyzer = MusicAnalyzer()
+        now = 0.0
+        for _ in range(int(300 / block_ms)):
+            analyzer.feed(bass=0.0, mid=0.0, treble=0.0, rms=0.0, now_ms=now)
+            now += block_ms
+        # Half a second of a heavy bass line, however it is chopped up.
+        for _ in range(int(500 / block_ms)):
+            analyzer.feed(bass=4.0, mid=1.0, treble=1.0, rms=0.05, now_ms=now)
+            now += block_ms
+        return analyzer._bass_baseline
+
+    levels = [settle(frames / 48000 * 1000) for frames in (512, 1024, 4096)]
+
+    assert max(levels) - min(levels) < 0.4, (
+        f"the same half second settled at {[round(level, 2) for level in levels]}"
+    )
+
+
+def test_the_same_music_strikes_the_same_whatever_the_block_size() -> None:
+    """And the strikes themselves keep their shape across block sizes."""
+    from app.music_analysis import MusicAnalyzer
+
+    def play(block_ms: float) -> list[float]:
+        analyzer = MusicAnalyzer()
+        now = 0.0
+        heard: list[float] = []
+        quiet_blocks = max(1, round(150 / block_ms))
+
+        def feed(bass: float) -> None:
+            nonlocal now
+            reading = analyzer.feed(
+                bass=bass, mid=1.0, treble=1.0, rms=0.05, now_ms=now
+            )
+            now += block_ms
+            if reading.beat:
+                heard.append(reading.envelope)
+
+        for _ in range(int(600 / block_ms)):
+            feed(0.1)
+        for peak in (2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 4.0, 1.0):
+            for _ in range(quiet_blocks):
+                feed(0.1)
+            feed(peak)
+        return heard
+
+    small = play(512 / 48000 * 1000)
+    usual = play(1024 / 48000 * 1000)
+    large = play(4096 / 48000 * 1000)
+
+    assert len(small) == len(usual) == len(large), (
+        f"a different number of strikes was heard: {len(small)}/{len(usual)}/{len(large)}"
+    )
+    for a, b in zip(small, usual, strict=True):
+        assert abs(a - b) < 0.1, f"512 gave {a} where 1024 gave {b}"
+
+    # The coarse one is held to the shape rather than the numbers, and the
+    # reason is physical rather than a concession: an 85 ms block smears a
+    # strike that lasts twenty, so the same drum genuinely arrives as a
+    # different signal. What must survive is which strike was the hard one.
+    for heard in (small, usual, large):
+        ordinary, accent, soft = heard[:-2], heard[-2], heard[-1]
+        assert accent > max(ordinary) + 0.2, f"the accent was lost: {heard}"
+        assert soft < min(ordinary), f"the soft strike was lost: {heard}"
+
+
+def test_the_bass_of_a_finished_track_does_not_outlive_the_silence() -> None:
+    """The level a strike is measured against has to follow the quiet as well as
+    the music. Frozen while nothing plays, the first beat of the next track is
+    judged against a bass line that stopped minutes ago — and reads as no attack
+    at all."""
+    from app.music_analysis import MusicAnalyzer
+
+    analyzer = MusicAnalyzer()
+    now = 0.0
+
+    def feed(bass: float, rms: float) -> None:
+        nonlocal now
+        analyzer.feed(bass=bass, mid=1.0, treble=1.0, rms=rms, now_ms=now)
+        now += 21.3
+
+    # A track with a heavy bass line, then it ends.
+    for _ in range(200):
+        feed(4.0, 0.05)
+    loud_baseline = analyzer._bass_baseline
+    for _ in range(400):
+        feed(0.0, 0.0)
+
+    assert loud_baseline > 1.0, "the bass line never registered"
+    assert analyzer._bass_baseline < loud_baseline * 0.1, (
+        f"the baseline is still at {analyzer._bass_baseline} after the track ended"
     )

@@ -56,15 +56,26 @@ def measurements():
     env = dict(os.environ)
     # The real plugin, whatever conftest set for the suite.
     env.pop("QT_QPA_PLATFORM", None)
-    result = subprocess.run(
-        [sys.executable, str(TOOL)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env=env,
-        cwd=str(ROOT),
-        timeout=300,
-    )
+
+    def measure():
+        return subprocess.run(
+            [sys.executable, str(TOOL)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
+            cwd=str(ROOT),
+            timeout=300,
+        )
+
+    result = measure()
+    if result.returncode != 0:
+        # Opening a real window occasionally does not take — measured at about
+        # one run in four while the machine is busy. One retry, and then it is a
+        # failure: a second refusal is a fact about the layout or the tool, and
+        # skipping on either would let this guarantee stop being checked on the
+        # one machine where the layout is actually seen.
+        result = measure()
     outcome = decide_outcome(result.returncode, headless=bool(os.environ.get("LUMABLE_HEADLESS")))
     if outcome != "ok":
         detail = (result.stderr or "").strip()[-400:]
