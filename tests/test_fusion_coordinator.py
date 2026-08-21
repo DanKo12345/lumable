@@ -1366,3 +1366,124 @@ def test_the_hold_is_measured_against_the_real_gap_between_attempts() -> None:
             f"{coordinator._beat_hold_s * 1000:.0f} ms cannot outlast two "
             f"attempts {cadence_ms} ms apart"
         )
+
+
+# ── from the sound to the bytes on the wire ───────────────────────────
+class _ScriptedAudio:
+    """A capture device playing a bed with kicks, one of them twice as hard.
+
+    Paced at roughly the real block duration, because the beat cooldown is
+    counted in wall-clock milliseconds: handed blocks as fast as the loop can
+    take them, every strike after the first would fall inside it.
+    """
+
+    RATE = 48000
+    FRAMES = 1024
+
+    def __init__(self, *, before: int = 7, after: int = 4) -> None:
+        self.script: list[float] = []
+        for _ in range(40):
+            self.script.append(0.0)          # settle the floor and the baseline
+        for _ in range(before):
+            self.script.extend([0.0] * 6)
+            self.script.append(1.0)          # an ordinary kick
+        self.script.extend([0.0] * 6)
+        self.script.append(2.0)              # the accent, in the middle
+        self.accent_position = before
+        for _ in range(after):
+            self.script.extend([0.0] * 6)
+            self.script.append(1.0)
+        self.script.extend([0.0] * 12)
+        self._index = 0
+
+    def _block(self, kick: float):
+        import numpy as np
+
+        # The bed is loud on purpose. Loudness alone already brightens a frame
+        # through the level modulation, so a quiet bed would let this test pass
+        # on volume and prove nothing about how hard the beat was struck. Held
+        # above the normalisation ceiling, the level is pinned at one for every
+        # sounding block and only the strike can tell the writes apart. It sits
+        # at 440/880 Hz, clear of the 35-120 Hz band, so it does not raise the
+        # baseline the attack is measured against.
+        t = np.arange(self.FRAMES) / self.RATE
+        bed = 0.40 * (np.sin(2 * np.pi * 440 * t) + 0.6 * np.sin(2 * np.pi * 880 * t))
+        if kick > 0.0:
+            bed = bed + kick * 0.9 * np.exp(-t * 45.0) * (
+                np.sin(2 * np.pi * 55 * t) + 0.6 * np.sin(2 * np.pi * 90 * t)
+            )
+        return np.column_stack((bed, bed)).astype(np.float32)
+
+    def reader(self, _options):
+        def read(_size):
+            time.sleep(self.FRAMES / self.RATE)
+            kick = self.script[min(self._index, len(self.script) - 1)]
+            self._index += 1
+            return self._block(kick)
+
+        return read, lambda: None, self.RATE
+
+    def finished(self) -> bool:
+        return self._index >= len(self.script)
+
+
+def test_an_accent_reaches_the_strip_as_a_brighter_write(app, screen, music) -> None:
+    """The whole chain, from a struck drum to the bytes handed to the link.
+
+    The analyser is tested on how hard a strike registers, and the compositor on
+    what it does with that number, but neither says the two are joined up. This
+    plays real sound through the real capture, the real analysis and the real
+    coordinator, and looks only at what the BLE layer was actually asked to
+    write.
+    """
+    pytest.importorskip("numpy")
+    audio = _ScriptedAudio()
+    written: list[tuple[tuple[int, int, int], int]] = []
+    coordinator = FusionCoordinator(tick_ms=20, send_interval_ms=40)
+
+    def sink(red, green, blue, *_labels):
+        frame = coordinator.last_frame()
+        written.append(((red, green, blue), frame.beat_id))
+        return True
+
+    monkey = MusicController._open_loopback_reader
+    MusicController._open_loopback_reader = staticmethod(audio.reader)
+    screen.screen_sampled.connect(coordinator.submit_screen, Qt.QueuedConnection)
+    music.modulation_sampled.connect(coordinator.submit_music, Qt.QueuedConnection)
+    coordinator.start(sink, mode="screen_music")
+    coordinator.set_beat_gain(1.0)
+    try:
+        coordinator.expect_screen(screen.start_listening())
+        coordinator.expect_music(music.start_listening())
+        _pump(app, 25.0, until=audio.finished)
+        _pump(app, 0.4)
+    finally:
+        screen.stop()
+        music.stop()
+        coordinator.stop()
+        MusicController._open_loopback_reader = monkey
+
+    by_beat: dict[int, int] = {}
+    for colour, beat_id in written:
+        if beat_id:
+            by_beat[beat_id] = max(by_beat.get(beat_id, 0), max(colour))
+    assert len(by_beat) >= 4, f"too few strikes reached the strip: {by_beat}"
+
+    strikes = [by_beat[key] for key in sorted(by_beat)]
+    assert len(strikes) > audio.accent_position + 1, f"the accent never landed: {strikes}"
+    accent = strikes[audio.accent_position]
+    ordinary = strikes[:audio.accent_position] + strikes[audio.accent_position + 1 :]
+
+    # Compared with the strikes on *both* sides of it. The music's influence
+    # fades in over the first seconds, so a later beat is brighter than an early
+    # one whatever it was struck at — an accent placed at the end would be
+    # measuring that ramp and nothing else.
+    assert accent > max(ordinary), (
+        f"the accent was written no brighter than the ordinary beats around it: "
+        f"{ordinary} against {accent}"
+    )
+    # And the colour is still the screen's: a beat brightens, it does not tint.
+    accent_colour = next(
+        colour for colour, beat in written if beat and max(colour) == accent
+    )
+    assert accent_colour[0] > accent_colour[1] > accent_colour[2], accent_colour
