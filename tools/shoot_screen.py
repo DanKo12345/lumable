@@ -262,8 +262,14 @@ def _apply_readme_automations_demo(window) -> None:
 
 
 def _apply_readme_ambient_demo(window) -> None:
-    """The screen-sync controls with the same connected showcase device."""
+    """The combined screen-and-music controls in a connected showcase state."""
+    from PySide6.QtTest import QTest
+
     _show_showcase_connection(window)
+    window._fusion_ui.set_mode("screen_music")
+    window._ambient_ui.sync_mode_segment()
+    window.fusion_tune_button.setChecked(True)
+    QTest.qWait(240)
 
 
 def _apply_music_demo(window) -> None:

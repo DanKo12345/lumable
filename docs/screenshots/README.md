@@ -19,7 +19,7 @@ real controller data:
 ```
 python tools/shoot_screen.py color       --demo readme-color       --size 1280x860 --theme dark --language en --out docs/images/lumable-color-0.3.8-dark.png
 python tools/shoot_screen.py automations --demo readme-automations --size 1280x860 --theme dark --language en --out docs/images/lumable-automations-dark.png
-python tools/shoot_screen.py ambient     --demo readme-ambient     --size 1280x860 --theme dark --language en --out docs/images/lumable-screen-sync-0.3.8-dark.png
+python tools/shoot_screen.py ambient     --demo readme-ambient     --size 1280x860 --theme dark --language en --out docs/images/lumable-screen-sync-0.4.0-dark.png
 ```
 
 `860x420` is the app's minimum window size (`WINDOW_MIN_WIDTH`/`HEIGHT`), which is

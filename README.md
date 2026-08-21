@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/DanKo12345/lumable/releases">
-    <img alt="Download LumaBLE 0.3.9 beta for Windows" src="https://img.shields.io/badge/Download_for_Windows-0.3.9_beta-2f78d4?style=for-the-badge&logo=windows11&logoColor=white">
+    <img alt="Download LumaBLE 0.4.0 beta for Windows" src="https://img.shields.io/badge/Download_for_Windows-0.4.0_beta-2f78d4?style=for-the-badge&logo=windows11&logoColor=white">
   </a>
 </p>
 
@@ -45,7 +45,8 @@ No hub, no bridge, no account. The controller you already own, driven from the d
 
 - **Direct light control** — RGB, brightness, colour temperature, power and a HEX/HSV picker.
 - **Scenes and effects** — reusable scenes, quick modes, controller effects and app-rendered animations.
-- **Screen and audio sync** — make the strip follow desktop content or music in real time.
+- **Screen + music** — keep the screen's colour while music adds brightness and stronger beat pulses.
+- **Screen or audio sync** — use either source on its own whenever the combined mode is not needed.
 - **Automations** — react to time, foreground apps, idle time, strip connection and Windows lock or sleep.
 - **Windows shortcuts** — use tray actions and optional global hotkeys without opening the main window.
 - **Background schedules** — Pro power rules can run through Windows even while LumaBLE is closed.
@@ -59,7 +60,7 @@ No hub, no bridge, no account. The controller you already own, driven from the d
 
 | Automation rules | Screen sync |
 | --- | --- |
-| ![Automation rules in LumaBLE](docs/images/lumable-automations-dark.png) | ![Screen sync controls in LumaBLE](docs/images/lumable-screen-sync-0.3.8-dark.png) |
+| ![Automation rules in LumaBLE](docs/images/lumable-automations-dark.png) | ![Screen and music sync controls in LumaBLE](docs/images/lumable-screen-sync-0.4.0-dark.png) |
 
 ## Download And Start
 
@@ -141,4 +142,4 @@ support.
 
 Author: `dollza`
 
-Current release: `0.3.9 beta`
+Current release: `0.4.0 beta`

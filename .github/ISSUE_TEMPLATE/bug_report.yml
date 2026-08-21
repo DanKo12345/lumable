@@ -12,7 +12,7 @@ body:
     attributes:
       label: LumaBLE version
       description: You can find it in Settings → Diagnostics or in the release filename.
-      placeholder: "For example: 0.3.9 beta"
+      placeholder: "For example: 0.4.0 beta"
     validations:
       required: true
   - type: input

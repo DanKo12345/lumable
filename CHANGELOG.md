@@ -2,6 +2,42 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.4.0] - 2026-08-21
+
+Luma Fusion brings screen colour and music together. The strip can follow the picture while beats
+shape its brightness, with one coordinated output instead of two modes competing for the light.
+
+### Added
+- **Screen + music** mode: the screen keeps control of the colour while music adds smooth brightness
+  movement and beat pulses without changing the hue.
+- Compact source and Beat controls inside the Screen Sync card, mirrored with the Music page so the
+  same saved settings are available in both places.
+- Fusion diagnostics for the composed frame, brightness factor, command outcomes, rejected writes
+  and software delay from a detected beat to an accepted light command.
+- Screen + music support in saved scenes, the Local API and the mobile remote.
+
+### Changed
+- Beat flashes now reflect how hard the beat was struck: ordinary hits stay balanced and stronger
+  accents produce a brighter pulse.
+- Screen Sync and music analysis share one paced BLE output. More audio blocks no longer mean more
+  commands sent to the controller.
+- Silence fades cleanly back to the screen image, while a beat is held until its first accepted
+  command so timer phase or a briefly busy link cannot weaken it.
+- Turning the strip off preserves the chosen Screen Sync mode, stops screen and audio capture, and
+  waits for fresh samples before writing again when power returns.
+- Supported BLE controllers are listed by signal strength, keeping nearby strips ahead of distant
+  or unrecognised devices.
+
+### Fixed
+- Starting one live mode no longer leaves separate streaming engines competing for the same strip in
+  the combined Screen + music path.
+- Power transitions no longer leak a queued colour after switch-off or send a black frame before the
+  first fresh screen sample after switch-on.
+- Late audio and screen samples from an earlier session are rejected instead of entering the current
+  composition.
+- Repeated tails of the same beat cannot arm a second full flash, and a refused BLE write keeps the
+  original pulse available for the next valid attempt.
+
 ## [0.3.9] - 2026-08-12
 
 Windows integration and portability: everyday controls now stay close at hand, automations understand the PC's session state, settings can move safely between installations, and Music Sync learns the room instead of reacting to a fixed noise threshold.
