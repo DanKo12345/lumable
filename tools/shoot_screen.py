@@ -310,6 +310,29 @@ def _apply_groups_demo(window) -> None:
     window.body_scroll.ensureWidgetVisible(window.groups_card, 0, 20)
 
 
+def _ambient_feature_rect(window):
+    """Crop the Screen Sync heading and decision rows for release artwork."""
+    from PySide6.QtCore import QPoint, QRect
+
+    ancestors = set()
+    widget = window.fusion_mode_segment
+    while widget is not None:
+        ancestors.add(widget)
+        widget = widget.parentWidget()
+
+    settings = window.ambient_profile_segment
+    while settings is not None and settings not in ancestors:
+        settings = settings.parentWidget()
+    if settings is None or settings is window.ambient_card:
+        raise RuntimeError("Could not locate the Screen Sync settings group")
+
+    card = window.ambient_card
+    top_left = card.mapTo(window, QPoint(0, 0))
+    settings_bottom = settings.mapTo(window, QPoint(0, settings.height())).y()
+    height = settings_bottom - top_left.y() + window._sz(18)
+    return QRect(top_left.x(), top_left.y(), card.width(), height)
+
+
 DEMOS = {
     "automations": _apply_automations_demo,
     "journal": _apply_journal_demo,
@@ -333,6 +356,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--theme", default="dark", choices=("dark", "light"))
     parser.add_argument("--language", default="en")
     parser.add_argument("--demo", default="", help="fill a section with review content")
+    parser.add_argument(
+        "--crop",
+        default="window",
+        choices=("window", "ambient-feature"),
+        help="capture the whole window or the compact Screen + music feature area",
+    )
     parser.add_argument("--out", default="", help="output PNG (default docs/screenshots/…)")
     args = parser.parse_args(argv)
 
@@ -371,7 +400,8 @@ def main(argv: list[str] | None = None) -> int:
             f"{stem}-{args.theme}-{width}x{height}.png"
         )
         out.parent.mkdir(parents=True, exist_ok=True)
-        window.grab().save(str(out))
+        pixmap = window.grab(_ambient_feature_rect(window)) if args.crop == "ambient-feature" else window.grab()
+        pixmap.save(str(out))
         print(out)
     finally:
         window._ble.shutdown()
