@@ -103,7 +103,11 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
     host.fusion_tune_button.set_icon_kind("sliders-horizontal")
     host.fusion_tune_button.setIconSize(QSize(host._sz(16), host._sz(16)))
     host.fusion_tune_button.setCheckable(True)
-    host.fusion_tune_button.setFixedSize(host._sz(32), host._sz(34))
+    # Width is animated by AmbientUiController when the combined mode appears.
+    # Keep only the height fixed so the row can make room gradually.
+    host.fusion_tune_button.setFixedHeight(host._sz(34))
+    host.fusion_tune_button.setMinimumWidth(0)
+    host.fusion_tune_button.setMaximumWidth(host._sz(32))
     host.fusion_tune_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
     host.fusion_tune_button.setAccessibleName(host._tr("fusion.tune"))
     host.fusion_tune_button.setToolTip(host._tr("fusion.tune"))

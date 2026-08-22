@@ -585,11 +585,12 @@ def test_the_settings_button_belongs_to_the_combined_mode(window) -> None:
     assert window.fusion_tune_row.isHidden() is True
 
     _click_second_segment(window.fusion_mode_segment)
+    QTest.qWait(260)
 
     assert window.fusion_tune_button.isHidden() is False
     assert window.fusion_tune_row.isHidden() is True, "the panel opened by itself"
 
-    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    window.fusion_tune_button.click()
     assert window.fusion_tune_row.isHidden() is False
     assert window.fusion_tune_button._role == "accent_soft"
 
@@ -597,6 +598,7 @@ def test_the_settings_button_belongs_to_the_combined_mode(window) -> None:
     segment = window.fusion_mode_segment
     segment.resize(200, 40)
     QTest.mouseClick(segment, Qt.LeftButton, pos=QPoint(50, 20))
+    QTest.qWait(260)
 
     assert window.fusion_tune_button.isHidden() is True
     assert window.fusion_tune_row.isHidden() is True
@@ -659,12 +661,12 @@ def test_the_collapsed_panel_holds_no_room_open(window) -> None:
     """
     app = QApplication.instance()
     _click_second_segment(window.fusion_mode_segment)
-    app.processEvents()
+    QTest.qWait(260)
 
     assert window.fusion_tune_row.isHidden() is True
     assert window.fusion_tune_row.sizeHint().height() > 0, "the panel has nothing in it"
 
-    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    window.fusion_tune_button.click()
     app.processEvents()
     assert window.fusion_tune_row.isHidden() is False
 
@@ -676,10 +678,11 @@ def test_the_combined_settings_open_and_close_smoothly(
     policy.set_provider(None)
     policy.set_mode("full")
     _click_second_segment(window.fusion_mode_segment)
+    QTest.qWait(260)
 
     row = window.fusion_tune_row
     target = row.sizeHint().height()
-    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    window.fusion_tune_button.click()
     assert row.isHidden() is False
     assert row.maximumHeight() == 0
 
@@ -690,7 +693,7 @@ def test_the_combined_settings_open_and_close_smoothly(
     QTest.qWait(180)
     assert row.maximumHeight() == target
 
-    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    window.fusion_tune_button.click()
     assert row.isHidden() is False, "the row vanished before its closing motion"
     QTest.qWait(80)
     closing_height = row.maximumHeight()
@@ -708,12 +711,50 @@ def test_the_combined_settings_respect_reduced_motion(
     policy.set_provider(None)
     policy.set_mode("reduced")
     _click_second_segment(window.fusion_mode_segment)
+    QApplication.instance().processEvents()
 
     row = window.fusion_tune_row
-    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    window.fusion_tune_button.click()
     assert row.isHidden() is False
     assert row.maximumHeight() == row.sizeHint().height()
 
-    QTest.mouseClick(window.fusion_tune_button, Qt.LeftButton)
+    window.fusion_tune_button.click()
     assert row.maximumHeight() == 0
     assert row.isHidden() is True
+
+
+def test_the_settings_button_enters_and_leaves_with_the_mode(
+    window, preserve_motion_policy
+) -> None:
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("full")
+    button = window.fusion_tune_button
+    effect = window._ambient_ui._tune_button_effect
+    target = window._ambient_ui._tune_button_width_px
+
+    _click_second_segment(window.fusion_mode_segment)
+    assert button.isHidden() is False
+    assert button.maximumWidth() == 0
+    assert effect.opacity() == 0.0
+
+    QTest.qWait(80)
+    assert 0 < button.maximumWidth() < target
+    assert 0.0 < effect.opacity() < 1.0
+
+    QTest.qWait(190)
+    assert button.maximumWidth() == target
+    assert effect.opacity() == 1.0
+
+    segment = window.fusion_mode_segment
+    segment.resize(200, 40)
+    QTest.mouseClick(segment, Qt.LeftButton, pos=QPoint(50, 20))
+    assert button.isHidden() is False, "the icon vanished before its exit motion"
+
+    QTest.qWait(80)
+    assert 0 < button.maximumWidth() < target
+    assert 0.0 < effect.opacity() < 1.0
+
+    QTest.qWait(190)
+    assert button.maximumWidth() == 0
+    assert button.isHidden() is True

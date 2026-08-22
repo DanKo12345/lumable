@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt
+from PySide6.QtWidgets import QGraphicsOpacityEffect
 
 from app.ambient_controller import AmbientController
 from app.feature_gate import can_use
@@ -27,6 +28,7 @@ class AmbientUiController:
     def wire(self) -> None:
         host = self._host
         self._setup_tune_reveal()
+        self._setup_tune_button_reveal()
         host.ambient_toggle_button.clicked.connect(self._toggle)
         host.ambient_profile_segment.selected.connect(lambda _key: self._on_options_changed())
         host.fusion_mode_segment.selected.connect(self._on_mode_changed)
@@ -118,12 +120,12 @@ class AmbientUiController:
         segment.set_current(host._fusion_ui.mode(), animate=False)
         segment.blockSignals(False)
         self.refresh_status()
-        self._refresh_tune_visibility()
+        self._refresh_tune_visibility(animate=False)
 
     def _on_mode_changed(self, key: str) -> None:
         self._host._fusion_ui.set_mode(key)
         self.refresh_status()
-        self._refresh_tune_visibility()
+        self._refresh_tune_visibility(animate=True)
         self._host._music_ui.refresh_shared_state()
 
     def _on_tune_toggled(self, opened: bool) -> None:
@@ -142,6 +144,76 @@ class AmbientUiController:
         self._tune_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._tune_hiding = False
         self._tune_anim.finished.connect(self._finish_tune_animation)
+
+    def _setup_tune_button_reveal(self) -> None:
+        button = getattr(self._host, "fusion_tune_button", None)
+        if button is None:
+            return
+        self._tune_button_width_px = self._host._sz(32)
+        effect = QGraphicsOpacityEffect(button)
+        effect.setOpacity(0.0)
+        button.setGraphicsEffect(effect)
+        button.setMaximumWidth(0)
+
+        width = QPropertyAnimation(button, b"maximumWidth", self._host)
+        opacity = QPropertyAnimation(effect, b"opacity", self._host)
+        for animation in (width, opacity):
+            animation.setDuration(230)
+            animation.setEasingCurve(QEasingCurve.OutCubic)
+        group = QParallelAnimationGroup(self._host)
+        group.addAnimation(width)
+        group.addAnimation(opacity)
+        group.finished.connect(self._finish_tune_button_animation)
+        self._tune_button_effect = effect
+        self._tune_button_width_anim = width
+        self._tune_button_opacity_anim = opacity
+        self._tune_button_anim = group
+        self._tune_button_hiding = False
+
+    def _set_tune_button_visible_instant(self, visible: bool) -> None:
+        button = getattr(self._host, "fusion_tune_button", None)
+        animation = getattr(self, "_tune_button_anim", None)
+        effect = getattr(self, "_tune_button_effect", None)
+        if button is None or animation is None or effect is None:
+            if button is not None:
+                button.setVisible(visible)
+            return
+        animation.stop()
+        button.setMaximumWidth(self._tune_button_width_px if visible else 0)
+        effect.setOpacity(1.0 if visible else 0.0)
+        button.setVisible(visible)
+        self._tune_button_hiding = False
+
+    def _animate_tune_button(self, *, showing: bool) -> None:
+        button = getattr(self._host, "fusion_tune_button", None)
+        group = getattr(self, "_tune_button_anim", None)
+        width = getattr(self, "_tune_button_width_anim", None)
+        opacity = getattr(self, "_tune_button_opacity_anim", None)
+        effect = getattr(self, "_tune_button_effect", None)
+        if any(item is None for item in (button, group, width, opacity, effect)):
+            self._set_tune_button_visible_instant(showing)
+            return
+
+        group.stop()
+        self._tune_button_hiding = not showing
+        if showing:
+            button.setVisible(True)
+        width.setStartValue(button.maximumWidth())
+        width.setEndValue(self._tune_button_width_px if showing else 0)
+        opacity.setStartValue(effect.opacity())
+        opacity.setEndValue(1.0 if showing else 0.0)
+        play_or_complete(group)
+
+    def _finish_tune_button_animation(self) -> None:
+        button = getattr(self._host, "fusion_tune_button", None)
+        if button is None:
+            return
+        if self._tune_button_hiding:
+            button.setMaximumWidth(0)
+            button.setVisible(False)
+            self._tune_button_hiding = False
+            return
+        button.setMaximumWidth(self._tune_button_width_px)
 
     def _set_tune_open_instant(self, opened: bool) -> None:
         row = getattr(self._host, "fusion_tune_row", None)
@@ -193,7 +265,7 @@ class AmbientUiController:
         row.setMaximumHeight(16777215)
         row.setMaximumHeight(row.sizeHint().height())
 
-    def _refresh_tune_visibility(self) -> None:
+    def _refresh_tune_visibility(self, *, animate: bool = False) -> None:
         """The settings belong to the combined mode, so they appear with it.
 
         Collapsed again on the way out rather than merely hidden: coming back to
@@ -206,7 +278,10 @@ class AmbientUiController:
         if button is None or row is None:
             return
         combined = host._fusion_ui.mode() == "screen_music"
-        button.setVisible(combined)
+        if animate:
+            self._animate_tune_button(showing=combined)
+        else:
+            self._set_tune_button_visible_instant(combined)
         if not combined:
             button.blockSignals(True)
             button.setChecked(False)
