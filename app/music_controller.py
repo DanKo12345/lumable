@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -168,6 +169,20 @@ class BlockResult:
     beat_id: int = 0
 
 
+SHADOW_ONSET_ENV = "LUMABLE_ONSET_SHADOW"
+
+
+def shadow_onset_enabled() -> bool:
+    """Whether the experimental onset detector should run alongside the real one.
+
+    An environment variable rather than a setting: it is a diagnostic for
+    comparing two detectors on one piece of music, not a choice anybody using
+    the light should be asked to make. Read at each start, so a session can be
+    run with it and the next one without.
+    """
+    return os.environ.get(SHADOW_ONSET_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 class MusicController(QObject):
     """Listens to sound. Owning the strip is a separate decision.
 
@@ -215,6 +230,13 @@ class MusicController(QObject):
         # Runs beside the working detector and drives nothing. Counted so a run
         # on real music can be compared with what the strip actually did, before
         # anything is swapped over.
+        #
+        # Off unless asked for. It costs a second window, real FFT and frequency
+        # table on every audio block — the working path has already computed its
+        # own and caches them — and it buys the person listening nothing at all,
+        # because no light depends on it. Kept reachable so the comparison can
+        # still be run, and out of everyone else's way until it is.
+        self._shadow_onset_enabled = shadow_onset_enabled()
         self._onset = SuperFluxOnset()
         self._onset_agreement = OnsetAgreement()
         # Bumped by every start, so a block emitted just before a stop can be
@@ -490,11 +512,16 @@ class MusicController(QObject):
     def _shadow_onset(self, block, samplerate: int, now_ms: float, heard_beat: bool) -> None:
         """Ask the experimental detector the same block, and only count it.
 
+        Returns immediately unless the experiment was asked for, which is what
+        keeps its second spectrum off the audio path for everybody else.
+
         Wrapped because it must never be able to stop the music: it is an
         experiment running alongside, and a spectrum it cannot compute — no
         numpy, a block shape it did not expect — is a reason to skip it, not to
         drop a frame the strip is waiting for.
         """
+        if not self._shadow_onset_enabled:
+            return
         try:
             import numpy as np
 

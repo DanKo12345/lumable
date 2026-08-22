@@ -779,3 +779,52 @@ def test_the_bass_of_a_finished_track_does_not_outlive_the_silence() -> None:
     assert analyzer._bass_baseline < loud_baseline * 0.1, (
         f"the baseline is still at {analyzer._bass_baseline} after the track ended"
     )
+
+
+# ── the experiment that is off ────────────────────────────────────────
+def _audible_block():
+    """One real block of sound, since the shadow detector reads the samples."""
+    numpy = pytest.importorskip("numpy")
+    t = numpy.arange(1024) / 48000.0
+    mono = 0.3 * numpy.sin(2 * numpy.pi * 55.0 * t) + 0.1 * numpy.sin(2 * numpy.pi * 440.0 * t)
+    return numpy.column_stack((mono, mono)).astype(numpy.float32)
+
+
+def _run_blocks(controller, options, count: int = 30) -> None:
+    block = _audible_block()
+    original_analyze, original_monotonic = module.analyze_block, module.monotonic
+    clock = 1000.0
+    try:
+        module.analyze_block = lambda _b, _s: (0.9, 0.3, 0.2, 0.12)
+        for _ in range(count):
+            module.monotonic = lambda c=clock: c
+            controller._process_block(block, 48000, options)
+            clock += 0.02
+    finally:
+        module.analyze_block, module.monotonic = original_analyze, original_monotonic
+
+
+def test_the_shadow_detector_does_not_run_unless_it_is_asked_for(monkeypatch) -> None:
+    """It costs a second spectrum on every block and no light depends on it.
+
+    The working path already windows the block and takes its real FFT, with the
+    window and the frequency table cached; the experiment builds all three
+    again, about fifty times a second, to fill in five diagnostic numbers. Off
+    by default is the difference between an experiment and a tax.
+    """
+    monkeypatch.delenv(module.SHADOW_ONSET_ENV, raising=False)
+    controller, options = _controller()
+    _run_blocks(controller, options)
+
+    assert controller.music_report().onset_blocks == 0, "the experiment ran uninvited"
+    assert controller.music_report().beats >= 0, "the working detector stopped working"
+
+
+def test_the_shadow_detector_still_runs_when_it_is_asked_for(monkeypatch) -> None:
+    """Off by default is not the same as gone: the comparison must still be
+    runnable on a real piece of music when somebody wants the numbers."""
+    monkeypatch.setenv(module.SHADOW_ONSET_ENV, "1")
+    controller, options = _controller()
+    _run_blocks(controller, options)
+
+    assert controller.music_report().onset_blocks > 0, "the experiment could not be turned on"

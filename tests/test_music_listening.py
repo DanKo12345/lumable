@@ -298,6 +298,9 @@ def test_the_trial_detector_never_touches_what_the_strip_shows(controller) -> No
             pass
 
     controller._onset = _AlwaysHears()
+    # The experiment is off unless asked for, and what is asserted below is that
+    # it changes nothing *while running* — so it has to be running.
+    controller._shadow_onset_enabled = True
     try:
         module.analyze_block = lambda _b, _s: (0.2, 0.2, 0.2, 0.05)
         quiet = controller._process_block([[0.0, 0.0]] * 512, 48000, options)
@@ -315,16 +318,20 @@ def test_a_trial_detector_that_cannot_run_does_not_stop_the_music(controller) ->
     options = MusicOptions(source="system")
     original = module.analyze_block
 
+    attempts = []
+
     class _Broken:
         stats = type("S", (), {"blocks": 0, "onsets": 0})()
 
         def feed(self, *_args):
+            attempts.append(1)
             raise RuntimeError("no numpy today")
 
         def reset(self):
             pass
 
     controller._onset = _Broken()
+    controller._shadow_onset_enabled = True
     try:
         module.analyze_block = lambda _b, _s: (0.9, 0.2, 0.2, 0.3)
         result = controller._process_block([[0.4, 0.4]] * 512, 48000, options)
@@ -333,6 +340,7 @@ def test_a_trial_detector_that_cannot_run_does_not_stop_the_music(controller) ->
 
     assert result.rgb is not None
     assert isinstance(result.level, float)
+    assert attempts, "the detector never ran, so nothing was proved about it failing"
 
 
 def test_the_trial_counts_reach_the_report(controller) -> None:
