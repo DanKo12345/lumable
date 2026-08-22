@@ -336,11 +336,7 @@ class FusionCoordinator(QObject):
             # refused, so a sample a device hands over during its own start —
             # describing the room or the screen from before the light came on —
             # has nowhere to go.
-            self._forget()
-            if self._start_sources is not None:
-                screen_token, music_token = self._start_sources()
-                self.expect_screen(screen_token or 0)
-                self.expect_music(music_token or 0)
+            self._take_sources_afresh()
             self._compositor.set_output_allowed(True)
             return
         # Permission goes first, and the tokens with it. Stopping the sources
@@ -353,6 +349,41 @@ class FusionCoordinator(QObject):
         if self._stop_sources is not None:
             self._stop_sources()
         self._forget()
+
+    def restart_sources(self) -> None:
+        """Take the capture again from scratch, without touching permission.
+
+        For a run whose strip went away and came back. Everything captured
+        before the break is dropped and the sources are asked for new tokens, so
+        a frame describing the screen as it was two minutes ago cannot be the
+        one that greets the light coming back. Permission is deliberately not
+        changed here: whoever calls this decides when writing may resume, and
+        that decision waits for a frame captured after this moment.
+        """
+        if self._stop_sources is not None:
+            # Stopped first, and not as a formality: a capture that is already
+            # running hands back the token it already has, so without this the
+            # "new" tokens would be the old ones and a sample from before the
+            # break would still be accepted as current.
+            self._stop_sources()
+        self._take_sources_afresh()
+
+    def _take_sources_afresh(self) -> None:
+        """Drop what is held and start capture, recording the tokens it returns."""
+        self._forget()
+        if self._start_sources is not None:
+            screen_token, music_token = self._start_sources()
+            self.expect_screen(screen_token or 0)
+            self.expect_music(music_token or 0)
+
+    def set_measures_a_link(self, measures: bool) -> None:
+        """Say whether writes are currently reaching a strip.
+
+        Changes within a run, which is why it is not only a start argument: a
+        live run whose strip disappears keeps composing and keeps showing, but
+        from that moment its delays describe nothing that happened over a radio.
+        """
+        self._measures_a_link = bool(measures)
 
     def _forget(self) -> None:
         """Drop everything held about the picture and the sound."""

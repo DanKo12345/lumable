@@ -323,8 +323,7 @@ class UiLocalizationController:
             host.fusion_tune_button.setAccessibleName(host._tr("fusion.tune"))
             host.fusion_tune_button.setToolTip(host._tr("fusion.tune"))
         host._ambient_ui.refresh_texts()
-        running = host._ambient_ui.is_running()
-        host.ambient_toggle_button.setText(host._tr("ambient.toggle_on" if running else "ambient.toggle_off"))
+        host.ambient_toggle_button.setText(host._tr(host._fusion_ui.toggle_label_key()))
         if getattr(host, "ambient_lock_label", None) is not None:
             host.ambient_lock_label.setText(host._tr("common.pro_badge"))
             host.ambient_lock_label.setToolTip(host._tr("ambient.pro_locked"))

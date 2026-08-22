@@ -26,6 +26,13 @@ SCREEN = "screen"
 SCREEN_MUSIC = "screen_music"
 MODES = (SCREEN, SCREEN_MUSIC)
 
+# Where a run's colours are going. Decided once, when it starts, and never
+# again: a preview started with no strip must not begin lighting one that is
+# plugged in later. Somebody who wanted that would have pressed the button
+# again, and the button says which of the two it would start.
+LIVE = "live"
+PREVIEW = "preview_only"
+
 
 def normalize_mode(value: object) -> str:
     text = str(value or "").strip()
@@ -54,6 +61,14 @@ class FusionUiController:
         self._held: bool | None = None
         self._next_command = 0
         self._audio_lost = False
+        self._target = LIVE
+        # Whether this run's writes may reach the strip *right now*. Separate
+        # from the target: a live run whose strip has gone keeps everything else
+        # exactly as it was and only stops writing.
+        self._ble_allowed = False
+        # Set while a reconnected run waits for a frame captured after the
+        # break. Until one arrives there is nothing honest to send.
+        self._awaiting_fresh_base = False
 
     def wire(self) -> None:
         """Point both sources at the coordinator, once and for good.
@@ -66,6 +81,7 @@ class FusionUiController:
         host = self._host
         host._ambient_ui.connect_samples(self._coordinator.submit_screen)
         host._music_ui.connect_samples(self._coordinator.submit_music)
+        self._coordinator.frame_composed.connect(self._on_frame_composed)
         self.load_settings()
 
     # ── the chosen mode ───────────────────────────────────────────────
@@ -100,25 +116,101 @@ class FusionUiController:
         host._settings["fusion"] = {"mode": self._mode}
         save_settings(host._settings)
 
-    # ── why the combined mode may not be available ────────────────────
-    def unavailable_reason(self, mode: str | None = None) -> str:
-        """An empty string, or a translation key saying what is missing.
+    # ── where a start would send its colours ──────────────────────────
+    def intended_target(self, mode: str | None = None) -> str:
+        """Which of the two a press of the button would start, right now.
 
-        Answered rather than acted on: a mode a person chose must not quietly
-        fall back to the other one, because then the card shows a choice that is
-        not the one being run.
+        A strip and the licence for the mode are what make the difference. Both
+        are read at the moment of the press and then held for the whole run —
+        this is the *only* place the question is asked.
         """
         host = self._host
         mode = normalize_mode(mode or self._mode)
-        if not can_use("ambient_sync"):
-            return "fusion.needs_pro"
-        if mode == SCREEN_MUSIC and not can_use("music_sync"):
-            return "fusion.needs_pro"
         if not host._is_connected:
-            return "fusion.needs_strip"
+            return PREVIEW
+        if not can_use("ambient_sync"):
+            return PREVIEW
+        if mode == SCREEN_MUSIC and not can_use("music_sync"):
+            return PREVIEW
+        return LIVE
+
+    def target(self) -> str:
+        """What the current run was started as."""
+        return self._target
+
+    def previewing(self) -> bool:
+        """Whether what is running is showing rather than lighting."""
+        return self.is_running() and self._target == PREVIEW
+
+    # ── why a mode may not be available at all ────────────────────────
+    def unavailable_reason(self, mode: str | None = None) -> str:
+        """An empty string, or a translation key saying what is missing.
+
+        Only what stops the mode from *running*. A missing strip and a Free
+        licence no longer belong here: neither prevents the screen being read
+        and composed, they only decide where the result goes, and that is what
+        the target answers.
+
+        A missing audio device is a different matter and stays. Screen + music
+        with nothing listening is not a dimmer version of the mode, it is the
+        other mode wearing its name — and that is as untrue in a preview as it
+        is on a strip.
+        """
+        host = self._host
+        mode = normalize_mode(mode or self._mode)
         if mode == SCREEN_MUSIC and not host._music_ui.has_audio_source():
             return "fusion.needs_audio"
         return ""
+
+    def live_unavailable_reason(self, mode: str | None = None) -> str:
+        """Why a start would preview rather than light, or an empty string."""
+        host = self._host
+        mode = normalize_mode(mode or self._mode)
+        if not can_use("ambient_sync") or (mode == SCREEN_MUSIC and not can_use("music_sync")):
+            return "fusion.needs_pro"
+        if not host._is_connected:
+            return "fusion.needs_strip"
+        return ""
+
+    # ── what the card says ────────────────────────────────────────────
+    def status_key(self) -> str:
+        """The one line under the row title, decided in one place.
+
+        Ordered by what a person needs to know first: something is stopping the
+        mode, then where its colours are going, then which mode it is. Where the
+        colours go outranks which mode it is, because "Screen and music" beside
+        a strip that is not lighting is the one sentence this mode must never
+        say.
+        """
+        host = self._host
+        mode = self._mode
+        reason = self.unavailable_reason(mode)
+        if reason:
+            return reason
+        if self.is_running():
+            if self.audio_lost():
+                return "fusion.audio_lost"
+            if self._target == PREVIEW:
+                return (
+                    "fusion.preview.strip_unused"
+                    if host._is_connected
+                    else "fusion.preview.no_strip"
+                )
+            if not host._is_connected:
+                return "fusion.preview.link_lost"
+            if self._awaiting_fresh_base:
+                return "fusion.preview.waiting_frame"
+            return f"fusion.status.{mode}"
+        live_reason = self.live_unavailable_reason(mode)
+        return live_reason or "ambient.status_off"
+
+    def toggle_label_key(self) -> str:
+        """What the button offers. While running it is simply on."""
+        if self.is_running():
+            return "ambient.toggle_on"
+        if self.intended_target() == PREVIEW:
+            return "ambient.toggle_preview"
+        return "ambient.toggle_off"
 
     # ── running ───────────────────────────────────────────────────────
     def is_running(self) -> bool:
@@ -131,11 +223,12 @@ class FusionUiController:
     def coordinator(self) -> FusionCoordinator:
         return self._coordinator
 
-    def activate(self) -> bool:
+    def activate(self, *, target: str | None = None) -> bool:
         host = self._host
         self._reason = self.unavailable_reason()
         if self._reason:
             return False
+        target = target if target in (LIVE, PREVIEW) else self.intended_target()
         host.stop_streams(exclude=self)
         self._run_token += 1
         self._audio_lost = False
@@ -144,13 +237,29 @@ class FusionUiController:
         self._failed = 0
         self._link_rejections = 0
         self._next_command = 0
-        if not host.power_button.isChecked():
+        self._target = target
+        self._ble_allowed = target == LIVE
+        self._awaiting_fresh_base = False
+        if target == LIVE and not host.power_button.isChecked():
+            # Only on the way to a strip. Power is a command to hardware, and a
+            # preview has no hardware to command — pressing it on someone's
+            # behalf would be this mode reaching a device it promised not to
+            # touch, and on a Free licence with a strip attached it would light
+            # a strip nobody agreed to light.
             host.power_button.setChecked(True)
             host._toggle_power()
 
         run = self._run_token
 
         def sink(red: int, green: int, blue: int) -> bool:
+            if not self._ble_allowed:
+                # A delivery with nothing at the end of it. Accepted, because
+                # the pacing and the beat's turn are the same either way — what
+                # is missing is only the radio. Nothing is counted: these are
+                # not commands, and a report listing them beside real ones would
+                # be describing a link that was never used.
+                self._show_delivered(red, green, blue)
+                return True
             # The only route to the strip from a streaming mode. Colour only:
             # the brightness slider is the strip's own ceiling and the composed
             # factor rides inside these three numbers.
@@ -202,12 +311,20 @@ class FusionUiController:
                     self._succeeded += 1
                 elif held is False:
                     self._failed += 1
+            if accepted:
+                # Shown only when it was actually taken. A refused write put
+                # nothing on the wall, and a preview that moved anyway would be
+                # smoother than the strip it stands for.
+                self._show_delivered(red, green, blue)
             return accepted
 
         seed = host._current_color()
         self._coordinator.attach_sources(start=self._start_sources, stop=self._stop_sources)
         self._coordinator.start(
-            sink, mode=self._mode, initial=(seed.red(), seed.green(), seed.blue())
+            sink,
+            mode=self._mode,
+            initial=(seed.red(), seed.green(), seed.blue()),
+            measures_a_link=target == LIVE,
         )
         self._coordinator.set_beat_gain(host._music_ui.beat_strength())
         self._coordinator.set_powered(True)
@@ -227,9 +344,76 @@ class FusionUiController:
         self._sink = None
 
     def set_powered(self, on: bool) -> None:
-        """Power, while the mode stays chosen. Only meaningful while running."""
-        if self.is_running():
+        """Power, while the mode stays chosen. Only meaningful while running.
+
+        A preview is left alone. The power button switches a strip on and off,
+        and a run that is not writing to one has nothing in that switch to obey
+        — stopping its capture would make the button mean two different things
+        depending on what happens to be plugged in. Somebody with a strip
+        attached may well press it while previewing, and their preview should
+        carry on exactly as before.
+        """
+        if self.is_running() and self._target == LIVE:
             self._coordinator.set_powered(on)
+
+    # ── the strip coming and going under a live run ───────────────────
+    def note_link_lost(self) -> None:
+        """The strip has gone. Keep showing, stop writing, remember the intent.
+
+        The alternative — tearing the run down — throws away the mode, the
+        capture and everything the compositor has learned about the music,
+        because a radio dropped for a second. What the person asked for has not
+        changed, and neither has anything this side of the aerial.
+        """
+        if not self.is_running() or self._target != LIVE:
+            return
+        self._ble_allowed = False
+        self._awaiting_fresh_base = False
+        self._coordinator.set_measures_a_link(False)
+
+    def note_link_back(self) -> None:
+        """The strip is back. Take the capture again and wait for a new frame.
+
+        Permission is not restored here. Everything held describes a screen from
+        before the break, and handing that to a strip the moment it answers is
+        exactly the stale frame this whole design refuses elsewhere. The capture
+        is restarted with new tokens, and writing resumes on the first frame
+        composed after this point — see :meth:`_on_frame_composed`.
+        """
+        if not self.is_running() or self._target != LIVE:
+            return
+        self._ble_allowed = False
+        self._awaiting_fresh_base = True
+        self._coordinator.restart_sources()
+
+    def _on_frame_composed(self, frame) -> None:
+        """Every composed frame, sent or not. Two jobs and no more.
+
+        Nothing here writes: a frame with no colour clears what is shown, and a
+        reconnected run is let through on the first frame that has one.
+        """
+        if frame.output_rgb is None:
+            self._clear_delivered()
+        if self._awaiting_fresh_base and frame.should_send and frame.output_rgb is not None:
+            self._awaiting_fresh_base = False
+            self._ble_allowed = True
+            self._coordinator.set_measures_a_link(True)
+            host = self._host
+            refresh = getattr(getattr(host, "_ambient_ui", None), "refresh_status", None)
+            if callable(refresh):
+                refresh()
+
+    # ── what is shown beside the card ─────────────────────────────────
+    def _show_delivered(self, red: int, green: int, blue: int) -> None:
+        """The colour a delivery carried, whether or not a radio took it."""
+        preview = getattr(self._host, "ambient_preview", None)
+        if preview is not None:
+            preview.set_final((int(red), int(green), int(blue)))
+
+    def _clear_delivered(self) -> None:
+        preview = getattr(self._host, "ambient_preview", None)
+        if preview is not None:
+            preview.clear_final()
 
     def shutdown(self) -> None:
         self.stop_if_running()

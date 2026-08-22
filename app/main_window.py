@@ -1076,9 +1076,24 @@ class MainWindow(QMainWindow):
             if callable(stop):
                 stop()
 
-    def stop_all_streams(self) -> None:
-        """Stop every streaming owner — used when the strip goes away (BLE drop)."""
-        self.stop_streams()
+    def note_link_lost(self) -> None:
+        """The strip has gone. Stop what cannot survive it; keep what can.
+
+        Everything that exists only to feed a strip is stopped outright — there
+        is nothing for it to feed and it must not resume by itself when the link
+        returns. Screen Sync is the exception, and deliberately: its capture and
+        its composition are about the picture, not the radio, so it keeps
+        running with its output shown rather than sent, and remembers that it
+        was on its way to a strip.
+        """
+        self.stop_streams(exclude=self._fusion_ui)
+        self._fusion_ui.note_link_lost()
+        self._ambient_ui.refresh_status()
+
+    def note_link_back(self) -> None:
+        """The strip has answered again. Only a run that wanted one reacts."""
+        self._fusion_ui.note_link_back()
+        self._ambient_ui.refresh_status()
 
     def apply_power_to_streams(self, enabled: bool) -> None:
         """What power means for whatever is streaming, in one place.

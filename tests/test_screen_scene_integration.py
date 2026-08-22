@@ -165,6 +165,7 @@ class _FusionStub:
         self.activated = 0
         self.running = False
         self.reason = ""
+        self.target = None
 
     def is_running(self) -> bool:
         return self.running
@@ -178,13 +179,22 @@ class _FusionStub:
     def last_reason(self) -> str:
         return self.reason
 
-    def activate(self) -> bool:
+    def activate(self, *, target=None) -> bool:
+        self.target = target
+        if self.reason:
+            return False
         self.activated += 1
         self.running = True
         return True
 
     def stop_if_running(self) -> None:
         self.running = False
+
+    def status_key(self) -> str:
+        return self.reason or "ambient.status_off"
+
+    def toggle_label_key(self) -> str:
+        return "ambient.toggle_on" if self.running else "ambient.toggle_off"
 
 
 class _MusicStub:
@@ -261,9 +271,13 @@ def test_the_seed_handed_to_the_stream_is_a_real_rgb_triple(monkeypatch) -> None
         def attach_sources(self, **_kwargs) -> None:
             pass
 
-        def start(self, _sink, *, mode, initial=(0, 0, 0)) -> None:
+        def start(self, _sink, *, mode, initial=(0, 0, 0), measures_a_link=True) -> None:
             started["initial"] = initial
             started["mode"] = mode
+            started["measures_a_link"] = measures_a_link
+
+        def frame_composed_connect(self, _slot) -> None:
+            pass
 
         def set_beat_gain(self, _gain) -> None:
             pass
@@ -285,10 +299,14 @@ def test_the_seed_handed_to_the_stream_is_a_real_rgb_triple(monkeypatch) -> None
     assert started["mode"] == "screen"
 
 
-@pytest.mark.parametrize("licensed, connected", [(False, True), (True, False)])
-def test_activate_does_not_change_profile_when_start_is_blocked(
-    monkeypatch, licensed: bool, connected: bool,
-) -> None:
+def test_activate_does_not_change_profile_when_start_is_blocked(monkeypatch) -> None:
+    """A start that is going to refuse must leave nothing behind it.
+
+    The profile is the user's, and a scene that asks for one and then fails to
+    run would otherwise have quietly rewritten it. A licence and a missing strip
+    no longer refuse anything — they choose where the colours go — so what is
+    left to refuse is Screen + music with nothing to listen to.
+    """
     import app.ambient_ui_controller as mod
 
     class _FakeAmbient:
@@ -299,13 +317,13 @@ def test_activate_does_not_change_profile_when_start_is_blocked(
             return False
 
     host = _StartHost()
-    host._is_connected = connected
+    host._is_connected = True
+    host._fusion_ui.reason = "fusion.needs_audio"
     monkeypatch.setattr(mod, "AmbientController", _FakeAmbient)
-    monkeypatch.setattr(mod, "can_use", lambda _feature: licensed)
+    monkeypatch.setattr(mod, "can_use", lambda _feature: True)
 
     ui = mod.AmbientUiController(host)
 
     assert ui.activate("movie") is False
     assert host.ambient_profile_segment.current_key() == "desktop"
-    assert host.license_overlays == (0 if licensed else 1)
-    assert host.errors == (["ambient.not_connected"] if licensed else [])
+    assert host.errors == ["fusion.needs_audio"]

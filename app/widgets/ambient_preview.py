@@ -22,10 +22,15 @@ class AmbientPreview(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._color: tuple[int, int, int] | None = None
         self._raw: tuple[int, int, int] | None = None  # dual "source → result" mode
+        # Which of the two shapes to draw. Kept apart from the colours because
+        # the two halves now arrive separately, and "no result yet" must not be
+        # mistaken for "this is the one-capsule kind".
+        self._single = False
 
     def set_color(self, red: int, green: int, blue: int) -> None:
         self._color = (int(red), int(green), int(blue))
         self._raw = None
+        self._single = True
         self.update()
 
     def set_colors(self, raw: tuple[int, int, int], final: tuple[int, int, int]) -> None:
@@ -33,11 +38,39 @@ class AmbientPreview(QWidget):
         the right — the shaping and smoothing made visible."""
         self._raw = (int(raw[0]), int(raw[1]), int(raw[2]))
         self._color = (int(final[0]), int(final[1]), int(final[2]))
+        self._single = False
+        self.update()
+
+    def set_source(self, rgb: tuple[int, int, int]) -> None:
+        """Replace only the left-hand capsule: the screen as it was captured."""
+        self._raw = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        self._single = False
+        self.update()
+
+    def set_final(self, rgb: tuple[int, int, int]) -> None:
+        """Replace only the right-hand capsule, keeping the screen colour shown.
+
+        The two halves arrive from different places and at different rates: the
+        screen's own colour comes from the capture, the result from whatever
+        delivery carried it — about three captures for every one of those. Taken
+        together they would blink the left half in step with the right, which is
+        a rate the capture never ran at.
+        """
+        self._color = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        self._single = False
+        self.update()
+
+    def clear_final(self) -> None:
+        """Nothing is being shown any more, but the screen is still being read."""
+        if self._color is None:
+            return
+        self._color = None
         self.update()
 
     def clear(self) -> None:
         self._color = None
         self._raw = None
+        self._single = False
         self.update()
 
     def _fill_capsule(self, painter: QPainter, rect: QRectF, rgb: tuple[int, int, int]) -> None:
@@ -104,17 +137,19 @@ class AmbientPreview(QWidget):
         rect = QRectF(self.rect()).adjusted(1.0, 5.0, -1.0, -5.0)
 
         # Legacy single colour (set_color) — full-width capsule.
-        if self._color is not None and self._raw is None:
+        if self._single and self._color is not None:
             self._fill_capsule(painter, rect, self._color)
             return
 
         # Always two capsules with an arrow — running shows raw → final, idle
         # shows two calm placeholders, so the shape is identical either way.
+        # Each half stands or falls on its own: the screen can be read while
+        # nothing is going out, and a result can arrive before the first capture
+        # has been drawn.
         left, right = self._dual_rects(rect)
-        if self._color is not None:
-            self._fill_capsule(painter, left, self._raw)
-            self._fill_capsule(painter, right, self._color)
-        else:
-            self._fill_placeholder(painter, left)
-            self._fill_placeholder(painter, right)
+        for half, colour in ((left, self._raw), (right, self._color)):
+            if colour is None:
+                self._fill_placeholder(painter, half)
+            else:
+                self._fill_capsule(painter, half, colour)
         self._draw_arrow(painter, rect)

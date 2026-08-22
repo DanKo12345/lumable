@@ -475,11 +475,17 @@ class BleEventHandler:
         # The strip just went away: stop any running stream so it doesn't keep
         # writing to a dead connection (and so nothing auto-resumes on reconnect).
         if was_connected and not connected:
-            stop_all = getattr(host, "stop_all_streams", None)
-            if callable(stop_all):
-                stop_all()
+            lost = getattr(host, "note_link_lost", None)
+            if callable(lost):
+                lost()
             # No primary to mirror: stop chasing the extras until it is back.
             self._cancel_all_restores()
+        elif connected and not was_connected:
+            # A run that was on its way to a strip may resume — but not with
+            # anything it was holding when the link broke.
+            back = getattr(host, "note_link_back", None)
+            if callable(back):
+                back()
         add_mirror = getattr(host, "add_mirror_button", None)
         if add_mirror is not None:
             add_mirror.setEnabled(connected)

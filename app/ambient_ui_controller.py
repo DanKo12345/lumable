@@ -227,17 +227,17 @@ class AmbientUiController:
         label = getattr(host, "ambient_status_label", None)
         if label is None:
             return
-        mode = host._fusion_ui.mode()
-        reason = host._fusion_ui.unavailable_reason(mode)
-        if reason:
-            label.setText(host._tr(reason))
-        elif self.is_running() and host._fusion_ui.audio_lost():
-            label.setText(host._tr("fusion.audio_lost"))
-        elif self.is_running():
-            label.setText(host._tr(f"fusion.status.{mode}"))
-        else:
-            label.setText(host._tr("ambient.status_off"))
+        label.setText(host._tr(host._fusion_ui.status_key()))
         label.setVisible(True)
+        self.sync_toggle_label()
+
+    def sync_toggle_label(self) -> None:
+        """What the button offers to do next: light the strip, or show it here."""
+        host = self._host
+        button = getattr(host, "ambient_toggle_button", None)
+        if button is None:
+            return
+        button.setText(host._tr(host._fusion_ui.toggle_label_key()))
 
     def stats(self) -> dict:
         return {
@@ -306,9 +306,14 @@ class AmbientUiController:
         # connection will refuse the start, the user's profile must not be
         # silently changed as a side effect. When already running, the gates
         # already passed, so switching the profile live is fine.
-        if not self.is_running() and (not can_use("ambient_sync") or not host._is_connected):
+        # Asked before the saved profile is touched. A licence and a strip are
+        # no longer among the answers — they decide where the colours go, not
+        # whether the mode runs — but the principle is unchanged: a start that
+        # is going to refuse must not leave a changed profile behind it as the
+        # only trace. What can still refuse is a missing audio device.
+        if not self.is_running() and host._fusion_ui.unavailable_reason():
             host.ambient_toggle_button.setChecked(True)
-            self._toggle()  # surfaces the upsell / not-connected error
+            self._toggle()  # surfaces the reason
             return self.is_running()
         if profile_id:
             host.ambient_profile_segment.set_current(normalize_profile_id(profile_id), animate=False)
@@ -340,14 +345,6 @@ class AmbientUiController:
         if not host.ambient_toggle_button.isChecked():
             self._stop()
             return
-        if not can_use("ambient_sync"):
-            host.ambient_toggle_button.setChecked(False)
-            host._show_license_overlay()
-            return
-        if not host._is_connected:
-            host.ambient_toggle_button.setChecked(False)
-            host._show_error(host._tr("ambient.not_connected"))
-            return
         self._start()
 
     def _start(self) -> None:
@@ -360,7 +357,6 @@ class AmbientUiController:
                 host._show_error(host._tr(reason))
             return
         self._set_manual_controls_enabled(False)
-        host.ambient_toggle_button.setText(host._tr("ambient.toggle_on"))
         self.refresh_status()
         host._music_ui.refresh_shared_state()
         host._log(host._tr("ambient.started_log"))
@@ -373,7 +369,6 @@ class AmbientUiController:
         host.ambient_preview.clear()
         self._set_manual_controls_enabled(True)
         host.ambient_toggle_button.setChecked(False)
-        host.ambient_toggle_button.setText(host._tr("ambient.toggle_off"))
         self.refresh_status()
         host._music_ui.refresh_shared_state()
         if was_running:
@@ -436,9 +431,16 @@ class AmbientUiController:
         }
         save_settings(host._settings)
 
-    def _update_preview(self, raw_r: int, raw_g: int, raw_b: int, r: int, g: int, b: int) -> None:
-        host = self._host
-        host.ambient_preview.set_colors((raw_r, raw_g, raw_b), (r, g, b))
+    def _update_preview(self, raw_r: int, raw_g: int, raw_b: int, *_shaped: int) -> None:
+        """The left half only: the screen as the capture found it.
+
+        The right half used to be this controller's own finished colour, which
+        stopped being the answer the moment music could move it. It now comes
+        from the delivery itself, so the two capsules read "the screen" and
+        "what the strip was given" rather than two stages of the same sum with
+        the interesting part left out.
+        """
+        self._host.ambient_preview.set_source((raw_r, raw_g, raw_b))
 
     def _on_failed(self, reason: str) -> None:
         host = self._host
