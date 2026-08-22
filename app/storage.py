@@ -20,7 +20,7 @@ from app.license import validate_license_state
 from app.local_api.config import validate_api_settings
 from app.motion_policy import DEFAULT_MOTION_MODE, normalize_motion_mode
 from app.scene_store import normalize_group
-from app.scenes import normalize_scene, unwrap_scene, wrap_scene
+from app.scenes import is_future_scene_envelope, normalize_scene, unwrap_scene, wrap_scene
 from app.screen_profiles import normalize_profile_id
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -763,8 +763,12 @@ def _coerce_preset_scenes(data: Any) -> dict[str, str]:
 
 
 def validate_scenes(data: Any) -> list[dict[str, Any]]:
-    """Keep valid scene envelopes (re-canonicalised), drop corrupt ones, cap the
-    count. Tolerates a bare scene dict saved by an older build."""
+    """Keep known scenes canonical and intact future scenes opaque.
+
+    A newer envelope cannot be shown or applied safely, but dropping it here
+    means an older application erases it on its next ordinary settings save.
+    Corrupt envelopes are still discarded, and the shared cap still applies.
+    """
     if not isinstance(data, list):
         return []
     scenes: list[dict[str, Any]] = []
@@ -774,6 +778,10 @@ def validate_scenes(data: Any) -> list[dict[str, Any]]:
             scene = normalize_scene(entry)
         if scene is not None:
             scenes.append(wrap_scene(scene))
+        elif is_future_scene_envelope(entry):
+            # JSON data is treated as opaque: do not canonicalise a schema this
+            # build does not understand and cannot promise to reproduce.
+            scenes.append(json.loads(json.dumps(entry)))
         if len(scenes) >= 50:
             break
     return scenes

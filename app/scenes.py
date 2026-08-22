@@ -265,6 +265,28 @@ def wrap_scene(scene: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def is_future_scene_envelope(data: Any) -> bool:
+    """Whether this is an intact scene written by a newer application.
+
+    It cannot be displayed or applied safely, but it must survive a settings
+    round-trip unchanged. Otherwise merely opening an older build turns
+    "unknown for now" into permanent data loss.
+    """
+    if not isinstance(data, dict) or data.get("type") != SCENE_TYPE:
+        return False
+    version = data.get("version")
+    stored = data.get("payload")
+    checksum = data.get("checksum")
+    return bool(
+        isinstance(version, int)
+        and version > SCENE_VERSION
+        and isinstance(stored, dict)
+        and isinstance(checksum, str)
+        and checksum
+        and _checksum(stored) == checksum
+    )
+
+
 def unwrap_scene(data: Any) -> dict[str, Any] | None:
     """Read a stored envelope back to a scene, or ``None`` if it is the wrong
     type, a newer version, or fails its checksum. The checksum is **mandatory**

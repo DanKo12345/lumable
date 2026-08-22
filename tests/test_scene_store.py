@@ -12,7 +12,7 @@ from app.scene_store import (
     save_group,
     save_scene,
 )
-from app.scenes import make_scene
+from app.scenes import SCENE_VERSION, make_scene, wrap_scene
 
 
 def test_save_lists_and_gets_a_scene() -> None:
@@ -114,6 +114,43 @@ def test_scenes_survive_settings_validation() -> None:
     assert len(survived) == 1
     assert survived[0]["name"] == "Movie"
     assert survived[0]["state"]["rgb"] == [1, 2, 3]
+
+
+def test_future_scene_survives_validation_but_stays_unavailable() -> None:
+    from app.storage import validate_settings
+
+    future = wrap_scene(make_scene("From tomorrow", {"brightness": 40}))
+    future["version"] = SCENE_VERSION + 1
+    settings = validate_settings({"scenes": [future]})
+
+    assert settings["scenes"] == [future]
+    assert list_scenes(settings) == []
+
+
+def test_corrupt_future_scene_is_not_preserved() -> None:
+    from app.storage import validate_settings
+
+    future = wrap_scene(make_scene("Broken tomorrow", {"brightness": 40}))
+    future["version"] = SCENE_VERSION + 1
+    future["payload"]["name"] = "changed after checksum"
+
+    assert validate_settings({"scenes": [future]})["scenes"] == []
+
+
+def test_editing_known_scenes_keeps_an_opaque_future_scene() -> None:
+    from app.storage import validate_settings
+
+    future = wrap_scene(make_scene("From tomorrow", {"brightness": 40}))
+    future["version"] = SCENE_VERSION + 1
+    settings = validate_settings({"scenes": [future]})
+
+    known = save_scene(settings, make_scene("Today", {"brightness": 20}))
+    assert known is not None
+    assert settings["scenes"][0] == future
+    assert [scene["name"] for scene in list_scenes(settings)] == ["Today"]
+
+    assert delete_scene(settings, known["scene_id"]) is True
+    assert settings["scenes"] == [future]
 
 
 def test_groups_survive_settings_validation() -> None:
