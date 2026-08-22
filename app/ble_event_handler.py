@@ -730,6 +730,16 @@ class BleEventHandler:
         for device in devices:
             host.device_combo.addItem(self._device_label(device), device["address"])
         host._sync_connect_buttons()
+        # A mirror scan temporarily borrows the discovery field. If it found
+        # nothing new (including when it only rediscovered an existing extra),
+        # put the connected primary back instead of leaving the field empty or
+        # pointing at a strip that is already listed below.
+        if not self._has_mirror_candidate():
+            primary = str(host._settings.get("last_device_address", "")).strip()
+            self._select_primary_in_combo(
+                primary,
+                self._device_name_for_address(primary) or primary,
+            )
         self.add_selected_as_mirror()
 
     def refresh_mirror_list(self, addresses: list[str]) -> None:
@@ -741,6 +751,11 @@ class BleEventHandler:
         for address in live:
             self._cancel_restore(address)  # it is up; stop the retry schedule
         primary = str(host._settings.get("last_device_address", "")).strip().upper()
+        if getattr(host, "_is_connected", False) and primary:
+            self._select_primary_in_combo(
+                primary,
+                self._device_name_for_address(primary) or primary,
+            )
         offline = [item for item in self._saved_extras() if item not in live and item != primary]
         rows = [(item, True) for item in addresses] + [(item, False) for item in offline]
 

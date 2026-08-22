@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from PySide6.QtWidgets import QApplication
+
 from app import ble_event_handler
 from app.ble_event_handler import BleEventHandler
+from app.widgets.static_popup_combo_box import StaticPopupComboBox
 
 
 class FakeCombo:
@@ -587,6 +590,43 @@ def test_primary_changed_adds_and_selects_a_primary_missing_from_scan_results(mo
 
     assert host.device_combo.itemData(host.device_combo.currentIndex()) == "11:22:33:44:55:66"
     assert any(device["address"] == "11:22:33:44:55:66" for device in host._devices)
+
+
+def test_empty_mirror_scan_restores_visible_primary_in_real_combo(monkeypatch) -> None:
+    monkeypatch.setattr(ble_event_handler, "save_settings", lambda settings: None)
+    QApplication.instance() or QApplication([])
+    primary = "BE:68:3D:0C:5C:03"
+    host = FakeHost(
+        _ble=PromoteBle([]),
+        _settings={"last_device_address": primary, "last_device_name": "ELK-BLEDOM CE"},
+        _is_connected=True,
+    )
+    host.device_combo = StaticPopupComboBox(lambda: {}, lambda: True)
+    handler = BleEventHandler(host)
+
+    handler._handle_mirror_scan_result([])
+
+    assert host.device_combo.currentData() == primary
+    assert host.device_combo.currentText() == "ELK-BLEDOM CE  |  BE:68:3D:0C:5C:03"
+
+
+def test_mirror_refresh_returns_picker_from_extra_to_primary(monkeypatch) -> None:
+    monkeypatch.setattr(ble_event_handler, "save_settings", lambda settings: None)
+    primary = "BE:68:3D:0C:5C:03"
+    extra = "BE:68:46:09:19:00"
+    host = FakeHost(
+        _ble=PromoteBle([extra]),
+        _devices=[{"name": "ELK-BLEDOM 8E", "address": extra, "rssi": "-87"}],
+        _settings={"last_device_address": primary, "last_device_name": "ELK-BLEDOM CE"},
+        _is_connected=True,
+    )
+    host.device_combo.addItem("ELK-BLEDOM 8E", extra)
+    handler = BleEventHandler(host)
+
+    # mirrors_changed arrives after the extra was accepted.
+    handler.refresh_mirror_list([extra])
+
+    assert host.device_combo.itemData(host.device_combo.currentIndex()) == primary
 
 
 def test_primary_changed_prefers_the_saved_custom_name(monkeypatch) -> None:
