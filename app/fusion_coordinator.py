@@ -110,6 +110,9 @@ class FusionCoordinator(QObject):
         self._screen_token = 0
         self._music_token = 0
         self._beat_gain = 1.0
+        # Whether the sink is a radio. Set for real at every start; the default
+        # matters only for a coordinator asked about itself before it has run.
+        self._measures_a_link = True
         self._last_frame = ComposedFrame()
         self._dropped_screen = 0
         self._dropped_music = 0
@@ -143,7 +146,14 @@ class FusionCoordinator(QObject):
     def is_running(self) -> bool:
         return self._timer.isActive()
 
-    def start(self, sink: Callable[..., None], *, mode: str, initial: RGB = (0, 0, 0)) -> None:
+    def start(
+        self,
+        sink: Callable[..., None],
+        *,
+        mode: str,
+        initial: RGB = (0, 0, 0),
+        measures_a_link: bool = True,
+    ) -> None:
         """Take the output. ``sink`` is the only route to the strip from here.
 
         The engine is not started here. It writes as soon as it is running, and
@@ -151,6 +161,15 @@ class FusionCoordinator(QObject):
         on the strip, a colour from before the mode began. The first frame worth
         sending wakes it and seeds it with that frame; ``initial`` is kept only
         as the fallback seed for a caller that asks for one.
+
+        ``measures_a_link`` is false when the sink is not a radio — a preview
+        with no strip attached. Everything else is deliberately identical: the
+        same pacing, the same beat held until a delivery carries it, so what is
+        shown has the length and the cadence the strip would have given it.
+        What is *not* the same is the delay from a strike to its command, which
+        over a preview measures a timer talking to itself. Recorded, it would
+        appear in a report beside real figures with nothing to say it is not
+        one, so it is not recorded.
         """
         self._compositor.set_mode(mode)
         self._compositor.set_sources_running(True)
@@ -160,6 +179,7 @@ class FusionCoordinator(QObject):
         self._dropped_screen = 0
         self._dropped_music = 0
         self._sink = sink
+        self._measures_a_link = bool(measures_a_link)
         self._initial = initial
         self._held_beat = None
         self._latest_beat_id_seen = 0
@@ -237,8 +257,11 @@ class FusionCoordinator(QObject):
             return False
         accepted = sink(red, green, blue)
         if accepted is not False and beat_id:
+            # Popped either way: the record of when this beat was struck has
+            # served its purpose once the beat is on its way, and a preview that
+            # kept them would grow a dictionary for the length of the session.
             struck_at = self._beat_struck_at.pop(beat_id, None)
-            if struck_at is not None:
+            if struck_at is not None and self._measures_a_link:
                 delay = (self._clock() - struck_at) * 1000.0
                 self._beat_delays_ms.append(delay)
                 # A window, not a lifetime: what matters is how it is behaving
@@ -249,6 +272,15 @@ class FusionCoordinator(QObject):
             if held is not None and held[0] == beat_id:
                 self._held_beat = None
         return accepted
+
+    def measures_a_link(self) -> bool:
+        """Whether this run's writes go to a strip, or to a preview.
+
+        Asked by whoever reports the delay figures: over a preview there are
+        none, and a report must say so rather than print three zeroes that read
+        as a very fast link.
+        """
+        return self._measures_a_link
 
     def beat_delays_ms(self) -> tuple[float, float, int]:
         """How long a struck beat waited for a command to carry it: p50, p95, n.
@@ -433,18 +465,11 @@ class FusionCoordinator(QObject):
 
         frame = self._compositor.compose(beat_gain=self._beat_gain)
         self._last_frame = frame
-        if frame.should_send:
-            red, green, blue = frame.rgb
-            # The factor dims, the beat's boost lifts. The boost is already
-            # limited by the brightest channel, so this multiplication cannot
-            # clip one channel while the others keep rising — which is what
-            # would turn a beat into a hue change.
-            scale = frame.brightness_factor * frame.beat_boost
-            colour = (
-                min(255, round(red * scale)),
-                min(255, round(green * scale)),
-                min(255, round(blue * scale)),
-            )
+        if frame.should_send and frame.output_rgb is not None:
+            # Taken, not recomputed. The compositor is the only place that turns
+            # a base, a factor and a beat into three bytes; anything watching
+            # this frame sees the same three.
+            colour = frame.output_rgb
             if not self._engine.is_running() and self._sink is not None:
                 # Woken by the first frame there is actually something to send,
                 # and seeded with that frame. Restarting it when the light comes

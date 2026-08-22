@@ -56,9 +56,13 @@ def _lit(frame) -> tuple[int, int, int]:
     factor alone. The factor is only half of it — the beat spends its reserve
     through the factor on a bright frame and amplifies the colour on a dark one,
     and a test that watched one of the two would call the other one broken.
+
+    Read off the frame rather than worked out here: the compositor is the one
+    place that turns a base, a factor and a beat into three bytes, so every
+    claim in this file rides on the same number the strip is given. That the
+    number itself is right is pinned separately, once, below.
     """
-    scale = frame.brightness_factor * frame.beat_boost
-    return tuple(min(255, round(channel * scale)) for channel in frame.rgb)
+    return frame.output_rgb
 
 
 def _settle(
@@ -628,3 +632,57 @@ def test_the_plain_screen_mode_is_the_screen_byte_for_byte() -> None:
 
     assert frame.beat_boost == 1.0
     assert _lit(frame) == (200, 120, 40)
+
+
+def test_the_shown_colour_is_the_factor_and_the_beat_applied_once() -> None:
+    """The arithmetic itself, worked out here and nowhere else in this file.
+
+    Every other test takes the colour off the frame, which is the point of the
+    field — one rounding rule, one place. This is the one test that does not
+    trust it, so that "they agree" cannot mean "they are both wrong".
+    """
+    comp, clock = _rig()
+    frame = _settle(comp, clock, level=0.9, beat=1.0)
+
+    scale = frame.brightness_factor * frame.beat_boost
+    expected = tuple(max(0, min(255, round(channel * scale))) for channel in frame.rgb)
+    assert frame.output_rgb == expected
+
+
+def test_a_blocked_output_still_says_what_the_frame_looks_like() -> None:
+    """Not writing to the strip is not the same as having nothing to show.
+
+    A preview running without a strip, and a live run waiting to be allowed
+    back after a reconnect, both compose exactly as usual. Only the permission
+    to write is missing, and that is what ``should_send`` is for.
+    """
+    comp, clock = _rig()
+    lit = _settle(comp, clock, level=0.6)
+
+    comp.set_output_allowed(False)
+    _feed(comp, clock, level=0.6)
+    blocked = comp.compose()
+
+    assert blocked.should_send is False
+    assert blocked.reason == "output_blocked"
+    assert blocked.output_rgb == lit.output_rgb, "the same picture, simply not sent"
+
+
+def test_a_frame_with_no_base_has_no_colour_to_show() -> None:
+    """Absence is reported as absence. A preview clears; it does not freeze.
+
+    Black is a colour a screen can genuinely be, so "nothing was captured" and
+    "the screen is black" must not arrive as the same three bytes.
+    """
+    comp, clock = _rig()
+    assert comp.compose().output_rgb is None
+
+    _settle(comp, clock, level=0.5)
+    clock.advance(BASE_STALE_S + 0.1)
+    stale = comp.compose()
+    assert stale.reason == "base_stale"
+    assert stale.output_rgb is None
+
+    comp.submit_base(BaseSample(rgb=(0, 0, 0), brightness_factor=0.8, at=clock.now))
+    black = comp.compose()
+    assert black.output_rgb == (0, 0, 0), "a black screen is a colour, not an absence"

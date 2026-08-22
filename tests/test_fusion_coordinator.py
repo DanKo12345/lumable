@@ -1030,7 +1030,7 @@ def test_the_loudness_is_the_latest_block_not_the_loudest() -> None:
 
 
 # ── a struck beat waits for a write to carry it ───────────────────────
-def _beat_rig(*, accept: bool = True):
+def _beat_rig(*, accept: bool = True, measures_a_link: bool = True):
     """A coordinator whose link can be told to accept or refuse."""
     clock = _Clock()
     state = {"accept": accept, "writes": [], "attempts": 0}
@@ -1045,7 +1045,7 @@ def _beat_rig(*, accept: bool = True):
     coordinator = FusionCoordinator(clock=clock, send_interval_ms=33)
     coordinator.expect_screen(1)
     coordinator.expect_music(1)
-    coordinator.start(sink, mode="screen_music")
+    coordinator.start(sink, mode="screen_music", measures_a_link=measures_a_link)
     return coordinator, clock, state
 
 
@@ -1502,3 +1502,93 @@ def test_an_accent_reaches_the_strip_as_a_brighter_write(app, screen, music) -> 
         colour for colour, beat in written if beat and max(colour) == accent
     )
     assert accent_colour[0] > accent_colour[1] > accent_colour[2], accent_colour
+
+
+# ── a preview, which is the same machinery with no radio at the end ───
+def _carry_one_beat(coordinator, clock, app, state) -> float:
+    """Settle the influence, strike once, wait for a delivery. Returns the
+    clock reading at the strike, which is when the hold's timeout starts."""
+    _settle_music(coordinator, clock)
+    clock.advance(0.02)
+    _play_block(coordinator, clock, envelope=1.0, beat_id=1)
+    struck_at = clock.now
+    coordinator._tick()
+    deadline = time.monotonic() + 3.0
+    while not state["writes"] and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert state["writes"], "nothing carried the beat"
+    return struck_at
+
+
+def test_a_preview_ends_a_beats_turn_on_its_own_delivery(app) -> None:
+    """A beat must not last longer just because nobody is listening.
+
+    The hold has two ways out: something carried the strike, or its moment
+    passed. Over a strip the first happens at the first accepted write. With no
+    strip and no delivery of its own, only the timeout would be left — and a
+    preview would show every beat at full strength for the whole of it, twice as
+    long as the real thing and brighter throughout. This asserts the first way
+    out, and the frozen clock is what rules out the second: the timeout is
+    measured on it, and it has not moved.
+    """
+    coordinator, clock, state = _beat_rig(measures_a_link=False)
+    try:
+        struck_at = _carry_one_beat(coordinator, clock, app, state)
+
+        assert clock.now == struck_at, "the test moved the clock the timeout is measured on"
+        assert coordinator._held_beat is None, "the beat was still waiting for a strip"
+    finally:
+        coordinator.stop()
+
+
+def test_a_preview_is_paced_like_the_link_not_like_the_ticks(app) -> None:
+    """One delivery per interval, not one per composed frame.
+
+    Composition runs at the tick, delivery at the link's cadence — roughly three
+    frames for every write. A preview fed every frame would show a beat at a
+    smoothness the strip can never reach, which is exactly the impression this
+    mode exists to avoid giving.
+    """
+    coordinator, clock, state = _beat_rig(measures_a_link=False)
+    try:
+        _carry_one_beat(coordinator, clock, app, state)
+        before = state["attempts"]
+
+        # Ten frames composed back to back, inside one interval of real time.
+        for _ in range(10):
+            clock.advance(0.005)
+            _play_block(coordinator, clock, envelope=0.0, beat_id=1)
+            coordinator._tick()
+            app.processEvents()
+
+        assert state["attempts"] - before <= 2, (
+            f"the preview wrote on ticks rather than on the interval: "
+            f"{state['attempts'] - before} deliveries for ten frames"
+        )
+    finally:
+        coordinator.stop()
+
+
+def test_a_preview_reports_no_link_delays_rather_than_flattering_ones(app) -> None:
+    """Over a preview the figure would be a timer talking to itself.
+
+    Printed beside real numbers with nothing to mark it, it would read as an
+    extraordinarily fast link. There is no honest number here, so there is none.
+    """
+    preview, clock, state = _beat_rig(measures_a_link=False)
+    try:
+        _carry_one_beat(preview, clock, app, state)
+        assert preview.measures_a_link() is False
+        assert preview.beat_delays_ms() == (0.0, 0.0, 0)
+        assert preview._beat_struck_at == {}, "the strike times were never cleared"
+    finally:
+        preview.stop()
+
+    live, clock, state = _beat_rig()
+    try:
+        _carry_one_beat(live, clock, app, state)
+        assert live.measures_a_link() is True
+        assert live.beat_delays_ms()[2] >= 1, "a real link recorded nothing"
+    finally:
+        live.stop()

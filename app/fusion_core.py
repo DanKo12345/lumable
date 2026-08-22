@@ -177,6 +177,19 @@ class ComposedFrame:
     # Which beat that boost belongs to, so whoever writes to the strip can say
     # afterwards which strike actually went out. 0 when the frame carries none.
     beat_id: int = 0
+    # The colour as it should actually appear: the base with the factor and the
+    # beat already in it, rounded and clipped exactly once. The single answer to
+    # "what does this frame look like" — the strip and any preview both take it
+    # from here rather than each repeating the arithmetic, because two copies of
+    # a rounding rule are two chances to disagree about a colour.
+    #
+    # ``None`` means there is nothing to show: no base yet, or one too old to
+    # stand for the picture. Distinct from black, which is a colour a screen can
+    # genuinely be, and which a preview must be able to show as such.
+    output_rgb: RGB | None = None
+    # Whether the *strip* should be written to. Narrower than "is there a
+    # colour": a blocked output still composes a frame with a colour in it, and
+    # anything watching without writing is entitled to see it.
     should_send: bool = False
     reason: str = "no_base"
     activity: float = 0.0
@@ -316,7 +329,8 @@ class FusionCompositor:
         ):
             self._overlay = None
 
-        if not self._output_allowed:
+        blocked = not self._output_allowed
+        if blocked and (base is None or base_stale):
             # The mode, the base and the influence all stay exactly as they are.
             return ComposedFrame(
                 reason="output_blocked",
@@ -383,13 +397,25 @@ class FusionCompositor:
             brightness_factor += (_clamp(overlay.brightness_factor) - brightness_factor) * overlay_weight
             reason = "overlay"
 
+        brightness_factor = _clamp(brightness_factor)
+        rgb = (_clamp8(rgb[0]), _clamp8(rgb[1]), _clamp8(rgb[2]))
+        # The factor dims and the beat lifts, in one step. The boost is already
+        # limited by the brightest channel, so this cannot clip one channel
+        # while the others keep rising — which is what would turn a beat into a
+        # change of hue.
+        scale = brightness_factor * boost
         return ComposedFrame(
-            rgb=(_clamp8(rgb[0]), _clamp8(rgb[1]), _clamp8(rgb[2])),
-            brightness_factor=_clamp(brightness_factor),
+            rgb=rgb,
+            brightness_factor=brightness_factor,
             beat_boost=boost,
             beat_id=beat_id,
-            should_send=True,
-            reason=reason,
+            output_rgb=(
+                _clamp8(rgb[0] * scale),
+                _clamp8(rgb[1] * scale),
+                _clamp8(rgb[2] * scale),
+            ),
+            should_send=not blocked,
+            reason="output_blocked" if blocked else reason,
             activity=activity,
             music_stale=music_stale,
             base_stale=False,
