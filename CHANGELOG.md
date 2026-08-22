@@ -2,6 +2,38 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.4.1] - 2026-08-23
+
+Preview and polish: Screen Sync can now be tried without a connected strip, device scans keep the
+chosen main controller stable, update information is easier to read, and interface transitions feel
+continuous in both directions.
+
+### Added
+- **Screen Sync preview without a strip.** Screen and Screen + music run through the real compositor
+  and show the final output colour without sending any Bluetooth commands.
+- Clear preview/live wording in the Screen Sync card and diagnostics, including the actual composed
+  colour after brightness and beat modulation.
+
+### Changed
+- Preview runs keep the same pacing and beat behaviour as live output, while radio-only metrics are
+  marked as not applicable instead of reporting misleading zeroes.
+- The experimental onset comparison is disabled by default, removing a second FFT from every audio
+  block; it remains available through `LUMABLE_ONSET_SHADOW` for diagnostics.
+- Expandable controls, compact/full light previews and the RGB picker now animate smoothly on both
+  opening and closing, while Reduced Motion still settles immediately.
+- Update checks retry temporary GitHub gateway failures, and release notes are rendered as readable
+  text instead of exposing HTML markup.
+
+### Fixed
+- Scanning for additional strips no longer changes the selected primary controller, duplicates the
+  primary as an extra, or leaves the sidebar showing the previous device.
+- A live Screen Sync session that loses its strip keeps its intent but waits for a fresh captured
+  frame before writing after reconnect.
+- Valid scenes written by a newer LumaBLE version survive an older version's settings round-trip
+  unchanged instead of being discarded.
+- Compact preview glow is no longer clipped, and final animation frames no longer jump to a different
+  layout.
+
 ## [0.4.0] - 2026-08-21
 
 Luma Fusion brings screen colour and music together. The strip can follow the picture while beats
