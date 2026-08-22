@@ -85,7 +85,11 @@ def test_saving_a_ble_report_runs_the_missing_scan_first(monkeypatch, tmp_path) 
         select_section(window, "settings")
         app.processEvents()
         monkeypatch.setattr(window._ble, "scan_snapshot", lambda: snapshots[0])
-        monkeypatch.setattr(window._ble_events, "start_scan", lambda: started.append(True) or True)
+        monkeypatch.setattr(
+            window._ble_events,
+            "start_scan",
+            lambda **kwargs: started.append(kwargs) or True,
+        )
         monkeypatch.setattr(
             "app.diagnostics_controller.QFileDialog.getSaveFileName",
             lambda *_args: (str(destination), ""),
@@ -93,8 +97,8 @@ def test_saving_a_ble_report_runs_the_missing_scan_first(monkeypatch, tmp_path) 
         monkeypatch.setattr(DiagnosticsController, "_reveal_in_explorer", staticmethod(lambda _path: None))
 
         window._diagnostics_ctrl.export_scan_snapshot()
-        assert started == [True]
         assert window._diagnostics_ctrl._save_after_scan
+        assert started == [{"auto_connect": False}]
         assert not destination.exists(), "the app tried to save before scanning"
 
         snapshots[0] = ScanSnapshot(
@@ -121,7 +125,7 @@ def test_a_refused_scan_does_not_leave_a_future_export_armed(monkeypatch) -> Non
         window.show()
         app.processEvents()
         monkeypatch.setattr(window._ble, "scan_snapshot", lambda: ScanSnapshot())
-        monkeypatch.setattr(window._ble_events, "start_scan", lambda: False)
+        monkeypatch.setattr(window._ble_events, "start_scan", lambda **_kwargs: False)
 
         window._diagnostics_ctrl.export_scan_snapshot()
 

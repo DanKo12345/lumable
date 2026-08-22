@@ -146,7 +146,7 @@ class DiagnosticsController:
         state = snapshot_state(snapshot, len(getattr(host._ble, "_unknown_devices", [])))
         if state == STATE_NO_SNAPSHOT:
             self._save_after_scan = True
-            if not host._ble_events.start_scan():
+            if not host._ble_events.start_scan(auto_connect=False):
                 self._save_after_scan = False
                 return
             scroll = getattr(host, "body_scroll", None)

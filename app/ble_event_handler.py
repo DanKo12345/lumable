@@ -30,6 +30,7 @@ class BleEventHandler:
     def __init__(self, host: BleEventHost) -> None:
         self._host = host
         self._mirror_scan_pending = False
+        self._scan_auto_connect = True
         self._mirror_search_phase = 0
         # MainWindow is a QObject in production, while the small unit-test host
         # deliberately is not. Keep the timer parented in the app without making
@@ -340,7 +341,7 @@ class BleEventHandler:
             combo.setCurrentIndex(index)
         host._sync_connect_buttons()
 
-    def start_scan(self) -> bool:
+    def start_scan(self, _checked: bool = False, *, auto_connect: bool = True) -> bool:
         host = self._host
         if host._is_connected:
             self.show_error(host._tr("error.disconnect_before_scan"))
@@ -356,6 +357,7 @@ class BleEventHandler:
         # result still on its way is no longer answering a question we have.
         host._inspection_token += 1
         host._clear_device_problem()
+        self._scan_auto_connect = bool(auto_connect)
         host._scan_in_progress = True
         host._devices = []
         host.device_combo.clear()
@@ -444,6 +446,8 @@ class BleEventHandler:
 
     def populate_devices(self, devices: list[dict[str, Any]]) -> None:
         host = self._host
+        auto_connect = self._scan_auto_connect
+        self._scan_auto_connect = True
         host._scan_in_progress = False
         if getattr(self, "_mirror_scan_pending", False):
             # This scan was triggered by "Add strip" while already connected —
@@ -480,11 +484,11 @@ class BleEventHandler:
         # Auto-connect when exactly one *supported* controller is found, even if
         # unrecognised BLE devices are also nearby (there usually are several).
         # Unknown devices are never auto-connected — the user picks one to probe.
-        automatic = (
-            preferred_device
-            if preferred_device is not None and preferred_device.get("supported", True)
-            else supported[0] if len(supported) == 1 else None
-        )
+        # A scan with several supported controllers is a choice, even when one
+        # of them was used last time. Startup autoconnect already handles the
+        # remembered address directly; reconnecting it here would make a manual
+        # search ignore the closest-first list before the user can choose.
+        automatic = supported[0] if auto_connect and len(supported) == 1 else None
         if automatic is not None:
             device = automatic
             index = host.device_combo.findData(device["address"])
@@ -655,6 +659,7 @@ class BleEventHandler:
             self._set_mirror_searching(False)
         self._host._connect_in_progress = False
         self._host._scan_in_progress = False
+        self._scan_auto_connect = True
         if not self._host._is_connected:
             self._host.device_status.setText(self._host._tr("device.status.not_connected"))
         self._sync_last_device_hint()
@@ -668,11 +673,11 @@ class BleEventHandler:
         host = self._host
         if not host._is_connected:
             return
-        primary = str(host._settings.get("last_device_address", "")).strip()
-        mirrors = set(host._ble.mirror_addresses())
+        primary = str(host._settings.get("last_device_address", "")).strip().upper()
+        mirrors = {str(item).strip().upper() for item in host._ble.mirror_addresses()}
 
         def is_candidate(device: dict[str, Any]) -> bool:
-            address = str(device.get("address", "")).strip()
+            address = str(device.get("address", "")).strip().upper()
             return bool(address) and bool(device.get("supported", True)) and address != primary and address not in mirrors
 
         candidates = [device for device in host._devices if is_candidate(device)]
@@ -705,10 +710,10 @@ class BleEventHandler:
 
     def _has_mirror_candidate(self) -> bool:
         host = self._host
-        primary = str(host._settings.get("last_device_address", "")).strip()
-        mirrors = set(host._ble.mirror_addresses())
+        primary = str(host._settings.get("last_device_address", "")).strip().upper()
+        mirrors = {str(item).strip().upper() for item in host._ble.mirror_addresses()}
         for device in host._devices:
-            address = str(device.get("address", "")).strip()
+            address = str(device.get("address", "")).strip().upper()
             if address and device.get("supported", True) and address != primary and address not in mirrors:
                 return True
         return False

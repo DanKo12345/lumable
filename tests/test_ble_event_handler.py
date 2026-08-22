@@ -334,7 +334,7 @@ def test_populate_devices_autoconnects_single_device() -> None:
     assert host._ble.connected_to == ["AA:BB:CC:DD:EE:FF"]
 
 
-def test_populate_devices_autoconnects_the_preferred_device_among_many() -> None:
+def test_populate_devices_selects_preferred_among_many_without_connecting() -> None:
     host = FakeHost(_settings={"last_device_address": "BB:CC:DD:EE:FF:00"})
     handler = BleEventHandler(host)
     devices = [
@@ -345,9 +345,36 @@ def test_populate_devices_autoconnects_the_preferred_device_among_many() -> None
     handler.populate_devices(devices)
 
     assert host.device_combo.currentIndex() == 1
-    assert host.device_status.text == "device.status.connecting"
-    assert host._connect_in_progress is True
-    assert host._ble.connected_to == ["BB:CC:DD:EE:FF:00"]
+    assert host.device_status.text == "device.status.found_many:count=2"
+    assert host._connect_in_progress is False
+    assert host._ble.connected_to == []
+
+
+def test_scan_can_be_read_only_even_with_one_supported_device() -> None:
+    host = FakeHost()
+    handler = BleEventHandler(host)
+
+    handler.start_scan(auto_connect=False)
+    handler.populate_devices(
+        [{"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF", "rssi": -40}]
+    )
+
+    assert host.device_combo.currentIndex() == 0
+    assert host._connect_in_progress is False
+    assert host._ble.connected_to == []
+
+
+def test_read_only_scan_policy_does_not_leak_into_the_next_manual_scan() -> None:
+    host = FakeHost()
+    handler = BleEventHandler(host)
+    device = {"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF", "rssi": -40}
+
+    handler.start_scan(auto_connect=False)
+    handler.populate_devices([device])
+    handler.start_scan()
+    handler.populate_devices([device])
+
+    assert host._ble.connected_to == ["AA:BB:CC:DD:EE:FF"]
 
 
 def test_status_click_connects_the_selected_scan_result_instead_of_rescanning() -> None:
@@ -627,6 +654,22 @@ def test_mirror_refresh_returns_picker_from_extra_to_primary(monkeypatch) -> Non
     handler.refresh_mirror_list([extra])
 
     assert host.device_combo.itemData(host.device_combo.currentIndex()) == primary
+
+
+def test_mirror_candidates_compare_addresses_case_insensitively() -> None:
+    primary = "BE:68:3D:0C:5C:03"
+    extra = "BE:68:46:09:19:00"
+    host = FakeHost(
+        _ble=PromoteBle([extra.lower()]),
+        _devices=[
+            {"name": "Primary", "address": primary.lower(), "supported": True},
+            {"name": "Extra", "address": extra, "supported": True},
+        ],
+        _settings={"last_device_address": primary},
+        _is_connected=True,
+    )
+
+    assert BleEventHandler(host)._has_mirror_candidate() is False
 
 
 def test_primary_changed_prefers_the_saved_custom_name(monkeypatch) -> None:
