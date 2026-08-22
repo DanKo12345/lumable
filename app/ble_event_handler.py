@@ -264,6 +264,7 @@ class BleEventHandler:
                 saved.append(item)
         self._store_extras(saved)
         self._relabel_device_combo()
+        self._select_primary_in_combo(address, display)
         self._sync_last_device_hint(name=display, address=address)
         self._sync_sidebar_connection_hint(display)
         self.refresh_mirror_list(host._ble.mirror_addresses())
@@ -303,6 +304,41 @@ class BleEventHandler:
                 if str(device.get("address", "")).strip() == str(address).strip():
                     combo.setItemText(index, self._device_label(device))
                     break
+
+    def _select_primary_in_combo(self, address: str, name: str = "") -> None:
+        """Make the discovery field agree with the connected primary.
+
+        The field also contains scan candidates, including extra strips. Merely
+        relabelling those entries leaves whichever candidate happened to be
+        selected looking like the active controller after a role swap.
+        """
+        host = self._host
+        combo = getattr(host, "device_combo", None)
+        address = str(address).strip()
+        if combo is None or not address:
+            return
+        index = combo.findData(address)
+        if index < 0:
+            device = next(
+                (
+                    item
+                    for item in host._devices
+                    if str(item.get("address", "")).strip() == address
+                ),
+                None,
+            )
+            if device is None:
+                device = {
+                    "name": str(name or address).strip(),
+                    "address": address,
+                    "rssi": "-",
+                }
+                host._devices.append(device)
+            combo.addItem(self._device_label(device), address)
+            index = combo.findData(address)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        host._sync_connect_buttons()
 
     def start_scan(self) -> bool:
         host = self._host
@@ -509,13 +545,10 @@ class BleEventHandler:
         host._refresh_effect_names()
         host._refresh_quick_mode_buttons()
         if connected and _is_plausible_ble_address(address):
-            if address and host.device_combo.findData(address) < 0:
-                display_name = self._device_name_for_address(address) or address
-                device = {"name": display_name, "address": address, "rssi": "-"}
-                host._devices = [device]
-                host.device_combo.clear()
-                host.device_combo.addItem(self._device_label(device), address)
-                host.device_combo.setCurrentIndex(0)
+            self._select_primary_in_combo(
+                address,
+                self._device_name_for_address(address) or address,
+            )
             host._settings["last_device_address"] = address
             device_name = self._device_name_for_address(address)
             if device_name and device_name != address:

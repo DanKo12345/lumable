@@ -551,6 +551,13 @@ def test_primary_changed_saves_the_new_main_strip(monkeypatch) -> None:
     )
     host.device_status_hint.setText("Desk")
     host._scene_ui = FakeSceneUi()
+    host._devices = [
+        {"name": "Desk", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-45"},
+        {"name": "TV", "address": "11:22:33:44:55:66", "rssi": "-55"},
+    ]
+    for device in host._devices:
+        host.device_combo.addItem(device["name"], device["address"])
+    host.device_combo.setCurrentIndex(0)
     handler = BleEventHandler(host)
 
     handler.on_primary_changed("11:22:33:44:55:66", "TV")
@@ -560,8 +567,26 @@ def test_primary_changed_saves_the_new_main_strip(monkeypatch) -> None:
     assert saved and saved[-1]["last_device_address"] == "11:22:33:44:55:66"
     assert host.last_device_label.text == "device.last:name=TV,address=11:22:33:44:55:66"
     assert host.device_status_hint.text == "TV"
+    assert host.device_combo.itemData(host.device_combo.currentIndex()) == "11:22:33:44:55:66"
     # Scene targets ("primary", groups) follow the new main strip.
     assert host._scene_ui.refreshed == 1
+
+
+def test_primary_changed_adds_and_selects_a_primary_missing_from_scan_results(monkeypatch) -> None:
+    monkeypatch.setattr(ble_event_handler, "save_settings", lambda settings: None)
+    old = {"name": "Desk", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-45"}
+    host = FakeHost(
+        _ble=PromoteBle([old["address"]]),
+        _devices=[old],
+        _settings={"last_device_address": old["address"], "last_device_name": old["name"]},
+        _is_connected=True,
+    )
+    host.device_combo.addItem("Desk", old["address"])
+
+    BleEventHandler(host).on_primary_changed("11:22:33:44:55:66", "TV")
+
+    assert host.device_combo.itemData(host.device_combo.currentIndex()) == "11:22:33:44:55:66"
+    assert any(device["address"] == "11:22:33:44:55:66" for device in host._devices)
 
 
 def test_primary_changed_prefers_the_saved_custom_name(monkeypatch) -> None:
