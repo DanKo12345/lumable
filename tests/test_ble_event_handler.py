@@ -130,6 +130,7 @@ class FakeHost:
 
     device_combo: FakeCombo = field(default_factory=FakeCombo)
     device_status: FakeLabel = field(default_factory=FakeLabel)
+    device_status_hint: FakeLabel = field(default_factory=FakeLabel)
     last_device_label: FakeLabel = field(default_factory=FakeLabel)
     device_onboarding_label: FakeLabel = field(default_factory=FakeLabel)
     scan_button: FakeButton = field(default_factory=FakeButton)
@@ -546,7 +547,9 @@ def test_primary_changed_saves_the_new_main_strip(monkeypatch) -> None:
     host = FakeHost(
         _ble=PromoteBle(["AA:BB:CC:DD:EE:FF"]),
         _settings={"last_device_address": "AA:BB:CC:DD:EE:FF", "last_device_name": "Desk"},
+        _is_connected=True,
     )
+    host.device_status_hint.setText("Desk")
     host._scene_ui = FakeSceneUi()
     handler = BleEventHandler(host)
 
@@ -556,6 +559,7 @@ def test_primary_changed_saves_the_new_main_strip(monkeypatch) -> None:
     assert host._settings["last_device_name"] == "TV"
     assert saved and saved[-1]["last_device_address"] == "11:22:33:44:55:66"
     assert host.last_device_label.text == "device.last:name=TV,address=11:22:33:44:55:66"
+    assert host.device_status_hint.text == "TV"
     # Scene targets ("primary", groups) follow the new main strip.
     assert host._scene_ui.refreshed == 1
 

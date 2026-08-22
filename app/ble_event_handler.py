@@ -265,6 +265,7 @@ class BleEventHandler:
         self._store_extras(saved)
         self._relabel_device_combo()
         self._sync_last_device_hint(name=display, address=address)
+        self._sync_sidebar_connection_hint(display)
         self.refresh_mirror_list(host._ble.mirror_addresses())
         # Scene targets ("primary"/groups) and the group member chips are keyed
         # off the current primary, so they have to be rebuilt too.
@@ -493,20 +494,8 @@ class BleEventHandler:
         update_dot = getattr(host, "_update_status_dot", None)
         if callable(update_dot):
             update_dot()
-        hint = getattr(host, "device_status_hint", None)
-        if hint is not None:
-            if connected:
-                name = self._device_name_for_address(address) or address or ""
-                hint.setText(name)
-                wanted = bool(name)
-            else:
-                hint.setText(host._tr("device.connect_hint"))
-                wanted = True
-            apply_hint = getattr(host, "_set_status_hint_visible", None)
-            if callable(apply_hint):
-                apply_hint(wanted)  # compact sidebar may override on a short window
-            else:
-                hint.setVisible(wanted)
+        name = self._device_name_for_address(address) or address or "" if connected else ""
+        self._sync_sidebar_connection_hint(name)
         sync_power_button = getattr(host, "_sync_power_button", None)
         if callable(sync_power_button):
             sync_power_button()
@@ -533,6 +522,21 @@ class BleEventHandler:
         elif not host._connect_in_progress:
             self._sync_last_device_hint()
         self._sync_device_onboarding_hint()
+
+    def _sync_sidebar_connection_hint(self, name: str) -> None:
+        """Keep the sidebar's connected device aligned with the live primary."""
+        host = self._host
+        hint = getattr(host, "device_status_hint", None)
+        if hint is None:
+            return
+        text = str(name).strip() if host._is_connected else host._tr("device.connect_hint")
+        hint.setText(text)
+        wanted = bool(text) if host._is_connected else True
+        apply_hint = getattr(host, "_set_status_hint_visible", None)
+        if callable(apply_hint):
+            apply_hint(wanted)  # compact sidebar may override on a short window
+        else:
+            hint.setVisible(wanted)
 
     def _device_name_for_address(self, address: str) -> str:
         custom = self._device_names().get(str(address).strip(), "")
