@@ -681,7 +681,7 @@ def test_main_preview_morphs_in_both_directions(preserve_motion_policy) -> None:
     preview.show()
     try:
         preview.set_compact(True)
-        QTest.qWait(80)
+        preview._compact_animation.setCurrentTime(80)
         assert preview.COMPACT_HEIGHT < preview.maximumHeight() < preview.FULL_HEIGHT
         assert 0.0 < preview._info_opacity.opacity() < 1.0
         assert preview.info_label.isHidden() is False
@@ -727,7 +727,7 @@ def test_main_preview_morphs_in_both_directions(preserve_motion_policy) -> None:
         )
         assert opening_start == compact_geometry
         assert preview.info_label.isHidden() is False
-        QTest.qWait(80)
+        preview._compact_animation.setCurrentTime(80)
         assert preview.COMPACT_HEIGHT < preview.maximumHeight() < preview.FULL_HEIGHT
         assert 0.0 < preview._info_opacity.opacity() < 1.0
 
@@ -819,6 +819,96 @@ def test_main_preview_size_matches_the_kind_of_section() -> None:
     for section in sections:
         select_section(host, section)
         assert preview.compact is (section not in expected_full)
+
+
+def _color_picker_labels() -> dict[str, str]:
+    return {
+        "red": "Red",
+        "green": "Green",
+        "blue": "Blue",
+        "hex": "HEX",
+        "recent": "Recent",
+        "cancel": "Cancel",
+        "ok": "OK",
+    }
+
+
+def test_color_picker_animates_open_and_close_as_one_transition(preserve_motion_policy) -> None:
+    from PySide6.QtGui import QColor
+
+    from app.widgets.color_picker_overlay import ColorPickerOverlay
+
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("full")
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    parent.resize(1000, 760)
+    parent.show()
+    overlay = ColorPickerOverlay("Choose RGB colour", QColor(88, 182, 255), _color_picker_labels(), [], parent)
+    closed = []
+    overlay.closed.connect(lambda: closed.append(True))
+    try:
+        overlay.open()
+        app.processEvents()
+        open_end = overlay._panel_anim.endValue()
+        overlay._fade_anim.setCurrentTime(overlay._fade_anim.totalDuration() // 2)
+        overlay._panel_anim.setCurrentTime(overlay._panel_anim.totalDuration() // 2)
+        assert 0.0 < overlay._opacity_effect.opacity() < 1.0
+        assert open_end.y() < overlay._panel.y() < open_end.y() + 14
+
+        overlay._fade_anim.setCurrentTime(overlay._fade_anim.totalDuration())
+        overlay._panel_anim.setCurrentTime(overlay._panel_anim.totalDuration())
+        assert overlay._opacity_effect.opacity() == 1.0
+        assert overlay._panel.pos() == open_end
+
+        overlay.reject()
+        close_animation = overlay._close_animation
+        close_animation.setCurrentTime(close_animation.totalDuration() // 2)
+        assert 0.0 < overlay._opacity_effect.opacity() < 1.0
+        assert overlay._panel.y() > open_end.y()
+        close_animation.setCurrentTime(close_animation.totalDuration())
+        assert closed == [True]
+        assert overlay.isHidden()
+    finally:
+        if not closed:
+            overlay._complete_finish()
+        parent.close()
+        app.processEvents()
+
+
+def test_color_picker_open_and_close_settle_immediately_when_motion_is_reduced(
+    preserve_motion_policy,
+) -> None:
+    from PySide6.QtGui import QColor
+
+    from app.widgets.color_picker_overlay import ColorPickerOverlay
+
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("reduced")
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    parent.resize(1000, 760)
+    parent.show()
+    overlay = ColorPickerOverlay("Choose RGB colour", QColor(88, 182, 255), _color_picker_labels(), [], parent)
+    closed = []
+    overlay.closed.connect(lambda: closed.append(True))
+    try:
+        overlay.open()
+        app.processEvents()
+        assert overlay._opacity_effect.opacity() == 1.0
+        assert overlay._panel.pos() == overlay._panel_anim.endValue()
+        assert overlay._fade_anim.state() == QAbstractAnimation.Stopped
+        assert overlay._panel_anim.state() == QAbstractAnimation.Stopped
+
+        overlay.reject()
+        assert overlay._close_animation.state() == QAbstractAnimation.Stopped
+        assert closed == [True]
+        assert overlay.isHidden()
+    finally:
+        parent.close()
+        app.processEvents()
 
 
 def test_time_picker_motion_uses_the_shared_reduced_policy(

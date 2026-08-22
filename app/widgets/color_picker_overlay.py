@@ -1,10 +1,29 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QParallelAnimationGroup,
+    QPoint,
+    QPropertyAnimation,
+    QRectF,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
+from app.widgets.animation_helpers import play_or_complete
 from app.widgets.clickable_label import ClickableLabel
 from app.widgets.color_swatch import ColorSwatch
 from app.widgets.liquid_button import LiquidButton
@@ -258,6 +277,13 @@ class ColorPickerOverlay(QWidget):
         self._color = QColor(color)
         self._syncing = False
         self._hex_syncing = False
+        self._closing = False
+        self._fade_anim: QPropertyAnimation | None = None
+        self._panel_anim: QPropertyAnimation | None = None
+        self._close_animation: QParallelAnimationGroup | None = None
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity_effect)
         history_items = self._validated_history(history or [])
         if parent is not None:
             self.setGeometry(parent.rect())
@@ -499,6 +525,29 @@ class ColorPickerOverlay(QWidget):
         self.show()
         self.raise_()
         self.setFocus(Qt.PopupFocusReason)
+        self._start_open_animation()
+
+    def _start_open_animation(self) -> None:
+        self.layout().activate()
+        end_pos = self._panel.pos()
+        start_pos = end_pos + QPoint(0, 14)
+        self._panel.move(start_pos)
+        self._opacity_effect.setOpacity(0.0)
+
+        self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        self._fade_anim.setDuration(170)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        self._panel_anim = QPropertyAnimation(self._panel, b"pos", self)
+        self._panel_anim.setDuration(210)
+        self._panel_anim.setStartValue(start_pos)
+        self._panel_anim.setEndValue(end_pos)
+        self._panel_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        play_or_complete(self._fade_anim)
+        play_or_complete(self._panel_anim)
 
     def _preferred_height(self) -> int:
         return PANEL_HEIGHT_WITH_HISTORY if self._has_history else PANEL_HEIGHT_COMPACT
@@ -524,6 +573,32 @@ class ColorPickerOverlay(QWidget):
         self._finish()
 
     def _finish(self) -> None:
+        if self._closing:
+            return
+        self._closing = True
+        self.setEnabled(False)
+        if self._fade_anim is not None:
+            self._fade_anim.stop()
+        if self._panel_anim is not None:
+            self._panel_anim.stop()
+
+        self._close_animation = QParallelAnimationGroup(self)
+        fade = QPropertyAnimation(self._opacity_effect, b"opacity", self._close_animation)
+        fade.setDuration(140)
+        fade.setStartValue(self._opacity_effect.opacity())
+        fade.setEndValue(0.0)
+        fade.setEasingCurve(QEasingCurve.InCubic)
+        panel = QPropertyAnimation(self._panel, b"pos", self._close_animation)
+        panel.setDuration(160)
+        panel.setStartValue(self._panel.pos())
+        panel.setEndValue(self._panel.pos() + QPoint(0, 12))
+        panel.setEasingCurve(QEasingCurve.InCubic)
+        self._close_animation.addAnimation(fade)
+        self._close_animation.addAnimation(panel)
+        self._close_animation.finished.connect(self._complete_finish)
+        play_or_complete(self._close_animation)
+
+    def _complete_finish(self) -> None:
         parent = self.parentWidget()
         if parent is not None:
             parent.removeEventFilter(self)
