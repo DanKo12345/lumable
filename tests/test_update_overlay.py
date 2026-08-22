@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QWidget
 
-from app.widgets.update_overlay import UpdateOverlay
+from app.widgets.update_overlay import UpdateOverlay, release_notes_plain_text
 
 _LABELS = {
     "title": "Update available",
@@ -54,6 +54,41 @@ def test_release_notes_are_plain_text_and_length_capped() -> None:
     assert len(notes.text()) <= UpdateOverlay.NOTES_LIMIT + 1  # +1 for the ellipsis
     # Long notes get a bounded, scrollable area.
     assert overlay.findChild(QScrollArea, "updateNotesScroll") is not None
+    parent.deleteLater()
+
+
+def test_github_html_and_markdown_notes_become_readable_plain_text() -> None:
+    notes = """<div align="center">
+<h1>Luma Fusion</h1>
+<p><strong>Your screen sets the colour. Music gives it a pulse.</strong></p>
+<img src="https://example.test/screenshot.png" alt="Screenshot">
+</div>
+
+## Added
+- **Screen + music.** One lighting experience.
+- Full changelog: [CHANGELOG.md](https://example.test/changelog)
+"""
+
+    assert release_notes_plain_text(notes) == (
+        "Luma Fusion\n\n"
+        "Your screen sets the colour. Music gives it a pulse.\n\n"
+        "Added\n"
+        "• Screen + music. One lighting experience.\n"
+        "• Full changelog: CHANGELOG.md"
+    )
+
+
+def test_update_overlay_never_interprets_cleaned_release_notes_as_rich_text() -> None:
+    QApplication.instance() or QApplication([])
+    parent = QWidget()
+    labels = dict(_LABELS)
+    labels["notes"] = "<h1>Title</h1><p>Text<br>Next line</p>"
+    overlay = UpdateOverlay(labels, "0.3.5-beta", parent)
+
+    notes = overlay.findChild(QLabel, "updateBody")
+    assert notes is not None
+    assert notes.text() == "Title\n\nText\nNext line"
+    assert notes.textFormat() == Qt.PlainText
     parent.deleteLater()
 
 

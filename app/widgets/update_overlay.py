@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+from html.parser import HTMLParser
+
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPointF, QPropertyAnimation, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
@@ -16,6 +19,59 @@ from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
 from app.widgets.animation_helpers import play_or_complete
 from app.widgets.clickable_label import ClickableLabel
 from app.widgets.liquid_button import LiquidButton
+
+
+class _ReleaseNotesTextExtractor(HTMLParser):
+    _BLOCK_TAGS = frozenset({"div", "h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "ol", "ul"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag == "br":
+            self.parts.append("\n")
+        elif tag == "li":
+            self.parts.append("\n• ")
+        elif tag in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def release_notes_plain_text(notes: str) -> str:
+    """Turn untrusted GitHub HTML/Markdown into readable, inert text."""
+    parser = _ReleaseNotesTextExtractor()
+    parser.feed(str(notes or ""))
+    parser.close()
+    text = "".join(parser.parts)
+    text = re.sub(r"!\[[^]]*]\([^)]*\)", "", text)
+    text = re.sub(r"\[([^]]+)]\([^)]*\)", r"\1", text)
+    text = re.sub(r"(?<!\\)(?:\*\*|__)(.+?)(?:\*\*|__)", r"\1", text)
+    text = re.sub(r"(?<!\\)(?:\*|_)(.+?)(?:\*|_)", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+
+    lines: list[str] = []
+    previous_blank = True
+    for raw_line in text.splitlines():
+        line = re.sub(r"^\s{0,3}#{1,6}\s+", "", raw_line)
+        line = re.sub(r"^\s*[-+*]\s+", "• ", line)
+        line = re.sub(r"\s+", " ", line).strip()
+        if not line or re.fullmatch(r"[-*_]{3,}", line):
+            if not previous_blank and lines:
+                lines.append("")
+            previous_blank = True
+            continue
+        lines.append(line)
+        previous_blank = False
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
 
 
 class _UpdatePanel(QFrame):
@@ -224,7 +280,7 @@ class UpdateOverlay(QWidget):
             version_layout.addWidget(versions)
         content_layout.addWidget(version_card)
 
-        notes = str(labels.get("notes") or "").strip()
+        notes = release_notes_plain_text(str(labels.get("notes") or ""))
         if notes:
             notes_title = QLabel(labels.get("whats_new", "What's new"), content)
             notes_title.setObjectName("updateSectionTitle")
