@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -11,6 +12,9 @@ from urllib.request import Request, urlopen
 from PySide6.QtCore import QObject, Signal
 
 from app.app_info import APP_UPDATE_PRERELEASES
+
+_TRANSIENT_HTTP_CODES = frozenset({502, 503, 504})
+_RETRY_DELAYS_S = (0.25, 0.75)
 
 
 @dataclass(frozen=True)
@@ -260,8 +264,7 @@ class UpdateChecker(QObject):
                     "User-Agent": f"LumaBLE/{self._current_version}",
                 },
             )
-            with urlopen(request, timeout=8) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+            payload = self._fetch_payload(request)
             if not isinstance(payload, (dict, list)):
                 result = UpdateResult("error", message="invalid_response")
             else:
@@ -273,6 +276,18 @@ class UpdateChecker(QObject):
         finally:
             self._running = False
         self._emit_finished(result)
+
+    @staticmethod
+    def _fetch_payload(request: Request) -> Any:
+        for attempt in range(len(_RETRY_DELAYS_S) + 1):
+            try:
+                with urlopen(request, timeout=8) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except HTTPError as exc:
+                if exc.code not in _TRANSIENT_HTTP_CODES or attempt >= len(_RETRY_DELAYS_S):
+                    raise
+                time.sleep(_RETRY_DELAYS_S[attempt])
+        raise RuntimeError("unreachable")
 
     def _emit_finished(self, result: UpdateResult) -> None:
         try:

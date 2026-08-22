@@ -1,13 +1,98 @@
 from __future__ import annotations
 
+import json
+from urllib.error import HTTPError
+from urllib.request import Request
+
+import pytest
+
+import app.update_checker as update_checker_module
 from app.app_info import APP_UPDATE_PRERELEASES
 from app.update_checker import (
+    UpdateChecker,
     canonical_version,
     is_newer_version,
     is_valid_version,
     parse_update_payload,
     parse_version,
 )
+
+
+class _Response:
+    def __init__(self, payload: object) -> None:
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _http_error(code: int) -> HTTPError:
+    return HTTPError("https://example.test/releases", code, "temporary error", {}, None)
+
+
+def test_transient_gateway_errors_are_retried(monkeypatch) -> None:
+    outcomes = [_http_error(504), _http_error(503), _Response([{"tag_name": "v0.4.0-beta"}])]
+    delays: list[float] = []
+
+    def fake_urlopen(_request, *, timeout):
+        assert timeout == 8
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(update_checker_module, "urlopen", fake_urlopen)
+    monkeypatch.setattr(update_checker_module.time, "sleep", delays.append)
+
+    payload = UpdateChecker._fetch_payload(Request("https://example.test/releases"))
+
+    assert payload == [{"tag_name": "v0.4.0-beta"}]
+    assert delays == [0.25, 0.75]
+    assert outcomes == []
+
+
+def test_non_transient_http_errors_are_not_retried(monkeypatch) -> None:
+    calls = 0
+
+    def fake_urlopen(_request, *, timeout):
+        nonlocal calls
+        calls += 1
+        raise _http_error(404)
+
+    monkeypatch.setattr(update_checker_module, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        update_checker_module.time,
+        "sleep",
+        lambda _delay: pytest.fail("a non-transient HTTP error must not be retried"),
+    )
+
+    with pytest.raises(HTTPError, match="HTTP Error 404"):
+        UpdateChecker._fetch_payload(Request("https://example.test/releases"))
+
+    assert calls == 1
+
+
+def test_transient_gateway_error_is_reported_after_all_retries(monkeypatch) -> None:
+    calls = 0
+
+    def fake_urlopen(_request, *, timeout):
+        nonlocal calls
+        calls += 1
+        raise _http_error(504)
+
+    monkeypatch.setattr(update_checker_module, "urlopen", fake_urlopen)
+    monkeypatch.setattr(update_checker_module.time, "sleep", lambda _delay: None)
+
+    with pytest.raises(HTTPError, match="HTTP Error 504"):
+        UpdateChecker._fetch_payload(Request("https://example.test/releases"))
+
+    assert calls == 3
 
 
 def test_is_newer_version_compares_dotted_versions() -> None:
