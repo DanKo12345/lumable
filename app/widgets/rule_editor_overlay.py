@@ -400,10 +400,14 @@ class RuleEditorOverlay(QWidget):
         self.advanced_button.setFixedHeight(FIELD_HEIGHT)
         self.advanced_button.set_icon_kind("settings")
         self.advanced_button.clicked.connect(self._toggle_advanced)
+        advanced_container = QWidget(centre)
+        advanced_container_layout = QVBoxLayout(advanced_container)
+        advanced_container_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_container_layout.setSpacing(0)
         advanced_row = QHBoxLayout()
         advanced_row.setContentsMargins(0, SPACE_XS, 0, 0)
         advanced_row.addWidget(self.advanced_button, 1)
-        column.addLayout(advanced_row)
+        advanced_container_layout.addLayout(advanced_row)
 
         self.advanced_box = QWidget(centre)
         advanced_layout = QHBoxLayout(self.advanced_box)
@@ -421,15 +425,22 @@ class RuleEditorOverlay(QWidget):
             self._field("cooldown", self._labels.get("cooldown", ""), self.cooldown_combo, track=False),
             1,
         )
-        self.advanced_box.setMaximumHeight(0)
+        self.advanced_slot = QWidget(centre)
+        self.advanced_slot.setMinimumHeight(0)
+        self.advanced_slot.setMaximumHeight(0)
+        advanced_slot_layout = QVBoxLayout(self.advanced_slot)
+        advanced_slot_layout.setContentsMargins(0, SPACE_MD, 0, 0)
+        advanced_slot_layout.setSpacing(0)
+        advanced_slot_layout.addWidget(self.advanced_box)
         self.advanced_box.setVisible(False)
         self._advanced_height_anim = QPropertyAnimation(
-            self.advanced_box, b"maximumHeight", self
+            self.advanced_slot, b"maximumHeight", self
         )
         self._advanced_height_anim.setDuration(210)
         self._advanced_height_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._advanced_height_anim.finished.connect(self._finish_advanced_animation)
-        column.addWidget(self.advanced_box)
+        advanced_container_layout.addWidget(self.advanced_slot)
+        column.addWidget(advanced_container)
 
         self._scroll.setWidget(centre)
         return self._scroll
@@ -672,19 +683,19 @@ class RuleEditorOverlay(QWidget):
         self._advanced_height_anim.stop()
         if opening:
             self.advanced_box.setVisible(True)
-            self.advanced_box.setMaximumHeight(16777215)
-            target = self.advanced_box.sizeHint().height()
-            self.advanced_box.setMaximumHeight(0)
-            self._advanced_height_anim.setStartValue(0)
+            target = self.advanced_box.sizeHint().height() + SPACE_MD
+            self._advanced_height_anim.setStartValue(self.advanced_slot.maximumHeight())
             self._advanced_height_anim.setEndValue(target)
         else:
-            self._advanced_height_anim.setStartValue(self.advanced_box.height())
+            self._advanced_height_anim.setStartValue(self.advanced_slot.maximumHeight())
             self._advanced_height_anim.setEndValue(0)
         play_or_complete(self._advanced_height_anim)
 
     def _finish_advanced_animation(self) -> None:
         if self.advanced_button.isChecked():
-            self.advanced_box.setMaximumHeight(self.advanced_box.sizeHint().height())
+            self.advanced_slot.setMaximumHeight(
+                self.advanced_box.sizeHint().height() + SPACE_MD
+            )
             QTimer.singleShot(
                 0,
                 self._scroll,

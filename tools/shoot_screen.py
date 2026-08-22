@@ -308,12 +308,10 @@ def _apply_music_demo(window) -> None:
     effect = getattr(window._music_ui, "_controls_effect", None)
     if effect is not None:
         effect.setOpacity(1.0)
-    window.music_preview.setVisible(True)
-    window.music_preview.setMinimumHeight(window._sz(40))
-    window.music_preview.setMaximumHeight(window._sz(40))
-    preview_effect = getattr(window._music_ui, "_preview_effect", None)
-    if preview_effect is not None:
-        preview_effect.setOpacity(1.0)
+    window._music_ui._show_preview()
+    preview_anim = getattr(window._music_ui, "_preview_anim", None)
+    if preview_anim is not None:
+        preview_anim.setCurrentTime(preview_anim.totalDuration())
     window.music_preview.set_color(225, 84, 142)
 
 

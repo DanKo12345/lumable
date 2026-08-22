@@ -22,7 +22,7 @@ def build_music_section(host: PanelHost) -> GlassCard:
     host.music_card.subtitle_label.setMinimumHeight(0)
     host.music_card.subtitle_label.setContentsMargins(0, 0, 0, 0)
     host.music_card.content_layout.setContentsMargins(0, host._sz(8), 0, 0)
-    host.music_card.content_layout.setSpacing(host._sz(12))
+    host.music_card.content_layout.setSpacing(0)
 
     # Pro badge shown when music sync isn't unlocked (toggled by the controller).
     host.music_lock_label = add_pro_badge(host, host.music_card, "music.pro_locked")
@@ -73,9 +73,19 @@ def build_music_section(host: PanelHost) -> GlassCard:
     # Live swatch showing the colour currently sent to the strip (same widget as
     # the ambient card, so the two reactive modes look consistent).
     host.music_preview = AmbientPreview()
-    # Only shown while music is playing — an empty bar looks out of place idle.
+    # The slot owns the trailing gap as part of its animated height. If the
+    # preview itself were removed from the card layout after reaching height 0,
+    # Qt would remove another 12 px in the final frame and make the card jump.
+    host.music_preview_slot = QWidget()
+    host.music_preview_slot.setMinimumHeight(0)
+    host.music_preview_slot.setMaximumHeight(0)
+    preview_slot_layout = QVBoxLayout(host.music_preview_slot)
+    preview_slot_layout.setContentsMargins(0, 0, 0, host._sz(12))
+    preview_slot_layout.setSpacing(0)
     host.music_preview.setVisible(False)
-    host.music_card.content_layout.addWidget(host.music_preview)
+    preview_slot_layout.addWidget(host.music_preview)
+    host.music_card.content_layout.addSpacing(host._sz(12))
+    host.music_card.content_layout.addWidget(host.music_preview_slot)
 
     # All tuning controls live in one container so the controller can grey the
     # whole group out (dim + disable) while music is off — like the Schedule card.
@@ -87,10 +97,12 @@ def build_music_section(host: PanelHost) -> GlassCard:
     reaction, reaction_layout, host.music_reaction_label = _section(
         host, host._tr("music.reaction_title")
     )
+    reaction_layout.setSpacing(0)
 
     host.music_speed_slider = host._slider("red")
     host.music_speed_slider.setRange(0, 100)
     host.music_speed_value = host._pill("30%")
+    reaction_layout.addSpacing(host._sz(5))
     reaction_layout.addLayout(
         host._slider_row(
             host._tr("music.speed"),
@@ -103,6 +115,7 @@ def build_music_section(host: PanelHost) -> GlassCard:
     host.music_beat_slider = host._slider("green")
     host.music_beat_slider.setRange(0, 100)
     host.music_beat_value = host._pill("40%")
+    reaction_layout.addSpacing(host._sz(5))
     reaction_layout.addLayout(
         host._slider_row(
             host._tr("music.beat"),
@@ -128,7 +141,15 @@ def build_music_section(host: PanelHost) -> GlassCard:
             "music.gate",
         )
     )
-    reaction_layout.addWidget(host.music_gate_row)
+    host.music_gate_slot = QWidget()
+    host.music_gate_slot.setMinimumHeight(0)
+    host.music_gate_slot.setMaximumHeight(0)
+    gate_slot_layout = QVBoxLayout(host.music_gate_slot)
+    gate_slot_layout.setContentsMargins(0, 0, 0, host._sz(5))
+    gate_slot_layout.setSpacing(0)
+    gate_slot_layout.addWidget(host.music_gate_row)
+    reaction_layout.addSpacing(host._sz(5))
+    reaction_layout.addWidget(host.music_gate_slot)
 
     host.music_saturation_slider = host._slider("purple")
     host.music_saturation_slider.setRange(0, 100)
@@ -145,6 +166,7 @@ def build_music_section(host: PanelHost) -> GlassCard:
     host.music_smoothing_slider = host._slider("blue")
     host.music_smoothing_slider.setRange(0, 100)
     host.music_smoothing_value = host._pill("50%")
+    reaction_layout.addSpacing(host._sz(5))
     reaction_layout.addLayout(
         host._slider_row(
             host._tr("music.smoothing"),

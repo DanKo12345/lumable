@@ -1206,9 +1206,12 @@ class OnboardingOverlay(QWidget):
             # A section can continue moving after it becomes visible: the live
             # preview expands when leaving Settings, for example. Keep the frame
             # attached to the real card instead of preserving its first position.
+            # Once that section settles, still scroll smoothly: turning this off
+            # made a genuinely animated preview force the tour to jump in one
+            # frame after waiting for the layout burst.
             self.set_spotlight_rect(QRectF())
             self._geometry_retries = 4
-            self._geometry_animate_scroll = False
+            self._geometry_animate_scroll = True
             self._geometry_timer.start()
         if watched is self.parentWidget() and event.type() in {QEvent.Type.Resize, QEvent.Type.Move}:
             parent = self.parentWidget()

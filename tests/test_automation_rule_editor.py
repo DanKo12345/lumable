@@ -369,13 +369,23 @@ def test_advanced_fields_open_with_a_real_transition(
 
     assert editor._advanced_height_anim.state() == QAbstractAnimation.Running
     QTest.qWait(70)
-    middle = editor.advanced_box.maximumHeight()
-    target = editor.advanced_box.sizeHint().height()
+    middle = editor.advanced_slot.maximumHeight()
+    target = editor.advanced_box.sizeHint().height() + editor.advanced_slot.layout().contentsMargins().top()
     assert 0 < middle < target
 
     QTest.qWait(180)
     assert editor._advanced_height_anim.state() == QAbstractAnimation.Stopped
-    assert editor.advanced_box.maximumHeight() == target
+    assert editor.advanced_slot.maximumHeight() == target
+
+    editor.advanced_button.click()
+    QTest.qWait(70)
+    assert 0 < editor.advanced_slot.maximumHeight() < target
+    assert editor.advanced_box.isHidden() is False
+
+    QTest.qWait(180)
+    assert editor.advanced_slot.maximumHeight() == 0
+    assert editor.advanced_box.isHidden() is True
+    assert editor.advanced_slot.isHidden() is False
 
 
 def test_edit_footer_is_one_group_and_save_uses_the_strip_accent(screen) -> None:

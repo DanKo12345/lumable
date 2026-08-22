@@ -147,15 +147,16 @@ class AmbientUiController:
 
     def _setup_tune_button_reveal(self) -> None:
         button = getattr(self._host, "fusion_tune_button", None)
-        if button is None:
+        slot = getattr(self._host, "fusion_tune_slot", None)
+        if button is None or slot is None:
             return
-        self._tune_button_width_px = self._host._sz(32)
+        self._tune_button_width_px = slot.maximumWidth()
         effect = QGraphicsOpacityEffect(button)
         effect.setOpacity(0.0)
         button.setGraphicsEffect(effect)
-        button.setMaximumWidth(0)
+        slot.setMaximumWidth(0)
 
-        width = QPropertyAnimation(button, b"maximumWidth", self._host)
+        width = QPropertyAnimation(slot, b"maximumWidth", self._host)
         opacity = QPropertyAnimation(effect, b"opacity", self._host)
         for animation in (width, opacity):
             animation.setDuration(230)
@@ -172,25 +173,27 @@ class AmbientUiController:
 
     def _set_tune_button_visible_instant(self, visible: bool) -> None:
         button = getattr(self._host, "fusion_tune_button", None)
+        slot = getattr(self._host, "fusion_tune_slot", None)
         animation = getattr(self, "_tune_button_anim", None)
         effect = getattr(self, "_tune_button_effect", None)
-        if button is None or animation is None or effect is None:
+        if button is None or slot is None or animation is None or effect is None:
             if button is not None:
                 button.setVisible(visible)
             return
         animation.stop()
-        button.setMaximumWidth(self._tune_button_width_px if visible else 0)
+        slot.setMaximumWidth(self._tune_button_width_px if visible else 0)
         effect.setOpacity(1.0 if visible else 0.0)
         button.setVisible(visible)
         self._tune_button_hiding = False
 
     def _animate_tune_button(self, *, showing: bool) -> None:
         button = getattr(self._host, "fusion_tune_button", None)
+        slot = getattr(self._host, "fusion_tune_slot", None)
         group = getattr(self, "_tune_button_anim", None)
         width = getattr(self, "_tune_button_width_anim", None)
         opacity = getattr(self, "_tune_button_opacity_anim", None)
         effect = getattr(self, "_tune_button_effect", None)
-        if any(item is None for item in (button, group, width, opacity, effect)):
+        if any(item is None for item in (button, slot, group, width, opacity, effect)):
             self._set_tune_button_visible_instant(showing)
             return
 
@@ -198,7 +201,7 @@ class AmbientUiController:
         self._tune_button_hiding = not showing
         if showing:
             button.setVisible(True)
-        width.setStartValue(button.maximumWidth())
+        width.setStartValue(slot.maximumWidth())
         width.setEndValue(self._tune_button_width_px if showing else 0)
         opacity.setStartValue(effect.opacity())
         opacity.setEndValue(1.0 if showing else 0.0)
@@ -206,14 +209,15 @@ class AmbientUiController:
 
     def _finish_tune_button_animation(self) -> None:
         button = getattr(self._host, "fusion_tune_button", None)
-        if button is None:
+        slot = getattr(self._host, "fusion_tune_slot", None)
+        if button is None or slot is None:
             return
         if self._tune_button_hiding:
-            button.setMaximumWidth(0)
+            slot.setMaximumWidth(0)
             button.setVisible(False)
             self._tune_button_hiding = False
             return
-        button.setMaximumWidth(self._tune_button_width_px)
+        slot.setMaximumWidth(self._tune_button_width_px)
 
     def _set_tune_open_instant(self, opened: bool) -> None:
         row = getattr(self._host, "fusion_tune_row", None)

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.theme import overlay_panel_colors, qcolor_from_token, theme_manager
+from app.widgets.animation_helpers import play_or_complete
 from app.widgets.liquid_button import LiquidButton
 
 # Rolling digit display
@@ -74,7 +75,7 @@ class _DigitDisplay(QWidget):
         self._offset = 0.0
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
-        self._anim.start()
+        play_or_complete(self._anim)
 
     def _on_finished(self) -> None:
         self._current = self._next
@@ -395,14 +396,14 @@ class _TimePickerOverlay(QWidget):
         self._fade_anim.setStartValue(0.0)
         self._fade_anim.setEndValue(1.0)
         self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._fade_anim.start()
+        play_or_complete(self._fade_anim)
 
         self._scale_anim = QPropertyAnimation(self, b"panelScale", self)
         self._scale_anim.setDuration(200)
         self._scale_anim.setStartValue(0.92)
         self._scale_anim.setEndValue(1.0)
         self._scale_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._scale_anim.start()
+        play_or_complete(self._scale_anim)
 
     def accept(self) -> None:
         t = QTime(self.hour_column.value(), self.minute_column.value())

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from app.panels.types import PanelHost
 from app.software_effects import EFFECT_KEYS
@@ -12,6 +12,7 @@ from app.widgets.ambient_preview import AmbientPreview
 def build_software_effects_section(host: PanelHost) -> GlassCard:
     host.software_fx_card = host._card(host._tr("software_fx.title"), host._tr("software_fx.subtitle"), icon="orbit")
     host.software_fx_card.setMinimumHeight(host._sz(190))
+    host.software_fx_card.content_layout.setSpacing(0)
 
     row = QHBoxLayout()
     row.setSpacing(10)
@@ -30,11 +31,19 @@ def build_software_effects_section(host: PanelHost) -> GlassCard:
     row.addWidget(host.software_fx_combo)
     row.addStretch(1)
     host.software_fx_card.content_layout.addLayout(row)
+    host.software_fx_card.content_layout.addSpacing(host._sz(12))
 
     # Live swatch of the colour currently streamed; only shown while running.
     host.software_fx_preview = AmbientPreview()
+    host.software_fx_preview_slot = QWidget()
+    host.software_fx_preview_slot.setMinimumHeight(0)
+    host.software_fx_preview_slot.setMaximumHeight(0)
+    preview_slot_layout = QVBoxLayout(host.software_fx_preview_slot)
+    preview_slot_layout.setContentsMargins(0, 0, 0, host._sz(12))
+    preview_slot_layout.setSpacing(0)
     host.software_fx_preview.setVisible(False)
-    host.software_fx_card.content_layout.addWidget(host.software_fx_preview)
+    preview_slot_layout.addWidget(host.software_fx_preview)
+    host.software_fx_card.content_layout.addWidget(host.software_fx_preview_slot)
 
     host.software_fx_speed_slider = host._slider("red")
     host.software_fx_speed_slider.setRange(0, 100)

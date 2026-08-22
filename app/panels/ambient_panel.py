@@ -9,6 +9,7 @@ from app.panels.card_header import add_pro_badge
 from app.panels.list_rows import divider, list_container, list_row
 from app.panels.types import PanelHost
 from app.screen_profiles import PROFILE_IDS
+from app.ui_metrics import SPACE_MD
 from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.ambient_preview import AmbientPreview
 from app.widgets.capture_area_selector import CaptureAreaSelector
@@ -103,20 +104,36 @@ def build_ambient_section(host: PanelHost) -> GlassCard:
     host.fusion_tune_button.set_icon_kind("sliders-horizontal")
     host.fusion_tune_button.setIconSize(QSize(host._sz(16), host._sz(16)))
     host.fusion_tune_button.setCheckable(True)
-    # Width is animated by AmbientUiController when the combined mode appears.
-    # Keep only the height fixed so the row can make room gradually.
-    host.fusion_tune_button.setFixedHeight(host._sz(34))
-    host.fusion_tune_button.setMinimumWidth(0)
-    host.fusion_tune_button.setMaximumWidth(host._sz(32))
+    host.fusion_tune_button.setFixedSize(host._sz(32), host._sz(34))
     host.fusion_tune_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
     host.fusion_tune_button.setAccessibleName(host._tr("fusion.tune"))
     host.fusion_tune_button.setToolTip(host._tr("fusion.tune"))
 
+    # Animate a permanent slot rather than the button itself. Removing a hidden
+    # widget from QHBoxLayout also removes one layout gap, which made the last
+    # frame of the exit animation jump even after the button had faded out.
+    host.fusion_tune_slot = QWidget()
+    host.fusion_tune_slot.setObjectName("fusionTuneSlot")
+    host.fusion_tune_slot.setMinimumWidth(0)
+    host.fusion_tune_slot.setMaximumWidth(host._sz(32 + SPACE_MD))
+    host.fusion_tune_slot.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+    tune_slot_layout = QHBoxLayout(host.fusion_tune_slot)
+    tune_slot_layout.setContentsMargins(0, 0, host._sz(SPACE_MD), 0)
+    tune_slot_layout.setSpacing(0)
+    tune_slot_layout.addWidget(host.fusion_tune_button, 0, Qt.AlignVCenter)
+
+    host.fusion_mode_controls = QWidget()
+    mode_controls_layout = QHBoxLayout(host.fusion_mode_controls)
+    mode_controls_layout.setContentsMargins(0, 0, 0, 0)
+    mode_controls_layout.setSpacing(0)
+    mode_controls_layout.addWidget(host.fusion_mode_segment, 0, Qt.AlignVCenter)
+    mode_controls_layout.addSpacing(host._sz(SPACE_MD))
+    mode_controls_layout.addWidget(host.fusion_tune_slot, 0, Qt.AlignVCenter)
+    mode_controls_layout.addWidget(host.ambient_toggle_button, 0, Qt.AlignVCenter)
+
     # Mode first, then power: the choice describes what would run, the button
     # says whether it is running.
-    mode_layout.addWidget(host.fusion_mode_segment, 0, Qt.AlignVCenter)
-    mode_layout.addWidget(host.fusion_tune_button, 0, Qt.AlignVCenter)
-    mode_layout.addWidget(host.ambient_toggle_button, 0, Qt.AlignVCenter)
+    mode_layout.addWidget(host.fusion_mode_controls, 0, Qt.AlignVCenter)
     settings_layout.addWidget(mode_row)
     settings_layout.addWidget(_build_fusion_tune_row(host))
     settings_layout.addWidget(divider(host))

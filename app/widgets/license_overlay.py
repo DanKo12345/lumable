@@ -643,7 +643,7 @@ class LicenseOverlay(QWidget):
             anim.setStartValue(start)
             anim.setEndValue(end)
             self._height_anims.append(anim)
-            anim.start()
+            play_or_complete(anim)
 
     def _set_message(self, text: str, state: str = "") -> None:
         text = str(text)
@@ -739,7 +739,7 @@ class LicenseOverlay(QWidget):
         self._panel_anim.setStartValue(1.0)
         self._panel_anim.setEndValue(0.0)
         self._panel_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._panel_anim.start()
+        play_or_complete(self._panel_anim)
 
         self._celebration = CelebrationOverlay(self, message=message)
         self._celebration.finished.connect(self.close_overlay)

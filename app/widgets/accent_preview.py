@@ -1,11 +1,24 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PySide6.QtCore import (
+    QEasingCurve,
+    QParallelAnimationGroup,
+    QPropertyAnimation,
+    Qt,
+)
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QLabel, QSizePolicy, QVBoxLayout
+from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+)
 
 from app.localization import localization_manager
 from app.theme import theme_manager
+from app.widgets.animation_helpers import play_or_complete
 
 
 class AccentPreview(QFrame):
@@ -41,45 +54,86 @@ class AccentPreview(QFrame):
         self.info_label = QLabel()
         self.info_label.setObjectName("previewInfo")
         layout.addWidget(self.info_label)
+        self._info_opacity = QGraphicsOpacityEffect(self.info_label)
+        self._info_opacity.setOpacity(1.0)
+        self.info_label.setGraphicsEffect(self._info_opacity)
         self._compact = False
+        self._compact_animation = QParallelAnimationGroup(self)
         self._height_animation = QPropertyAnimation(self, b"maximumHeight", self)
-        self._height_animation.setDuration(240)
-        self._height_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._info_animation = QPropertyAnimation(self._info_opacity, b"opacity", self)
+        for animation in (
+            self._height_animation,
+            self._info_animation,
+        ):
+            animation.setDuration(240)
+            animation.setEasingCurve(QEasingCurve.InOutCubic)
+            self._compact_animation.addAnimation(animation)
+        self._compact_animation.finished.connect(self._finish_compact_animation)
         self._refresh()
 
     def set_compact(self, compact: bool, *, animate: bool = True) -> None:
         """Switch between the live-light hero and the compact status strip."""
         compact = bool(compact)
-        if compact == self._compact and not animate:
+        if compact == self._compact:
             return
         self._compact = compact
         target = self.COMPACT_HEIGHT if compact else self.FULL_HEIGHT
-        self._height_animation.stop()
-
-        if compact:
-            self.info_label.hide()
-            self._layout.setContentsMargins(12, 7, 12, 7)
-            self._layout.setSpacing(0)
-            self.swatch.setMinimumHeight(38)
-            self.swatch.setMaximumHeight(38)
-        else:
-            self._layout.setContentsMargins(24, 16, 24, 14)
-            self._layout.setSpacing(7)
-            self.swatch.setMinimumHeight(62)
-            self.swatch.setMaximumHeight(16777215)
-            self.info_label.show()
+        target_margins = (12, 7, 12, 7) if compact else (24, 16, 24, 14)
+        target_swatch = 38 if compact else 62
+        target_opacity = 0.0 if compact else 1.0
+        self._compact_animation.stop()
 
         # Re-style the swatch: the corner radius depends on the compact state
         # (a radius over half the box height makes Qt draw square corners).
         self._refresh()
 
         if not animate or not self.isVisible():
-            self.setMaximumHeight(target)
+            self._apply_compact_state(
+                target,
+                target_margins,
+                target_swatch,
+                target_opacity,
+            )
             return
-        start = max(self.COMPACT_HEIGHT, min(self.FULL_HEIGHT, self.height()))
+
+        if not compact:
+            # Prepare the full layout while it is still clipped by the compact
+            # outer height; only that outer edge and the label opacity move.
+            self._layout.setContentsMargins(*target_margins)
+            self._layout.setSpacing(7)
+            self.swatch.setMinimumHeight(target_swatch)
+            self.swatch.setMaximumHeight(16777215)
+            self.info_label.show()
+        start = max(self.COMPACT_HEIGHT, min(self.FULL_HEIGHT, self.maximumHeight()))
         self._height_animation.setStartValue(start)
         self._height_animation.setEndValue(target)
-        self._height_animation.start()
+        self._info_animation.setStartValue(self._info_opacity.opacity())
+        self._info_animation.setEndValue(target_opacity)
+        play_or_complete(self._compact_animation)
+
+    def _apply_compact_state(
+        self,
+        height: int,
+        margins: tuple[int, int, int, int],
+        swatch_height: int,
+        info_opacity: float,
+    ) -> None:
+        self.setMaximumHeight(height)
+        self._layout.setContentsMargins(*margins)
+        self._layout.setSpacing(0 if self._compact else 7)
+        self.swatch.setMinimumHeight(swatch_height)
+        self.swatch.setMaximumHeight(swatch_height if self._compact else 16777215)
+        self._info_opacity.setOpacity(info_opacity)
+        self.info_label.setVisible(not self._compact)
+
+    def _finish_compact_animation(self) -> None:
+        margins = (12, 7, 12, 7) if self._compact else (24, 16, 24, 14)
+        self._apply_compact_state(
+            self.COMPACT_HEIGHT if self._compact else self.FULL_HEIGHT,
+            margins,
+            38 if self._compact else 62,
+            0.0 if self._compact else 1.0,
+        )
 
     def set_color(self, color: QColor):
         self._color = color

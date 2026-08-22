@@ -67,12 +67,13 @@ class MusicUiController:
     def _setup_gate_reveal(self) -> None:
         host = self._host
         row = getattr(host, "music_gate_row", None)
-        if row is None:
+        slot = getattr(host, "music_gate_slot", None)
+        if row is None or slot is None:
             return
-        self._gate_height = max(row.sizeHint().height(), host._sz(40))
+        self._gate_height = max(row.sizeHint().height(), host._sz(40)) + host._sz(5)
         self._gate_anim = QParallelAnimationGroup(host)
-        self._gate_min = QPropertyAnimation(row, b"minimumHeight")
-        self._gate_max = QPropertyAnimation(row, b"maximumHeight")
+        self._gate_min = QPropertyAnimation(slot, b"minimumHeight")
+        self._gate_max = QPropertyAnimation(slot, b"maximumHeight")
         for anim in (self._gate_min, self._gate_max):
             anim.setDuration(240)
             anim.setEasingCurve(QEasingCurve.InOutCubic)
@@ -82,26 +83,28 @@ class MusicUiController:
 
     def _set_gate_visible_instant(self, visible: bool) -> None:
         row = getattr(self._host, "music_gate_row", None)
-        if row is None or getattr(self, "_gate_anim", None) is None:
+        slot = getattr(self._host, "music_gate_slot", None)
+        if row is None or slot is None or getattr(self, "_gate_anim", None) is None:
             return
         self._gate_anim.stop()
         height = self._gate_height if visible else 0
-        row.setMinimumHeight(height)
-        row.setMaximumHeight(height)
+        slot.setMinimumHeight(height)
+        slot.setMaximumHeight(height)
         row.setVisible(visible)
 
     def _animate_gate(self, *, opening: bool) -> None:
         row = getattr(self._host, "music_gate_row", None)
-        if row is None or getattr(self, "_gate_anim", None) is None:
+        slot = getattr(self._host, "music_gate_slot", None)
+        if row is None or slot is None or getattr(self, "_gate_anim", None) is None:
             return
         self._gate_anim.stop()
         self._gate_hiding = not opening
         if opening:
             row.setVisible(True)
         target = self._gate_height if opening else 0
-        self._gate_min.setStartValue(row.minimumHeight())
+        self._gate_min.setStartValue(slot.minimumHeight())
         self._gate_min.setEndValue(target)
-        self._gate_max.setStartValue(row.maximumHeight())
+        self._gate_max.setStartValue(slot.maximumHeight())
         self._gate_max.setEndValue(target)
         play_or_complete(self._gate_anim)
 
@@ -119,21 +122,22 @@ class MusicUiController:
         """
         host = self._host
         preview = getattr(host, "music_preview", None)
-        if preview is None:
+        slot = getattr(host, "music_preview_slot", None)
+        if preview is None or slot is None:
             return
-        self._preview_height = host._sz(40)
+        self._preview_height = max(preview.minimumHeight(), host._sz(40)) + host._sz(12)
         # Start fully collapsed and transparent. Driving both min and max height
         # (plus opacity) makes the reveal exact regardless of size policy.
-        preview.setMinimumHeight(0)
-        preview.setMaximumHeight(0)
+        slot.setMinimumHeight(0)
+        slot.setMaximumHeight(0)
         self._preview_effect = QGraphicsOpacityEffect(preview)
         self._preview_effect.setOpacity(0.0)
         preview.setGraphicsEffect(self._preview_effect)
 
         self._preview_anim = QParallelAnimationGroup(host)
         self._preview_opacity = QPropertyAnimation(self._preview_effect, b"opacity")
-        self._preview_min = QPropertyAnimation(preview, b"minimumHeight")
-        self._preview_max = QPropertyAnimation(preview, b"maximumHeight")
+        self._preview_min = QPropertyAnimation(slot, b"minimumHeight")
+        self._preview_max = QPropertyAnimation(slot, b"maximumHeight")
         for anim in (self._preview_opacity, self._preview_min, self._preview_max):
             anim.setDuration(260)
             anim.setEasingCurve(QEasingCurve.InOutCubic)
@@ -143,16 +147,19 @@ class MusicUiController:
 
     def _animate_preview(self, *, opening: bool) -> None:
         preview = getattr(self._host, "music_preview", None)
-        if preview is None or getattr(self, "_preview_anim", None) is None:
+        slot = getattr(self._host, "music_preview_slot", None)
+        if preview is None or slot is None or getattr(self, "_preview_anim", None) is None:
             return
         self._preview_anim.stop()
         self._preview_hiding = not opening
+        if opening:
+            preview.setVisible(True)
         target_h = self._preview_height if opening else 0
         self._preview_opacity.setStartValue(self._preview_effect.opacity())
         self._preview_opacity.setEndValue(1.0 if opening else 0.0)
-        self._preview_min.setStartValue(preview.minimumHeight())
+        self._preview_min.setStartValue(slot.minimumHeight())
         self._preview_min.setEndValue(target_h)
-        self._preview_max.setStartValue(preview.maximumHeight())
+        self._preview_max.setStartValue(slot.maximumHeight())
         self._preview_max.setEndValue(target_h)
         play_or_complete(self._preview_anim)
 

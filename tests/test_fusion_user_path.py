@@ -730,20 +730,21 @@ def test_the_settings_button_enters_and_leaves_with_the_mode(
     policy.set_provider(None)
     policy.set_mode("full")
     button = window.fusion_tune_button
+    slot = window.fusion_tune_slot
     effect = window._ambient_ui._tune_button_effect
     target = window._ambient_ui._tune_button_width_px
 
     _click_second_segment(window.fusion_mode_segment)
     assert button.isHidden() is False
-    assert button.maximumWidth() == 0
+    assert slot.maximumWidth() == 0
     assert effect.opacity() == 0.0
 
     QTest.qWait(80)
-    assert 0 < button.maximumWidth() < target
+    assert 0 < slot.maximumWidth() < target
     assert 0.0 < effect.opacity() < 1.0
 
     QTest.qWait(190)
-    assert button.maximumWidth() == target
+    assert slot.maximumWidth() == target
     assert effect.opacity() == 1.0
 
     segment = window.fusion_mode_segment
@@ -752,9 +753,104 @@ def test_the_settings_button_enters_and_leaves_with_the_mode(
     assert button.isHidden() is False, "the icon vanished before its exit motion"
 
     QTest.qWait(80)
-    assert 0 < button.maximumWidth() < target
+    assert 0 < slot.maximumWidth() < target
     assert 0.0 < effect.opacity() < 1.0
 
     QTest.qWait(190)
-    assert button.maximumWidth() == 0
+    assert slot.maximumWidth() == 0
     assert button.isHidden() is True
+    assert slot.isHidden() is False, "removing the slot would make the final layout frame jump"
+
+
+def test_mode_button_reverses_from_its_current_frame_and_finishes_on_reduced_motion(
+    window, preserve_motion_policy
+) -> None:
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("full")
+    segment = window.fusion_mode_segment
+    slot = window.fusion_tune_slot
+
+    _click_second_segment(segment)
+    QTest.qWait(80)
+    width_before_reverse = slot.maximumWidth()
+    assert 0 < width_before_reverse < window._ambient_ui._tune_button_width_px
+
+    segment.resize(200, 40)
+    QTest.mouseClick(segment, Qt.LeftButton, pos=QPoint(50, 20))
+    assert abs(slot.maximumWidth() - width_before_reverse) <= 1
+    QTest.qWait(70)
+    assert slot.maximumWidth() < width_before_reverse
+
+    policy.set_mode("reduced")
+    assert slot.maximumWidth() == 0
+    assert window.fusion_tune_button.isHidden() is True
+
+
+def test_music_context_rows_open_and_close_without_a_cleanup_jump(
+    window, preserve_motion_policy
+) -> None:
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("full")
+    controller = window._music_ui
+
+    gate = window.music_gate_row
+    gate_slot = window.music_gate_slot
+    controller._animate_gate(opening=True)
+    QTest.qWait(80)
+    assert 0 < gate_slot.maximumHeight() < controller._gate_height
+    controller._gate_anim.setCurrentTime(controller._gate_anim.totalDuration())
+    assert gate_slot.maximumHeight() == controller._gate_height
+
+    controller._animate_gate(opening=False)
+    QTest.qWait(80)
+    assert 0 < gate_slot.maximumHeight() < controller._gate_height
+    assert gate.isHidden() is False
+    controller._gate_anim.setCurrentTime(controller._gate_anim.totalDuration())
+    assert gate_slot.maximumHeight() == 0
+    assert gate.isHidden() is True
+    assert gate_slot.isHidden() is False
+
+    preview = window.music_preview
+    preview_slot = window.music_preview_slot
+    controller._show_preview()
+    QTest.qWait(80)
+    assert 0 < preview_slot.maximumHeight() < controller._preview_height
+    controller._preview_anim.setCurrentTime(controller._preview_anim.totalDuration())
+    assert preview_slot.maximumHeight() == controller._preview_height
+
+    controller._animate_preview(opening=False)
+    QTest.qWait(80)
+    assert 0 < preview_slot.maximumHeight() < controller._preview_height
+    assert preview.isHidden() is False
+    controller._preview_anim.setCurrentTime(controller._preview_anim.totalDuration())
+    assert preview_slot.maximumHeight() == 0
+    assert preview.isHidden() is True
+    assert preview_slot.isHidden() is False
+
+
+def test_software_preview_uses_the_same_reveal_contract(
+    window, preserve_motion_policy
+) -> None:
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("full")
+    controller = window._software_fx_ui
+    preview = window.software_fx_preview
+    slot = window.software_fx_preview_slot
+
+    controller._animate_preview(opening=True)
+    QTest.qWait(80)
+    assert 0 < slot.maximumHeight() < controller._preview_height
+    assert preview.isHidden() is False
+    controller._preview_anim.setCurrentTime(controller._preview_anim.totalDuration())
+    assert slot.maximumHeight() == controller._preview_height
+
+    controller._animate_preview(opening=False)
+    QTest.qWait(80)
+    assert 0 < slot.maximumHeight() < controller._preview_height
+    controller._preview_anim.setCurrentTime(controller._preview_anim.totalDuration())
+    assert slot.maximumHeight() == 0
+    assert preview.isHidden() is True
+    assert slot.isHidden() is False

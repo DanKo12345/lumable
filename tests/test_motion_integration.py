@@ -667,3 +667,105 @@ def test_update_check_starts_static_when_already_reduced(preserve_motion_policy)
 
     assert not controller._checking_timer.isActive()
     assert host.check_update_button.text == "Checking for updates..."
+
+
+def test_main_preview_morphs_in_both_directions(preserve_motion_policy) -> None:
+    from app.widgets.accent_preview import AccentPreview
+
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("full")
+    QApplication.instance() or QApplication([])
+    preview = AccentPreview()
+    preview.resize(800, preview.FULL_HEIGHT)
+    preview.show()
+    try:
+        preview.set_compact(True)
+        QTest.qWait(80)
+        assert preview.COMPACT_HEIGHT < preview.maximumHeight() < preview.FULL_HEIGHT
+        assert 0.0 < preview._info_opacity.opacity() < 1.0
+        assert preview.info_label.isHidden() is False
+
+        preview._compact_animation.setCurrentTime(
+            preview._compact_animation.totalDuration()
+        )
+        assert preview.maximumHeight() == preview.COMPACT_HEIGHT
+        assert preview.info_label.isHidden() is True
+
+        preview.set_compact(False)
+        assert preview.info_label.isHidden() is False
+        QTest.qWait(80)
+        assert preview.COMPACT_HEIGHT < preview.maximumHeight() < preview.FULL_HEIGHT
+        assert 0.0 < preview._info_opacity.opacity() < 1.0
+
+        preview._compact_animation.setCurrentTime(
+            preview._compact_animation.totalDuration()
+        )
+        assert preview.maximumHeight() == preview.FULL_HEIGHT
+        assert preview._info_opacity.opacity() == 1.0
+    finally:
+        preview.close()
+
+
+def test_main_preview_respects_reduced_motion(preserve_motion_policy) -> None:
+    from app.widgets.accent_preview import AccentPreview
+
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("reduced")
+    QApplication.instance() or QApplication([])
+    preview = AccentPreview()
+    preview.show()
+    try:
+        preview.set_compact(True)
+        assert preview._compact_animation.state() == QAbstractAnimation.Stopped
+        assert preview.maximumHeight() == preview.COMPACT_HEIGHT
+        assert preview.info_label.isHidden() is True
+
+        preview.set_compact(False)
+        assert preview._compact_animation.state() == QAbstractAnimation.Stopped
+        assert preview.maximumHeight() == preview.FULL_HEIGHT
+        assert preview.info_label.isHidden() is False
+    finally:
+        preview.close()
+
+
+def test_time_picker_motion_uses_the_shared_reduced_policy(
+    preserve_motion_policy,
+) -> None:
+    from PySide6.QtCore import QTime
+
+    from app.widgets.time_button import _DigitDisplay, _TimePickerOverlay
+
+    policy = preserve_motion_policy
+    policy.set_provider(None)
+    policy.set_mode("reduced")
+    app = QApplication.instance() or QApplication([])
+
+    digit = _DigitDisplay(8)
+    digit.roll_to("09", 1)
+    assert digit._anim.state() == QAbstractAnimation.Stopped
+    assert digit._current == "09"
+    assert digit._offset == 0.0
+
+    parent = QWidget()
+    parent.resize(900, 700)
+    parent.show()
+    overlay = _TimePickerOverlay(
+        "Time",
+        QTime(8, 30),
+        {"hours": "Hours", "minutes": "Minutes", "ok": "OK"},
+        parent,
+    )
+    try:
+        overlay.open()
+        app.processEvents()
+        assert overlay._fade_anim is not None
+        assert overlay._scale_anim is not None
+        assert overlay._fade_anim.state() == QAbstractAnimation.Stopped
+        assert overlay._scale_anim.state() == QAbstractAnimation.Stopped
+        assert overlay._opacity_effect.opacity() == 1.0
+        assert overlay._panel_scale == 1.0
+    finally:
+        overlay.reject()
+        parent.close()

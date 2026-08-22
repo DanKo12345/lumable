@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation
+from PySide6.QtWidgets import QGraphicsOpacityEffect
+
 from app.software_effect_controller import SoftwareEffectController
 from app.storage import save_settings
+from app.widgets.animation_helpers import play_or_complete
 
 _DEFAULTS = {"effect": "breathing", "speed": 30}
 
@@ -26,7 +30,56 @@ class SoftwareEffectUiController:
         host.software_fx_combo.currentIndexChanged.connect(self._on_options_changed)
         host.software_fx_speed_slider.valueChanged.connect(self._on_options_changed)
         self._fx.color_changed.connect(self._update_preview)
+        self._setup_preview_reveal()
         self.sync_controls()
+
+    def _setup_preview_reveal(self) -> None:
+        host = self._host
+        preview = getattr(host, "software_fx_preview", None)
+        slot = getattr(host, "software_fx_preview_slot", None)
+        if preview is None or slot is None:
+            return
+        self._preview_height = max(preview.minimumHeight(), host._sz(40)) + host._sz(12)
+        self._preview_effect = QGraphicsOpacityEffect(preview)
+        self._preview_effect.setOpacity(0.0)
+        preview.setGraphicsEffect(self._preview_effect)
+        self._preview_anim = QParallelAnimationGroup(host)
+        self._preview_opacity = QPropertyAnimation(self._preview_effect, b"opacity")
+        self._preview_min = QPropertyAnimation(slot, b"minimumHeight")
+        self._preview_max = QPropertyAnimation(slot, b"maximumHeight")
+        for animation in (self._preview_opacity, self._preview_min, self._preview_max):
+            animation.setDuration(240)
+            animation.setEasingCurve(QEasingCurve.InOutCubic)
+            self._preview_anim.addAnimation(animation)
+        self._preview_hiding = False
+        self._preview_anim.finished.connect(self._finish_preview_reveal)
+
+    def _animate_preview(self, *, opening: bool) -> None:
+        preview = getattr(self._host, "software_fx_preview", None)
+        slot = getattr(self._host, "software_fx_preview_slot", None)
+        if preview is None or slot is None or getattr(self, "_preview_anim", None) is None:
+            return
+        self._preview_anim.stop()
+        self._preview_hiding = not opening
+        if opening:
+            preview.setVisible(True)
+        target = self._preview_height if opening else 0
+        self._preview_opacity.setStartValue(self._preview_effect.opacity())
+        self._preview_opacity.setEndValue(1.0 if opening else 0.0)
+        self._preview_min.setStartValue(slot.minimumHeight())
+        self._preview_min.setEndValue(target)
+        self._preview_max.setStartValue(slot.maximumHeight())
+        self._preview_max.setEndValue(target)
+        play_or_complete(self._preview_anim)
+
+    def _finish_preview_reveal(self) -> None:
+        if not self._preview_hiding:
+            return
+        preview = getattr(self._host, "software_fx_preview", None)
+        if preview is not None:
+            preview.setVisible(False)
+            preview.clear()
+        self._preview_hiding = False
 
     def _update_preview(self, red: int, green: int, blue: int) -> None:
         preview = getattr(self._host, "software_fx_preview", None)
@@ -96,7 +149,7 @@ class SoftwareEffectUiController:
         preview = getattr(host, "software_fx_preview", None)
         if preview is not None:
             preview.clear()
-            preview.setVisible(True)
+            self._animate_preview(opening=True)
         host.software_fx_toggle.setText(host._tr("software_fx.toggle_on"))
         host._log(host._tr("software_fx.started_log"))
 
@@ -107,8 +160,7 @@ class SoftwareEffectUiController:
         self._set_manual_controls_enabled(True)
         preview = getattr(host, "software_fx_preview", None)
         if preview is not None:
-            preview.setVisible(False)
-            preview.clear()
+            self._animate_preview(opening=False)
         host.software_fx_toggle.setChecked(False)
         host.software_fx_toggle.setText(host._tr("software_fx.toggle_off"))
         if was_running:
