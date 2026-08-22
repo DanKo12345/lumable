@@ -685,14 +685,47 @@ def test_main_preview_morphs_in_both_directions(preserve_motion_policy) -> None:
         assert preview.COMPACT_HEIGHT < preview.maximumHeight() < preview.FULL_HEIGHT
         assert 0.0 < preview._info_opacity.opacity() < 1.0
         assert preview.info_label.isHidden() is False
+        assert preview._COMPACT_SWATCH_HEIGHT < preview.swatch.height() < preview._FULL_SWATCH_HEIGHT
 
-        preview._compact_animation.setCurrentTime(
-            preview._compact_animation.totalDuration()
+        preview._compact_animation.setCurrentTime(preview._compact_animation.totalDuration() - 1)
+        before_finish = (
+            preview.maximumHeight(),
+            preview.swatch.height(),
+            preview._layout.contentsMargins().top(),
+            preview._layout.contentsMargins().bottom(),
+            preview._layout.spacing(),
+        )
+        preview._compact_animation.setCurrentTime(preview._compact_animation.totalDuration())
+        after_finish = (
+            preview.maximumHeight(),
+            preview.swatch.height(),
+            preview._layout.contentsMargins().top(),
+            preview._layout.contentsMargins().bottom(),
+            preview._layout.spacing(),
+        )
+        assert all(
+            abs(before - after) <= 1
+            for before, after in zip(before_finish, after_finish, strict=True)
         )
         assert preview.maximumHeight() == preview.COMPACT_HEIGHT
         assert preview.info_label.isHidden() is True
 
+        compact_geometry = (
+            preview.maximumHeight(),
+            preview.swatch.height(),
+            preview._layout.contentsMargins().top(),
+            preview._layout.contentsMargins().bottom(),
+            preview._layout.spacing(),
+        )
         preview.set_compact(False)
+        opening_start = (
+            preview.maximumHeight(),
+            preview.swatch.height(),
+            preview._layout.contentsMargins().top(),
+            preview._layout.contentsMargins().bottom(),
+            preview._layout.spacing(),
+        )
+        assert opening_start == compact_geometry
         assert preview.info_label.isHidden() is False
         QTest.qWait(80)
         assert preview.COMPACT_HEIGHT < preview.maximumHeight() < preview.FULL_HEIGHT
@@ -728,6 +761,64 @@ def test_main_preview_respects_reduced_motion(preserve_motion_policy) -> None:
         assert preview.info_label.isHidden() is False
     finally:
         preview.close()
+
+
+def test_main_preview_glow_fits_inside_both_sizes() -> None:
+    from PySide6.QtCore import QRectF
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+    from app.widgets.accent_preview import AccentPreview
+
+    app = QApplication.instance() or QApplication([])
+    container = QWidget()
+    layout = QVBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    preview = AccentPreview()
+    layout.addWidget(preview)
+    container.resize(800, preview.FULL_HEIGHT)
+    container.show()
+
+    def glow_rect_in_preview() -> QRectF:
+        effect_rect = preview._glow.boundingRectFor(QRectF(preview.swatch.rect()))
+        return effect_rect.translated(preview.swatch.x(), preview.swatch.y())
+
+    try:
+        for compact, height in (
+            (False, preview.FULL_HEIGHT),
+            (True, preview.COMPACT_HEIGHT),
+        ):
+            preview.set_compact(compact, animate=False)
+            container.setFixedHeight(height)
+            layout.activate()
+            app.processEvents()
+            bounds = glow_rect_in_preview()
+            assert bounds.left() >= 0
+            assert bounds.top() >= 0
+            assert bounds.right() <= preview.width()
+            assert bounds.bottom() <= preview.height()
+    finally:
+        container.close()
+
+
+def test_main_preview_size_matches_the_kind_of_section() -> None:
+    from types import SimpleNamespace
+
+    from app.main_layout import select_section
+
+    class _Preview:
+        compact = None
+
+        def set_compact(self, compact: bool) -> None:
+            self.compact = compact
+
+    preview = _Preview()
+    host = SimpleNamespace(_nav_buttons={}, _nav_pages={}, preview=preview)
+    expected_full = {"color", "effects", "ambient", "music"}
+    sections = expected_full | {"scenes", "profiles", "schedule", "automations", "settings"}
+
+    for section in sections:
+        select_section(host, section)
+        assert preview.compact is (section not in expected_full)
 
 
 def test_time_picker_motion_uses_the_shared_reduced_policy(
