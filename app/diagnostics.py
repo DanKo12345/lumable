@@ -286,15 +286,31 @@ def _fusion_section(fusion: dict[str, Any] | None) -> list[str]:
         f"beat boost: {fusion.get('beat_boost', '-')}",
         f"music activity: {fusion.get('music_activity', '-')}",
         f"music stale: {flag(fusion.get('music_stale'))}",
-        f"commands: {int(fusion.get('commands_submitted', 0) or 0)} submitted, "
-        f"{int(fusion.get('commands_succeeded', 0) or 0)} succeeded, "
-        f"{int(fusion.get('commands_failed', 0) or 0)} failed",
-        f"link rejections: {int(fusion.get('link_rejections', 0) or 0)} "
-        "(link busy, not a write error)",
-        f"stream errors: {int(fusion.get('errors', 0) or 0)}",
     ]
+    previewing = bool(fusion.get("previewing"))
+    if previewing:
+        # Every number below this line describes a radio. This run had none, and
+        # zeroes in their place would read as a link that was never busy and
+        # never failed — a flawless connection, invented. Said once, plainly,
+        # instead of printed as figures that happen to be zero.
+        lines.append("output: preview only — nothing was sent to a strip")
+        lines.append("commands: not applicable (preview)")
+        lines.append("link rejections: not applicable (preview)")
+        lines.append("beat -> command accepted (software): not applicable (preview)")
+    else:
+        lines.append("output: strip")
+        lines.append(
+            f"commands: {int(fusion.get('commands_submitted', 0) or 0)} submitted, "
+            f"{int(fusion.get('commands_succeeded', 0) or 0)} succeeded, "
+            f"{int(fusion.get('commands_failed', 0) or 0)} failed"
+        )
+        lines.append(
+            f"link rejections: {int(fusion.get('link_rejections', 0) or 0)} "
+            "(link busy, not a write error)"
+        )
+    lines.append(f"stream errors: {int(fusion.get('errors', 0) or 0)}")
     delay = fusion.get("beat_delay")
-    if isinstance(delay, (tuple, list)) and len(delay) == 3 and delay[2]:
+    if not previewing and isinstance(delay, (tuple, list)) and len(delay) == 3 and delay[2]:
         p50, p95, count = delay
         # Named "software" on purpose. It measures from the audio block being
         # handed over to the command being accepted — the part this application

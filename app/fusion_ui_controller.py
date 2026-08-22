@@ -201,8 +201,27 @@ class FusionUiController:
             if self._awaiting_fresh_base:
                 return "fusion.preview.waiting_frame"
             return f"fusion.status.{mode}"
-        live_reason = self.live_unavailable_reason(mode)
-        return live_reason or "ambient.status_off"
+        # Stopped. What the line says is what a press would do, not what is
+        # missing: neither of these prevents anything any more, and "Connect a
+        # strip first" in front of a button that works is an instruction to do
+        # something unnecessary before doing the thing that would have worked.
+        if not host._is_connected:
+            return "fusion.idle.no_strip"
+        if self.intended_target() == PREVIEW:
+            return "fusion.idle.free"
+        return "ambient.status_off"
+
+    def preview_hint_key(self) -> str:
+        """The caption over the two capsules: what the right-hand one is.
+
+        "Screen -> Strip" is a claim about where the colour went, and in a
+        preview it is simply false — there is no strip in it. The arrow still
+        points at the same thing it always did, the colour that was delivered;
+        only the name of the destination changes.
+        """
+        if self.previewing():
+            return "ambient.preview_hint_preview"
+        return "ambient.preview_hint"
 
     def toggle_label_key(self) -> str:
         """What the button offers. While running it is simply on."""
@@ -516,6 +535,12 @@ class FusionUiController:
             "running": self.is_running(),
             "has_run": self.has_run(),
             "mode": self._mode,
+            "target": self._target,
+            # Reported from the run rather than from the connection: a report is
+            # usually exported after the fact, and by then a strip may well be
+            # plugged in that this run never wrote to.
+            "previewing": self._target == PREVIEW,
+            "writing_to_strip": self._ble_allowed,
             "errors": self._coordinator.stream_error_count(),
             "commands_submitted": self._submitted,
             "commands_succeeded": self._succeeded,

@@ -27,6 +27,11 @@ sys.path.insert(0, str(ROOT))
 LANGUAGES = ("en", "ru", "es", "zh")
 SIZES = ((860, 420), (1000, 700))
 
+# The three words the start/stop button can carry. Preview added the longest of
+# them, and the button cannot grow: the row has six pixels of slack in Spanish
+# at the smallest window, so a wider button would push the row over instead.
+TOGGLE_KEYS = ("ambient.toggle_off", "ambient.toggle_on", "ambient.toggle_preview")
+
 
 def _isolated_data_dir() -> None:
     """Never touch the real LumaBLE data — same care as shoot_screen."""
@@ -96,10 +101,27 @@ def main() -> int:
                 )
                 for _ in range(6):
                     app.processEvents()
+                # Every word the toggle can carry, measured in the button it
+                # has to fit. The button is a fixed size, so a long word is not
+                # a wider row — it is a clipped word, which nothing reports.
+                button = window.ambient_toggle_button
+                original_label = button.text()
+                toggle_needs = {}
+                for key in TOGGLE_KEYS:
+                    button.setText(window._tr(key))
+                    app.processEvents()
+                    toggle_needs[key] = {
+                        "text": button.text(),
+                        "needs": button.sizeHint().width(),
+                    }
+                button.setText(original_label)
+                app.processEvents()
                 results.append(
                     {
                         "language": language,
                         "size": f"{width}x{height}",
+                        "toggle_button_width": button.width(),
+                        "toggle_needs": toggle_needs,
                         "row_needs": row.minimumSizeHint().width(),
                         "row_has": row.width(),
                         "title": label.text(),

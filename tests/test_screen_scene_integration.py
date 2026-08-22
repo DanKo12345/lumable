@@ -196,6 +196,9 @@ class _FusionStub:
     def toggle_label_key(self) -> str:
         return "ambient.toggle_on" if self.running else "ambient.toggle_off"
 
+    def preview_hint_key(self) -> str:
+        return "ambient.preview_hint"
+
 
 class _MusicStub:
     def refresh_shared_state(self) -> None:

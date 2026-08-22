@@ -272,6 +272,32 @@ def _apply_readme_ambient_demo(window) -> None:
     QTest.qWait(240)
 
 
+def _apply_preview_demo(window) -> None:
+    """Screen Sync running with no strip attached: the 0.4.1 preview state.
+
+    Deliberately *not* a connected showcase. The whole point of the picture is
+    the case where there is no hardware — the button offering a preview, the
+    line saying so, and the two capsules showing the screen beside the colour a
+    strip would have been given.
+    """
+    from PySide6.QtTest import QTest
+
+    window._is_connected = False
+    window._fusion_ui.set_mode("screen_music", persist=False)
+    window._ambient_ui.sync_mode_segment()
+    window.ambient_toggle_button.setChecked(True)
+    window.ambient_toggle_button.setText(window._tr("ambient.toggle_on"))
+    window.ambient_status_label.setText(window._tr("fusion.preview.no_strip"))
+    window.ambient_preview_label.setText(window._tr("ambient.preview_hint_preview"))
+    # A warm screen colour and the same colour as a beat would leave it: dimmed
+    # by the music factor and lifted by a strike, which is the difference the
+    # right-hand capsule exists to show.
+    window.ambient_preview.set_source((214, 138, 74))
+    window.ambient_preview.set_final((196, 126, 68))
+    window.fusion_tune_button.setChecked(True)
+    QTest.qWait(240)
+
+
 def _apply_music_demo(window) -> None:
     """Show the music card in its active visual state without opening audio."""
     _show_showcase_connection(window)
@@ -321,6 +347,7 @@ DEMOS = {
     "readme-color": _apply_readme_color_demo,
     "readme-automations": _apply_readme_automations_demo,
     "readme-ambient": _apply_readme_ambient_demo,
+    "preview": _apply_preview_demo,
     "music": _apply_music_demo,
     "groups": _apply_groups_demo,
 }

@@ -399,3 +399,92 @@ def test_a_live_run_survives_a_lost_link_and_waits_for_a_new_frame(app, monkeypa
         assert controller.status_key() == "fusion.status.screen"
     finally:
         controller.stop_if_running()
+
+
+# ── what the report says about a run with no radio ────────────────────
+def test_a_preview_run_reports_itself_as_one(app, monkeypatch) -> None:
+    """The report is built from the controller's own numbers, so this is the
+    join that matters: a preview that described itself as a live run would put
+    zeroes where a link's figures go, and they would be read as a perfect link.
+    """
+    from app.diagnostics import build_diagnostics_report
+
+    host = _Host(connected=False, ble=_UntouchableStrip())
+    controller = _controller(host, monkeypatch)
+    controller.activate()
+    try:
+        _run_until_shown(app, controller, host)
+        stats = controller.stats()
+        assert stats["previewing"] is True
+        assert stats["writing_to_strip"] is False
+
+        report = build_diagnostics_report({}, [], include_crashes=False, fusion=stats)
+        assert "output: preview only — nothing was sent to a strip" in report
+        assert "not applicable (preview)" in report
+        assert "submitted" not in report
+    finally:
+        controller.stop_if_running()
+
+
+def test_a_live_run_reports_itself_as_one(app, monkeypatch) -> None:
+    """The other side of the same join."""
+    from app.diagnostics import build_diagnostics_report
+
+    strip = _CountingStrip()
+    host = _Host(connected=True, ble=strip)
+    controller = _controller(host, monkeypatch)
+    controller.activate()
+    try:
+        deadline = time.monotonic() + 3.0
+        while not strip.writes and time.monotonic() < deadline:
+            _feed_screen(controller)
+            app.processEvents()
+            time.sleep(0.01)
+        stats = controller.stats()
+        assert stats["previewing"] is False
+        assert stats["writing_to_strip"] is True
+
+        report = build_diagnostics_report({}, [], include_crashes=False, fusion=stats)
+        assert "output: strip" in report
+        assert "submitted" in report
+    finally:
+        controller.stop_if_running()
+
+
+def test_the_idle_line_offers_a_preview_instead_of_demanding_a_strip(monkeypatch) -> None:
+    """Before anything is running, the line says what a press would do.
+
+    "Connect a strip first" is the old sentence from when a missing strip
+    refused the start. It refuses nothing now, and left in place it asks
+    somebody to go and find hardware before pressing a button that would have
+    worked without it.
+    """
+    host = _Host(connected=False, ble=_UntouchableStrip())
+    controller = _controller(host, monkeypatch)
+    assert controller.status_key() == "fusion.idle.no_strip"
+    assert controller.toggle_label_key() == "ambient.toggle_preview"
+
+    free_host = _Host(connected=True, ble=_UntouchableStrip())
+    free = _controller(free_host, monkeypatch, licensed=False)
+    assert free.status_key() == "fusion.idle.free"
+    assert free.toggle_label_key() == "ambient.toggle_preview"
+
+    ready_host = _Host(connected=True, ble=_UntouchableStrip())
+    ready = _controller(ready_host, monkeypatch)
+    assert ready.status_key() == "ambient.status_off"
+    assert ready.toggle_label_key() == "ambient.toggle_off"
+
+
+def test_the_caption_stops_naming_a_strip_that_is_not_there(app, monkeypatch) -> None:
+    """The arrow points at the delivered colour either way. What changes is
+    where that colour went, and in a preview it did not go to a strip."""
+    host = _Host(connected=False, ble=_UntouchableStrip())
+    controller = _controller(host, monkeypatch)
+    assert controller.preview_hint_key() == "ambient.preview_hint"
+
+    controller.activate()
+    try:
+        assert controller.preview_hint_key() == "ambient.preview_hint_preview"
+    finally:
+        controller.stop_if_running()
+    assert controller.preview_hint_key() == "ambient.preview_hint"

@@ -455,3 +455,49 @@ def test_no_beat_delay_line_before_any_beat_has_been_carried() -> None:
     )
 
     assert "beat -> command accepted" not in report
+
+
+def test_a_preview_run_says_not_applicable_instead_of_zeroes() -> None:
+    """Every command figure describes a radio this run did not have.
+
+    Zeroes in their place read as a link that was never busy, never failed and
+    answered instantly — a flawless connection, invented by omission. The
+    absence has to be stated, because a reader comparing two reports will
+    otherwise conclude the preview had the better link.
+    """
+    report = build_diagnostics_report(
+        {}, [], include_crashes=False,
+        fusion=_fusion_stats(previewing=True, beat_delay=(0.0, 0.0, 0)),
+    )
+
+    assert "output: preview only — nothing was sent to a strip" in report
+    assert "beat -> command accepted (software): not applicable (preview)" in report
+    assert "commands: not applicable (preview)" in report
+    assert "link rejections: not applicable (preview)" in report
+    assert "submitted" not in report, "a preview reported commands it never sent"
+
+
+def test_a_preview_never_reports_a_delay_even_if_one_was_recorded() -> None:
+    """Belt and braces: the coordinator does not record them, and if a future
+    change ever let one through, the report still refuses to print it as a
+    measurement of a link."""
+    report = build_diagnostics_report(
+        {}, [], include_crashes=False,
+        fusion=_fusion_stats(previewing=True, beat_delay=(48.0, 91.0, 37)),
+    )
+
+    assert "48.0 ms p50" not in report
+    assert "not applicable (preview)" in report
+
+
+def test_a_live_run_still_reports_its_commands() -> None:
+    """The other half of the same switch: nothing was taken away from a run that
+    did have a strip."""
+    report = build_diagnostics_report(
+        {}, [], include_crashes=False,
+        fusion=_fusion_stats(beat_delay=(48.0, 91.0, 37), commands_submitted=12),
+    )
+
+    assert "output: strip" in report
+    assert "12 submitted" in report
+    assert "48.0 ms p50" in report

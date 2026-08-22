@@ -48,6 +48,9 @@ class _Recorder:
     def toggle_label_key(self) -> str:
         return "ambient.toggle_off"
 
+    def preview_hint_key(self) -> str:
+        return "ambient.preview_hint"
+
     def shutdown(self) -> None:
         # MainWindow.close() calls shutdown() on its stream owners; the recorder
         # stands in for one, so it must accept the teardown call.

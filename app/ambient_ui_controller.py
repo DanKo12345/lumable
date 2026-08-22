@@ -238,6 +238,9 @@ class AmbientUiController:
         if button is None:
             return
         button.setText(host._tr(host._fusion_ui.toggle_label_key()))
+        caption = getattr(host, "ambient_preview_label", None)
+        if caption is not None:
+            caption.setText(host._tr(host._fusion_ui.preview_hint_key()))
 
     def stats(self) -> dict:
         return {

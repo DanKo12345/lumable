@@ -164,3 +164,32 @@ def test_the_settings_panel_costs_nothing_until_it_is_opened(measurements) -> No
         assert row["card_height_open"] > row["card_height_collapsed"], (
             f"{row['language']} at {row['size']}: opening the panel took no room"
         )
+
+
+def test_no_word_on_the_start_button_is_clipped(measurements) -> None:
+    """The button is a fixed size, so a word too long for it is not a wider row.
+
+    It is a word with its end cut off, and nothing reports that — no warning, no
+    layout complaint, just a button reading "Предпросмотр" with the last letters
+    missing. Preview brought the longest of the three words this button carries,
+    and it did not fit until it was shortened.
+    """
+    clipped = [
+        f"{row['language']} at {row['size']}: \"{item['text']}\" needs "
+        f"{item['needs']}px in {row['toggle_button_width']}px"
+        for row in measurements
+        for item in row["toggle_needs"].values()
+        if item["needs"] > row["toggle_button_width"]
+    ]
+    assert not clipped, "; ".join(clipped)
+
+
+def test_the_start_button_says_something_different_in_each_language(measurements) -> None:
+    """Preview's word is new, and a key nobody translated shows up as English in
+    a Spanish window rather than as an error."""
+    words = {
+        row["language"]: row["toggle_needs"]["ambient.toggle_preview"]["text"]
+        for row in measurements
+    }
+    assert len(set(words.values())) == len(words), f"a language was not applied: {words}"
+    assert not any(word.startswith("ambient.") for word in words.values()), words

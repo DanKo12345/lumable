@@ -302,7 +302,9 @@ class UiLocalizationController:
         host._set_slider_label_text("ambient.intensity", host._tr("ambient.intensity"))
         host._set_slider_label_text("ambient.smoothness", host._tr("ambient.smoothness"))
         if getattr(host, "ambient_preview_label", None) is not None:
-            host.ambient_preview_label.setText(host._tr("ambient.preview_hint"))
+            host.ambient_preview_label.setText(
+                host._tr(host._fusion_ui.preview_hint_key())
+            )
         if getattr(host, "ambient_profile_segment", None) is not None:
             host.ambient_profile_segment.set_labels(
                 {pid: host._tr(f"ambient.profile.{pid}") for pid in ("desktop", "game", "movie")}
