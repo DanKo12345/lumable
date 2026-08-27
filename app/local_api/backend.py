@@ -222,6 +222,15 @@ class QtApiBackend:
             ambient = getattr(host, "_ambient_ui", None)
             if ambient is None:
                 return False
+            fusion = getattr(host, "_fusion_ui", None)
+            if fusion is not None and not fusion.would_light_the_strip(wanted):
+                # A phone asking for the light to come on has no screen of ours
+                # to preview it on. Starting the preview here would leave the
+                # caller told "on" while the room stays dark, so the answer is
+                # the refusal this endpoint already documents: needs Pro, or a
+                # strip. Asked before anything starts, so a refusal leaves no
+                # capture running that nobody can see.
+                return False
             # Named, not read off the card: the mode goes in with the command so
             # the result does not depend on what this machine was last left
             # showing. The card's own controller owns the gate and the chooser.

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import UTC, datetime, timedelta
 
-from app.license import is_license_active
+from app.install_identity import advance_high_water, load_identity, save_identity
+from app.license import clear_licence, has_licence, local_verdict, store_receipt
+from app.license_client import ISSUED, is_refresh_due, request_receipt
+from app.license_keys import public_keys
 from app.storage import load_settings, save_settings
 
 FREE_EFFECT_COUNT = 12
@@ -58,6 +62,63 @@ def invalidate_pro_cache() -> None:
     _pro_cache = None
 
 
+# How far behind the mark a clock may sit and still be believed. Machines
+# correct themselves by seconds; a few minutes is generous and still nothing
+# like the days it would take to keep a receipt alive.
+CLOCK_TOLERANCE = timedelta(minutes=5)
+
+
+def clock_went_back(identity, now: datetime) -> bool:
+    """Whether this machine is claiming a time it has already been past.
+
+    The mark is not used *as* the time. Substituting it would freeze the clock
+    at whatever moment it recorded, so a receipt that should have expired never
+    would: leave the date in the past and Pro lasts forever, which is the
+    opposite of what the mark is for.
+
+    So a clock behind the mark is refused instead. Free until the machine is
+    online again, and nothing is cleared — the licence is untouched, because a
+    wrong date is not evidence about whether somebody paid.
+
+    Best effort throughout: restoring an older copy of the protected file
+    restores an older mark with it. What this stops is the version that needs
+    nothing but the date control.
+    """
+    seen = getattr(identity, "highest_seen", None)
+    if seen is None:
+        return False
+    return now < seen - CLOCK_TOLERANCE
+
+
+def _local_state() -> tuple[bool, dict, object]:
+    """Whether Pro holds right now, without touching the network or the disk.
+
+    Returns the answer along with what it was worked out from, so the
+    background path can carry on from here rather than reading everything a
+    second time.
+    """
+    settings = load_settings()
+    outcome = load_identity(has_licence=has_licence(settings))
+    identity = outcome.identity
+    if identity is None:
+        return False, settings, None
+    now = datetime.now(UTC)
+    if clock_went_back(identity, now):
+        # Not an accusation and not a punishment: the licence stays exactly
+        # where it is, and correcting the clock puts Pro back. Asking the
+        # service would not — a fresh receipt is judged against this same
+        # wrong clock, and the mark is still ahead of it, so the refusal
+        # simply happens again. The date is what has to change.
+        return False, settings, identity
+    verdict = local_verdict(
+        settings,
+        installation_hash=identity.installation_hash,
+        public_keys=public_keys(),
+        now=now,
+    )
+    return bool(verdict.ok), settings, identity
+
+
 def is_pro() -> bool:
     global _pro_cache
     if _force_pro_env():
@@ -66,21 +127,53 @@ def is_pro() -> bool:
         return _pro_cache
     result = False
     try:
-        # Read-only, local-only: never writes back. Persisting the verified
-        # state (and the refreshed ``checked_at``) is the job of
-        # ``refresh_pro_status`` so the UI thread stays free of disk writes.
-        result = bool(is_license_active(load_settings(), allow_network=False))
+        result, _settings, _identity = _local_state()
     except (OSError, TypeError, ValueError):
         result = False
     _pro_cache = result
     return result
 
 
-def refresh_pro_status() -> bool:
-    """Authoritative Pro check including network revalidation.
+def obtain_receipt(settings: dict, identity, *, now: datetime) -> str:
+    """Turn a licence into a verified receipt, or say why not. Never on the UI thread.
 
-    Must be called OFF the UI thread (it may block on an HTTP request). Updates
-    the persisted license state and the in-memory cache, then returns the result.
+    The one place that knows how each answer is allowed to change what is
+    stored. A receipt only replaces the previous one once it has been checked
+    locally; the two answers that end a licence clear it; everything else — a
+    service that is down, a rate limit, a reply that will not parse — leaves the
+    key, the instance and the old receipt exactly where they are, because a
+    service that cannot answer must never be able to cancel a licence.
+    """
+    licence = settings.get("license", {}) if isinstance(settings, dict) else {}
+    key = str(licence.get("license_key", "")).strip()
+    instance_id = str(licence.get("instance_id", "")).strip()
+    if not key or not instance_id:
+        return "no_licence"
+
+    result = request_receipt(
+        license_key=key,
+        instance_id=instance_id,
+        installation_hash=identity.installation_hash,
+        public_keys=public_keys(),
+        now=now,
+    )
+    if result.ok:
+        store_receipt(settings, result.receipt)
+        save_settings(settings)
+        return ISSUED
+    if result.ends_pro:
+        clear_licence(settings)
+        save_settings(settings)
+    return result.outcome
+
+
+def refresh_pro_status() -> bool:
+    """The authoritative check, off the UI thread.
+
+    Asks for a receipt when there is none or the one held is due, and leaves
+    everything alone when it is not. The mark that keeps a clock from being
+    wound back is moved here, and only here: it is a write, and writes do not
+    belong on the thread drawing the window.
     """
     global _pro_cache
     if _force_pro_env():
@@ -88,11 +181,18 @@ def refresh_pro_status() -> bool:
         return True
     result = False
     try:
-        settings = load_settings()
-        before = dict(settings.get("license", {}))
-        result = bool(is_license_active(settings, allow_network=True))
-        if settings.get("license", {}) != before:
-            save_settings(settings)
+        result, settings, identity = _local_state()
+        if identity is not None:
+            now = datetime.now(UTC)
+            advanced = advance_high_water(identity, now)
+            if advanced is not identity:
+                save_identity(advanced)
+            receipt = settings.get("license", {}).get("receipt")
+            if not result or is_refresh_due(
+                receipt, installation_hash=identity.installation_hash, now=now
+            ):
+                obtain_receipt(settings, identity, now=now)
+                result, _settings, _identity = _local_state()
     except (OSError, TypeError, ValueError):
         result = _pro_cache if _pro_cache is not None else False
     _pro_cache = result

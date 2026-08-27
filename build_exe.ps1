@@ -17,32 +17,62 @@ if ([version]$version -lt [version]"3.11") {
     throw "Release builds require Python 3.11+. Current build interpreter: Python $version ($python)"
 }
 
-& $python -m PyInstaller `
-    --noconfirm `
-    --clean `
-    --windowed `
-    --name "LumaBLE" `
-    --icon "app\assets\icon.ico" `
-    --version-file "build\version_info.txt" `
-    --add-data "app\assets;app\assets" `
-    --add-data "app\i18n;app\i18n" `
-    --add-data "THIRD_PARTY_NOTICES.txt;." `
-    --collect-all "soundcard" `
-    --collect-all "sounddevice" `
-    --collect-all "segno" `
-    --exclude-module "PySide6.QtQml" `
-    --exclude-module "PySide6.QtQmlMeta" `
-    --exclude-module "PySide6.QtQmlModels" `
-    --exclude-module "PySide6.QtQmlWorkerScript" `
-    --exclude-module "PySide6.QtQuick" `
-    --exclude-module "PySide6.QtQuickWidgets" `
-    --exclude-module "PySide6.QtVirtualKeyboard" `
-    --exclude-module "PySide6.QtPdf" `
-    --exclude-module "PySide6.QtPdfWidgets" `
-    main.py
+# PyInstaller searches PATH while resolving DLL dependencies. A developer shell
+# may contain unrelated OpenSSL or ICU builds, which then get copied beside Qt
+# and override the versions Qt expects at runtime. Build against only Python,
+# the selected venv and Windows, then restore the caller's environment.
+$originalPath = $env:PATH
+$basePrefix = & $python -c "import sys; print(sys.base_prefix)"
+$safePath = @(
+    (Split-Path -Parent $python),
+    $basePrefix,
+    (Join-Path $basePrefix "Scripts"),
+    (Join-Path $env:SystemRoot "System32"),
+    $env:SystemRoot,
+    (Join-Path $env:SystemRoot "System32\Wbem")
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
 
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+$buildExitCode = 1
+try {
+    $env:PATH = $safePath -join [System.IO.Path]::PathSeparator
+    & $python -m PyInstaller `
+        --noconfirm `
+        --clean `
+        --windowed `
+        --name "LumaBLE" `
+        --icon "app\assets\icon.ico" `
+        --version-file "build\version_info.txt" `
+        --add-data "app\assets;app\assets" `
+        --add-data "app\i18n;app\i18n" `
+        --add-data "THIRD_PARTY_NOTICES.txt;." `
+        --collect-all "soundcard" `
+        --collect-all "sounddevice" `
+        --collect-all "segno" `
+        --exclude-module "PySide6.QtQml" `
+        --exclude-module "PySide6.QtQmlMeta" `
+        --exclude-module "PySide6.QtQmlModels" `
+        --exclude-module "PySide6.QtQmlWorkerScript" `
+        --exclude-module "PySide6.QtQuick" `
+        --exclude-module "PySide6.QtQuickWidgets" `
+        --exclude-module "PySide6.QtVirtualKeyboard" `
+        --exclude-module "PySide6.QtPdf" `
+        --exclude-module "PySide6.QtPdfWidgets" `
+        main.py
+    $buildExitCode = $LASTEXITCODE
+} finally {
+    $env:PATH = $originalPath
+}
+
+if ($buildExitCode -ne 0) {
+    exit $buildExitCode
+}
+
+$analysisPath = Join-Path $root "build\LumaBLE\Analysis-00.toc"
+if (Test-Path -LiteralPath $analysisPath) {
+    $foreignRuntimeDependency = Select-String -LiteralPath $analysisPath -Pattern "poppler" -SimpleMatch -Quiet
+    if ($foreignRuntimeDependency) {
+        throw "Build captured a DLL from an unrelated runtime. Use only dependencies from the release environment."
+    }
 }
 
 $unusedQtFiles = @(
@@ -100,6 +130,7 @@ if ($env:LUMABLE_SKIP_SMOKE -eq "1") {
     Write-Host "Running startup smoke test..."
     $proc = Start-Process -FilePath $exePath -WorkingDirectory (Split-Path -Parent $exePath) -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 6
+    $proc.Refresh()
 
     $afterLog = $null
     if (Test-Path -LiteralPath $crashDir) {
@@ -108,6 +139,9 @@ if ($env:LUMABLE_SKIP_SMOKE -eq "1") {
     }
     $newCrash = $afterLog -and (-not $beforeLog -or $afterLog.FullName -ne $beforeLog.FullName)
     $exitedWithError = $proc.HasExited -and $proc.ExitCode -ne 0
+    $windowTitle = if ($proc.HasExited) { "" } else { $proc.MainWindowTitle }
+    $bootstrapDialog = $windowTitle -match "Unhandled exception|Failed to execute script"
+    $appWindowMissing = -not $proc.HasExited -and $windowTitle -ne "LumaBLE"
 
     if (-not $proc.HasExited) {
         Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
@@ -120,6 +154,12 @@ if ($env:LUMABLE_SKIP_SMOKE -eq "1") {
     }
     if ($exitedWithError) {
         throw "Startup smoke test failed: the app exited with code $($proc.ExitCode)."
+    }
+    if ($bootstrapDialog) {
+        throw "Startup smoke test failed before app startup: $windowTitle"
+    }
+    if ($appWindowMissing) {
+        throw "Startup smoke test failed: expected the LumaBLE window, got '$windowTitle'."
     }
     Write-Host "Startup smoke test passed."
 }

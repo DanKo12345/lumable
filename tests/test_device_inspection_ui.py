@@ -13,6 +13,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
+from app.scan_choices import device_choice
 from app.scan_snapshot import GattCharacteristic, GattInspection, GattService
 
 
@@ -29,10 +30,16 @@ def window():
 
 
 def _offer(window, *devices) -> None:
+    """Put scan results in the picker the way a real scan does.
+
+    Each row carries which controller it stands for. It used to carry nothing
+    at all and rely on sitting at the same position as the list behind it,
+    which is the coupling the picker no longer has.
+    """
     window._devices = list(devices)
     window.device_combo.clear()
     for device in devices:
-        window.device_combo.addItem(device["name"])
+        window.device_combo.addItem(device["name"], device_choice(device["address"]))
     window.device_combo.setCurrentIndex(0)
     QApplication.instance().processEvents()
 
@@ -341,7 +348,15 @@ def test_a_new_scan_drops_the_old_complaint(window, monkeypatch) -> None:
     assert window._device_problem == ""
 
 
-def test_a_connected_strip_shows_its_signal(window, monkeypatch) -> None:
+def test_a_connected_strips_signal_is_kept_but_not_printed(window, monkeypatch) -> None:
+    """One reading is not a measurement anybody can act on.
+
+    What reaches this card is whatever arrived last, and the same strip varies
+    by several dB from moment to moment — which is why a scan now keeps every
+    reading and describes the result in words. Turning one number into "strong"
+    here would be the honest version of the same guess. The figure is still
+    carried, and it comes out in the report.
+    """
     monkeypatch.setattr(
         window._ble,
         "diagnostics_snapshot",
@@ -349,6 +364,7 @@ def test_a_connected_strip_shows_its_signal(window, monkeypatch) -> None:
     )
     window._is_connected = True
 
-    assert window._device_view().signal_rssi == -57
+    assert window._device_view().signal_rssi == -57, "the figure stopped being carried"
     window._sync_connect_buttons()
-    assert "-57" in window.device_primary_meta.text()
+    assert "-57" not in window.device_primary_meta.text()
+    assert "BLEDOM" in window.device_primary_meta.text(), "the card lost the rest of its line"

@@ -310,6 +310,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Extra strips the user added, so a multi-strip setup (and the groups and
     # scenes built on it) survives a restart instead of silently shrinking.
     "extra_device_addresses": [],
+    # Strips this person has actually chosen, as opposed to ones a scan
+    # happened to reach. Kept apart from ``last_device_address``, which records
+    # whatever was connected last and can therefore hold a neighbour's
+    # controller: the app connects to a single supported device it finds on its
+    # own, and if yours is switched off, the one it finds is not yours.
+    "trusted_device_addresses": [],
     "scenes": [],
     "device_groups": [],
     "api": {
@@ -841,6 +847,20 @@ def validate_settings(data: Any) -> dict[str, Any]:
         parsed_last_color = dict(DEFAULT_START_COLOR)
         parsed_last_brightness = 100
 
+    # Asked of the incoming data, before the returned dictionary exists: an
+    # absent key and an empty list mean opposite things here, and the returned
+    # dictionary always has the key. Absent means nobody has been asked yet, so
+    # what is already set up is taken at its word once. Empty means somebody
+    # emptied it, and refilling that from the last connection is the one thing
+    # this list exists not to do.
+    extra_addresses = validate_extra_addresses(data.get("extra_device_addresses", []))
+    if "trusted_device_addresses" in data:
+        trusted_addresses = validate_extra_addresses(data.get("trusted_device_addresses"))
+    else:
+        trusted_addresses = validate_extra_addresses(
+            [last_device_address, *extra_addresses]
+        )
+
     return {
         "last_device_address": last_device_address,
         "last_device_name": last_device_name,
@@ -865,7 +885,8 @@ def validate_settings(data: Any) -> dict[str, Any]:
         "diy_saved": validate_diy_saved(data.get("diy_saved", [])),
         "timers": validate_timers(data.get("timers", DEFAULT_SETTINGS["timers"])),
         "device_names": validate_device_names(data.get("device_names", DEFAULT_SETTINGS["device_names"])),
-        "extra_device_addresses": validate_extra_addresses(data.get("extra_device_addresses", [])),
+        "extra_device_addresses": extra_addresses,
+        "trusted_device_addresses": trusted_addresses,
         "scenes": validate_scenes(data.get("scenes", [])),
         "device_groups": validate_device_groups(data.get("device_groups", [])),
         "api": validate_api_settings(data.get("api", DEFAULT_SETTINGS["api"])),

@@ -1,16 +1,61 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 
 from app.app_info import APP_AUTHOR, APP_CHECKOUT_URL, APP_VERSION
-from app.feature_gate import invalidate_pro_cache, is_pro
-from app.license import activate_license_key, deactivate_license
+from app.feature_gate import invalidate_pro_cache, is_pro, obtain_receipt
+from app.install_identity import NEW, load_identity, save_identity
+from app.license import activate_license_key, deactivate_license, normalize_license_key
+from app.license_client import ISSUED
 from app.storage import save_settings
 from app.support import supported_controllers
 from app.widgets import AboutOverlay, LicenseOverlay, UpdateOverlay
+
+ACTIVATE = "activate"
+RESUME = "resume"
+WRONG_KEY = "wrong_key"
+
+
+def activation_plan(settings: dict, key: str) -> str:
+    """What a typed key means on a machine that may already hold one.
+
+    Three answers, and the middle one is the reason this is a function rather
+    than a condition inside a closure. ``resume`` is for somebody whose
+    activation succeeded and whose receipt did not: typing the same key again
+    must finish what it started, not spend a second slot on the same licence.
+
+    ``wrong_key`` is a different key on a machine that already has one. Going
+    on would ask the service about the *stored* key while telling the person
+    their new one worked. Replacing a licence is its own act — the old
+    activation has to be handed back first — and doing that unasked would take
+    a slot from a machine that may still be using it.
+    """
+    licence = settings.get("license", {}) if isinstance(settings, dict) else {}
+    if not isinstance(licence, dict):
+        licence = {}
+    if not str(licence.get("instance_id", "")).strip():
+        return ACTIVATE
+    stored = normalize_license_key(str(licence.get("license_key", "")))
+    return RESUME if stored and stored == normalize_license_key(key) else WRONG_KEY
+
+def _has_licence(settings: dict) -> bool:
+    """Whether this installation has anything to lose.
+
+    A receipt on its own counts: it was issued for an installation, so its
+    presence is proof that this one was not fresh, whatever else is missing.
+    """
+    licence = settings.get("license", {}) if isinstance(settings, dict) else {}
+    if not isinstance(licence, dict):
+        return False
+    return bool(
+        str(licence.get("license_key", "")).strip()
+        or str(licence.get("instance_id", "")).strip()
+        or licence.get("receipt")
+    )
 
 
 def _supported_catalog_text(intro: str) -> str:
@@ -119,6 +164,8 @@ class OverlayController:
             "cancel": host._tr("dialog.cancel"),
             "ok": host._tr("dialog.ok"),
             "invalid": host._tr("license.invalid"),
+            "needs_internet": host._tr("license.needs_internet"),
+            "already_active": host._tr("license.already_active"),
             "activated": host._tr("license.activated"),
             "buy_unavailable": host._tr("license.buy_unavailable"),
             "deactivate": host._tr("license.deactivate"),
@@ -132,11 +179,53 @@ class OverlayController:
         mode = "dev" if is_dev_pro else ("license" if is_license_pro else "free")
 
         def activate(key: str) -> tuple[bool, str]:
-            if activate_license_key(key, host._settings):
+            """Take an activation, then earn the receipt that turns it into Pro.
+
+            Runs on the overlay's own worker thread, so both requests happen
+            off the interface thread and the window keeps drawing.
+
+            The order matters more than it looks. What Lemon Squeezy grants is
+            written down *before* the receipt is asked for: the slot has been
+            spent by then, and a service that is briefly unreachable must not
+            leave somebody having paid for an activation this machine has no
+            record of. The next launch then asks only for the receipt, and
+            never activates a second time.
+            """
+            # The identity this machine activates under. Without one there is
+            # nothing for a receipt to be bound to, so the attempt is refused
+            # here rather than spending an activation slot on an instance the
+            # signing server could never recognise.
+            outcome = load_identity(has_licence=_has_licence(host._settings))
+            identity = outcome.identity
+            if identity is None:
+                return False, labels["invalid"]
+            if outcome.state == NEW and not save_identity(identity):
+                return False, labels["invalid"]
+
+            plan = activation_plan(host._settings, key)
+            if plan == WRONG_KEY:
+                return False, labels.get("already_active", labels["invalid"])
+            if plan == ACTIVATE:
+                if not activate_license_key(
+                    key, host._settings, installation_hash=identity.installation_hash
+                ):
+                    return False, labels["invalid"]
+                # Kept the moment it is granted, and before anything else can
+                # fail. Everything after this is repeatable; this is not.
                 save_settings(host._settings)
-                invalidate_pro_cache()
+
+            invalidate_pro_cache()
+            result = obtain_receipt(
+                host._settings, identity, now=datetime.now(UTC)
+            )
+            invalidate_pro_cache()
+            if result == ISSUED:
                 return True, labels["activated"]
-            return False, labels["invalid"]
+            if result in ("invalid", "revoked"):
+                return False, labels["invalid"]
+            # Activated, and not yet vouched for. The licence is safe on this
+            # machine; what is missing is one conversation with the service.
+            return False, labels.get("needs_internet", labels["invalid"])
 
         def open_checkout() -> bool:
             url = APP_CHECKOUT_URL.strip()

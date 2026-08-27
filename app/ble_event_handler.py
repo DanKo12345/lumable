@@ -1,11 +1,28 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QSignalBlocker, QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.device_names import device_display_name, sanitize_device_name, validate_extra_addresses
+from app.scan_choices import (
+    KIND_BACK,
+    KIND_DEVICE,
+    KIND_SHOW_UNKNOWN,
+    address_of,
+    back_choice,
+    device_choice,
+    find_device,
+    heading_choice,
+    kind_of,
+    normalize_address,
+    notice_choice,
+    show_unknown_choice,
+)
+from app.scan_ranking import GROUP_SUPPORTED, GROUP_TRUSTED, GROUP_UNKNOWN, group_of, rank
+from app.signal_quality import measure
 from app.storage import save_settings
 from app.types import BleEventHost
 from app.widgets import LiquidButton, ProfileConfirmOverlay, ProfileRenameOverlay
@@ -42,6 +59,15 @@ class BleEventHandler:
         self._promote_overlay: ProfileConfirmOverlay | None = None
         # One pending retry timer per remembered strip that is not up yet.
         self._restore_timers: dict[str, QTimer] = {}
+
+    # Which address the person is in the middle of choosing, if any. Empty
+    # unless a deliberate act is in flight; see :meth:`_store_trusted`.
+    _pending_trusted_primary = ""
+    _pending_trusted_mirror = ""
+    # Whether the picker is currently showing the devices no driver claims, and
+    # which strip to put back when it stops.
+    _showing_unknown = False
+    _selected_before_unknown = ""
 
     def _set_mirror_searching(self, searching: bool) -> None:
         """Give the secondary-strip search its own visible progress state."""
@@ -298,13 +324,9 @@ class BleEventHandler:
         if combo is None:
             return
         for index in range(combo.count()):
-            address = combo.itemData(index)
-            if not address:
-                continue
-            for device in host._devices:
-                if str(device.get("address", "")).strip() == str(address).strip():
-                    combo.setItemText(index, self._device_label(device))
-                    break
+            device = find_device(host._devices, address_of(combo.itemData(index)))
+            if device is not None:
+                combo.setItemText(index, self._device_label(device))
 
     def _select_primary_in_combo(self, address: str, name: str = "") -> None:
         """Make the discovery field agree with the connected primary.
@@ -318,7 +340,7 @@ class BleEventHandler:
         address = str(address).strip()
         if combo is None or not address:
             return
-        index = combo.findData(address)
+        index = self._index_of_address(address)
         if index < 0:
             device = next(
                 (
@@ -335,10 +357,12 @@ class BleEventHandler:
                     "rssi": "-",
                 }
                 host._devices.append(device)
-            combo.addItem(self._device_label(device), address)
-            index = combo.findData(address)
+            with self._quiet_picker():
+                combo.addItem(self._device_label(device), device_choice(address))
+            index = self._index_of_address(address)
         if index >= 0:
-            combo.setCurrentIndex(index)
+            with self._quiet_picker():
+                combo.setCurrentIndex(index)
         host._sync_connect_buttons()
 
     def start_scan(self, _checked: bool = False, *, auto_connect: bool = True) -> bool:
@@ -358,10 +382,13 @@ class BleEventHandler:
         host._inspection_token += 1
         host._clear_device_problem()
         self._scan_auto_connect = bool(auto_connect)
+        # A new search answers the question the last offer was about.
+        host._offer_report = False
         host._scan_in_progress = True
         host._devices = []
-        host.device_combo.clear()
-        host.device_combo.addItem(host._tr("device.choice.scan_placeholder"))
+        with self._quiet_picker():
+            host.device_combo.clear()
+            host.device_combo.addItem(host._tr("device.choice.scan_placeholder"), notice_choice())
         host.device_status.setText(host._tr("device.status.scanning"))
         self._sync_last_device_hint()
         self._sync_device_onboarding_hint()
@@ -383,6 +410,46 @@ class BleEventHandler:
             return
         self.start_scan()
 
+    def _index_of_address(self, address: str) -> int:
+        """Where the row for this controller sits, or -1."""
+        combo = getattr(self._host, "device_combo", None)
+        wanted = normalize_address(address)
+        if combo is None or not wanted:
+            return -1
+        for index in range(combo.count()):
+            if address_of(combo.itemData(index)) == wanted:
+                return index
+        return -1
+
+    def _first_device_index(self) -> int:
+        """The first row that stands for a strip, or 0 if there is none.
+
+        What "the top of the list" means once the list has headings in it. Row
+        zero is a heading whenever both groups are present, and a picker resting
+        on a heading answers Connect with "choose a controller" — an instruction
+        to do the thing the person just did.
+        """
+        combo = getattr(self._host, "device_combo", None)
+        if combo is None:
+            return 0
+        for index in range(combo.count()):
+            if kind_of(combo.itemData(index)) == KIND_DEVICE:
+                return index
+        return 0
+
+    def _selected_scan_device(self) -> dict | None:
+        """The controller the highlighted row stands for, or ``None``.
+
+        The single place this question is answered. It is asked of the row, not
+        of its position: the field also holds rows that are not controllers at
+        all, and a position that lines up with the list today lines up with a
+        different controller as soon as one of those appears above it.
+        """
+        combo = getattr(self._host, "device_combo", None)
+        if combo is None:
+            return None
+        return find_device(self._host._devices, address_of(combo.currentData()))
+
     def handle_connect(self) -> None:
         host = self._host
         if host._scan_in_progress:
@@ -391,18 +458,21 @@ class BleEventHandler:
         if host._connect_in_progress:
             self.show_error(host._tr("error.wait_connect"))
             return
-        index = host.device_combo.currentIndex()
         if not host._devices:
             self.show_error(host._tr("error.find_first"))
             return
-        if index < 0 or index >= len(host._devices):
+        device = self._selected_scan_device()
+        if device is None:
             self.show_error(host._tr("error.select_controller_first"))
             return
         if host._inspect_in_progress:
             self.show_error(host._tr("error.wait_inspect"))
             return
         host._device_problem = ""  # a new attempt clears the last complaint
-        device = host._devices[index]
+        # A new attempt replaces whatever the last one was waiting for, so a
+        # result that arrives late for an abandoned address cannot be taken as
+        # the answer to this one.
+        self._clear_pending_trust()
         if device.get("supported", True) is False:
             # Never the ordinary connect path for a device no driver claims:
             # that would mean writing a guessed protocol to unknown hardware.
@@ -414,6 +484,9 @@ class BleEventHandler:
             )
             return
         host._connect_in_progress = True
+        # Set immediately before the attempt, and only here: this is the one
+        # path that begins with somebody choosing a strip from the list.
+        self._pending_trusted_primary = normalize_address(device["address"])
         host.device_status.setText(host._tr("device.status.connecting"))
         host._sync_connect_buttons()
         host._ble.connect_to_address(device["address"])
@@ -426,23 +499,219 @@ class BleEventHandler:
         if not address:
             return
         if not _is_plausible_ble_address(address):
+            # Cleared before anything else is asked. Something that cannot be an
+            # address is rubbish in the file whoever put it there, and leaving
+            # it because it also happens to be untrusted would keep it forever.
             host._settings["last_device_address"] = ""
             host._settings["last_device_name"] = ""
             save_settings(host._settings)
             self._sync_last_device_hint()
             return
+        if not self._is_trusted(address):
+            # Remembered is not chosen. The address here is whatever was
+            # connected last, and this app connects on its own — so on a day
+            # when a strip was switched off, what got remembered may be the
+            # neighbour's. Reaching for it unprompted at every launch is the
+            # difference between a convenience and lighting someone else's room.
+            return
         name = str(host._settings.get("last_device_name", "")).strip()
         display_name = name or address
         host._devices = [{"name": display_name, "address": address, "rssi": "-"}]
-        host.device_combo.clear()
-        host.device_combo.addItem(self._device_label(host._devices[0]), address)
-        host.device_combo.setCurrentIndex(0)
+        with self._quiet_picker():
+            host.device_combo.clear()
+            host.device_combo.addItem(self._device_label(host._devices[0]), device_choice(address))
+            host.device_combo.setCurrentIndex(0)
         host._connect_in_progress = True
         host.device_status.setText(host._tr("device.status.connecting"))
         self._sync_last_device_hint(name=display_name, address=address, autoconnecting=True)
         host._sync_connect_buttons()
         self.log(host._tr("status.autoconnecting", name=display_name, address=address))
         host._ble.connect_to_address(address)
+
+    @contextmanager
+    def _quiet_picker(self):
+        """Rebuild the picker without it reporting each row as a decision.
+
+        ``currentIndexChanged`` is connected straight through, and the very
+        first row added to an empty box becomes the current one. Adding "Back"
+        as the first row of the unrecognised list therefore announced that Back
+        had been chosen — while the list was still being built — and the rest of
+        the rows landed in a box that was already being rebuilt underneath them.
+
+        A stand-in that is not a real widget has no signals to silence, and says
+        so by not being a ``QObject``.
+        """
+        combo = getattr(self._host, "device_combo", None)
+        if not isinstance(combo, QObject):
+            yield combo
+            return
+        blocker = QSignalBlocker(combo)
+        try:
+            yield combo
+        finally:
+            blocker.unblock()
+
+    def _clear_pending_trust(self) -> None:
+        """Forget which address a person was in the middle of choosing.
+
+        Called on every ending there is — success, refusal, cancellation, a new
+        attempt, and the end of a compatibility check. A pending address left
+        behind is a promise waiting for whichever connection happens next, and
+        the connection that happens next may be an automatic one to a strip
+        nobody chose.
+        """
+        self._pending_trusted_primary = ""
+        self._pending_trusted_mirror = ""
+
+    def _store_trusted(self, address: str) -> bool:
+        """Record that this person chose this strip. Returns whether it changed.
+
+        The single door. Trust is granted by an act — pressing Connect, pressing
+        Add strip — and never by an address merely turning up connected, because
+        the app opens a connection on its own and the strip it finds when yours
+        is switched off is not yours.
+        """
+        host = self._host
+        wanted = normalize_address(address)
+        if not wanted or not isinstance(host._settings, dict):
+            return False
+        trusted = validate_extra_addresses(host._settings.get("trusted_device_addresses", []))
+        if wanted in trusted:
+            return False
+        trusted.append(wanted)
+        host._settings["trusted_device_addresses"] = trusted
+        save_settings(host._settings)
+        return True
+
+    def _is_trusted(self, address: str) -> bool:
+        return normalize_address(address) in set(self._trusted_addresses())
+
+    def _trusted_addresses(self) -> list[str]:
+        settings = self._host._settings
+        if not isinstance(settings, dict):
+            return []
+        return validate_extra_addresses(settings.get("trusted_device_addresses", []))
+
+    def _ranked(self, devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Scan results in the order they should be offered.
+
+        Ordered here rather than where the scan happens, because this is the
+        first place that knows which strips this person has actually chosen.
+        The adapter can only tell a recognised controller from an unrecognised
+        one; it has no idea which of them is yours.
+        """
+        return [ranked.device for ranked in rank(devices, trusted=self._trusted_addresses())]
+
+    def _fill_strip_rows(self) -> None:
+        """The ordinary list: the strips, under the names of their groups.
+
+        Unrecognised devices are one row rather than a dozen. They are almost
+        never what somebody is looking for, and a picker whose top half is a
+        neighbour's headphones is a picker people stop reading.
+        """
+        host = self._host
+        combo = host.device_combo
+        combo.clear()
+        trusted = self._trusted_addresses()
+        grouped: dict[str, list[dict[str, Any]]] = {
+            GROUP_TRUSTED: [],
+            GROUP_SUPPORTED: [],
+            GROUP_UNKNOWN: [],
+        }
+        for device in host._devices:
+            grouped[group_of(device, trusted)].append(device)
+        mine = grouped[GROUP_TRUSTED]
+        others = grouped[GROUP_SUPPORTED]
+        unknown = grouped[GROUP_UNKNOWN]
+        for heading, group in (
+            ("device.group.trusted", mine),
+            ("device.group.nearby", others),
+        ):
+            if not group:
+                continue
+            # A heading only earns its row when both groups exist; on its own it
+            # is a label for the only thing on screen.
+            if mine and others:
+                combo.addItem(host._tr(heading), heading_choice())
+            for device in group:
+                combo.addItem(self._device_label(device), device_choice(device["address"]))
+        if unknown:
+            combo.addItem(
+                host._tr("device.group.unknown", count=len(unknown)), show_unknown_choice()
+            )
+
+    def _fill_unknown_rows(self) -> None:
+        """The devices no driver claims, with the way back at the top.
+
+        They keep everything they had: a name, an address, how well they were
+        heard, and the action that reads their services — which is the only
+        route by which a driver for one of them ever gets written.
+        """
+        host = self._host
+        combo = host.device_combo
+        combo.clear()
+        combo.addItem(host._tr("device.group.back"), back_choice())
+        trusted = self._trusted_addresses()
+        for device in host._devices:
+            # By group, not by recognition: a strip this person has used for
+            # months stays under "My strips" on a day when its advertisement
+            # arrives too thin for a driver to claim it, rather than being
+            # filed away with the neighbours' headphones.
+            if group_of(device, trusted) == GROUP_UNKNOWN:
+                combo.addItem(self._device_label(device), device_choice(device["address"]))
+
+    def _show_unknown_devices(self, showing: bool) -> None:
+        """Swap the picker between the strips and the rest.
+
+        The strip that was highlighted is remembered and put back, because
+        looking at what else is in the room is not a change of mind about which
+        strip to connect to.
+        """
+        host = self._host
+        with self._quiet_picker():
+            if showing:
+                self._selected_before_unknown = address_of(host.device_combo.currentData())
+                self._showing_unknown = True
+                self._fill_unknown_rows()
+                # The first device, not the way out. Leaving "Back" selected
+                # means choosing it changes nothing — a combo box reports a
+                # *change* of row, and that row was already the current one, so
+                # the way out would have been unreachable by clicking it.
+                combo_index = next(
+                    (
+                        index
+                        for index in range(host.device_combo.count())
+                        if kind_of(host.device_combo.itemData(index)) == KIND_DEVICE
+                    ),
+                    0,
+                )
+            else:
+                self._showing_unknown = False
+                self._fill_strip_rows()
+                restored = self._index_of_address(self._selected_before_unknown)
+                # The strip that was highlighted may be gone: a scan can have
+                # replaced the list while the other devices were open.
+                combo_index = restored if restored >= 0 else self._first_device_index()
+            # Inside the same silence: setting the index is the other half of
+            # the rebuild, not a person choosing something.
+            host.device_combo.setCurrentIndex(combo_index)
+        host._sync_connect_buttons()
+
+    def on_choice_activated(self) -> None:
+        """A row was picked. Only some rows are things to pick.
+
+        Called for every change of selection, so it must be quiet about the
+        ordinary case: a strip being highlighted is not an event, it is the
+        picker doing its job.
+        """
+        combo = getattr(self._host, "device_combo", None)
+        if combo is None:
+            return
+        kind = kind_of(combo.currentData())
+        if kind == KIND_SHOW_UNKNOWN:
+            self._show_unknown_devices(True)
+        elif kind == KIND_BACK:
+            self._show_unknown_devices(False)
 
     def populate_devices(self, devices: list[dict[str, Any]]) -> None:
         host = self._host
@@ -456,22 +725,32 @@ class BleEventHandler:
             self._set_mirror_searching(False)
             self._handle_mirror_scan_result(devices)
             return
+        devices = self._ranked(devices)
         host._devices = devices
-        host.device_combo.clear()
-        if not devices:
-            host.device_combo.addItem(host._tr("device.choice.not_found"))
-            host.device_status.setText(host._tr("device.status.not_found"))
-            self._sync_last_device_hint()
-            self._sync_device_onboarding_hint()
-            host._sync_connect_buttons()
-            return
-        for device in devices:
-            host.device_combo.addItem(self._device_label(device), device["address"])
+        self._showing_unknown = False
+        # Silent for the whole rebuild. Every row added to an emptied box can
+        # become the current one, and some rows *mean* something when chosen —
+        # a scan that found only unrecognised devices puts one of those first,
+        # so filling the list announced a choice nobody made, halfway through
+        # filling it. It came out right by the accident of toggling twice.
+        with self._quiet_picker():
+            host.device_combo.clear()
+            if not devices:
+                host.device_combo.addItem(host._tr("device.choice.not_found"), notice_choice())
+                host.device_status.setText(host._tr("device.status.not_found"))
+                host._offer_report = True
+                self._sync_last_device_hint()
+                self._sync_device_onboarding_hint()
+                host._sync_connect_buttons()
+                return
+            self._fill_strip_rows()
+            preferred = host._settings.get("last_device_address", "")
+            preferred_index = self._index_of_address(preferred)
+            host.device_combo.setCurrentIndex(
+                preferred_index if preferred_index >= 0 else self._first_device_index()
+            )
         supported = [device for device in devices if device.get("supported", True)]
-        preferred = host._settings.get("last_device_address", "")
-        preferred_index = host.device_combo.findData(preferred) if preferred else -1
-        host.device_combo.setCurrentIndex(preferred_index if preferred_index >= 0 else 0)
-        preferred_device = devices[preferred_index] if preferred_index >= 0 else None
+        preferred_device = find_device(devices, preferred) if preferred_index >= 0 else None
         if preferred_device is not None:
             self._sync_last_device_hint(
                 name=str(preferred_device.get("name", "")).strip(),
@@ -488,10 +767,17 @@ class BleEventHandler:
         # of them was used last time. Startup autoconnect already handles the
         # remembered address directly; reconnecting it here would make a manual
         # search ignore the closest-first list before the user can choose.
-        automatic = supported[0] if auto_connect and len(supported) == 1 else None
+        # Only a strip already chosen is opened without being asked for. One
+        # supported controller in range is not evidence that it is yours: it is
+        # evidence that yours is the only one switched on, or that it is not.
+        automatic = (
+            supported[0]
+            if auto_connect and len(supported) == 1 and self._is_trusted(supported[0].get("address"))
+            else None
+        )
         if automatic is not None:
             device = automatic
-            index = host.device_combo.findData(device["address"])
+            index = self._index_of_address(device["address"])
             if index >= 0:
                 host.device_combo.setCurrentIndex(index)
             self.log(host._tr("status.autofound_connecting", name=device["name"], address=device["address"]))
@@ -504,8 +790,13 @@ class BleEventHandler:
         elif supported:
             host.device_status.setText(host._tr("device.status.found_many", count=len(supported)))
         else:
-            # Only unrecognised devices nearby — invite the user to probe one.
+            # Only unrecognised devices nearby — invite the user to probe one,
+            # and offer the report, which is the other half of that invitation:
+            # a check tells them their device is not supported, and the report
+            # is the thing that can change that.
             host.device_status.setText(host._tr("device.status.found_unknown"))
+            host._offer_report = True
+            host._sync_connect_buttons()
 
     def on_connected_changed(self, connected: bool, address: str) -> None:
         host = self._host
@@ -549,16 +840,31 @@ class BleEventHandler:
         host._refresh_effect_names()
         host._refresh_quick_mode_buttons()
         if connected and _is_plausible_ble_address(address):
+            # The pending address is consumed here whatever happens next, so a
+            # result that belongs to an attempt already abandoned cannot grant
+            # trust to the address that replaced it.
+            chosen = self._pending_trusted_primary
+            self._clear_pending_trust()
+            if chosen and chosen == normalize_address(address):
+                self._store_trusted(address)
             self._select_primary_in_combo(
                 address,
                 self._device_name_for_address(address) or address,
             )
-            host._settings["last_device_address"] = address
-            device_name = self._device_name_for_address(address)
-            if device_name and device_name != address:
-                host._settings["last_device_name"] = device_name
-            self._sync_last_device_hint(name=device_name or address, address=address)
-            save_settings(host._settings)
+            if self._is_trusted(address):
+                host._settings["last_device_address"] = address
+                device_name = self._device_name_for_address(address)
+                if device_name and device_name != address:
+                    host._settings["last_device_name"] = device_name
+                self._sync_last_device_hint(name=device_name or address, address=address)
+                save_settings(host._settings)
+            else:
+                # Connected, and shown as connected, but not written down. An
+                # address arriving here has not necessarily been chosen — a
+                # reconnect, a restore or an automatic attempt all land on this
+                # line — and remembering it would make the next launch reach for
+                # it unprompted.
+                self._sync_last_device_hint()
             # The primary is up: bring the remembered extras back (queued, so an
             # unreachable one never delays the window or the primary).
             self._restore_saved_extras(address)
@@ -590,20 +896,37 @@ class BleEventHandler:
                 return str(device.get("name", "")).strip()
         return str(self._host._settings.get("last_device_name", "")).strip()
 
+    def _signal_text(self, device: dict[str, Any]) -> str:
+        """How this device's signal reads, in words. Empty if nothing was heard.
+
+        Deliberately says nothing about distance. Transmit power differs between
+        controllers and sensitivity between adapters, so the same room gives
+        different figures on different machines — "strong signal" is defensible
+        where "nearest" is not.
+        """
+        quality = measure(device.get("rssi_samples"))
+        if quality.median is None and not device.get("rssi_samples"):
+            return ""
+        return self._host._tr(f"device.signal.{quality.level}")
+
     def _device_label(self, device: dict[str, Any]) -> str:
         address = str(device.get("address", "")).strip()
         # Prefer the user's custom name, else the advertised name.
         name = self._display_name(address, str(device.get("name", "")).strip())
-        rssi = str(device.get("rssi", "")).strip()
         parts: list[str] = []
         # Skip the name when it's just the address again (avoids "MAC | MAC").
         if name and name != address:
             parts.append(name)
         if address:
             parts.append(address)
-        # Only show RSSI when there's a real reading (not the "-" placeholder).
-        if rssi and rssi != "-":
-            parts.append(f"RSSI {rssi}")
+        # Words, not decibels. "RSSI -67" is a number almost nobody can act on,
+        # and the two useful facts inside it — how good the signal is, and
+        # whether we heard enough to say — are what the words carry. The figure
+        # itself is kept, in the diagnostics report, where somebody debugging
+        # wants it.
+        signal = self._signal_text(device)
+        if signal:
+            parts.append(signal)
         label = "  |  ".join(parts) if parts else address
         # Flag controllers we don't recognise yet so the choice is clear.
         if device.get("supported", True) is False:
@@ -660,6 +983,8 @@ class BleEventHandler:
         self._host._connect_in_progress = False
         self._host._scan_in_progress = False
         self._scan_auto_connect = True
+        # A refusal or a cancellation ends the attempt as surely as a success.
+        self._clear_pending_trust()
         if not self._host._is_connected:
             self._host.device_status.setText(self._host._tr("device.status.not_connected"))
         self._sync_last_device_hint()
@@ -687,15 +1012,17 @@ class BleEventHandler:
             return
         # Respect an explicit pick in the list; otherwise auto-pick when there's
         # only one other strip, or ask the user to choose when several.
-        index = host.device_combo.currentIndex()
-        if 0 <= index < len(host._devices) and is_candidate(host._devices[index]):
-            chosen = host._devices[index]
+        selected = self._selected_scan_device()
+        if selected is not None and is_candidate(selected):
+            chosen = selected
         elif len(candidates) == 1:
             chosen = candidates[0]
         else:
             self.show_error(host._tr("device.mirror_pick_first"))
             return
-        host._ble.add_mirror_device(str(chosen.get("address", "")).strip())
+        address = str(chosen.get("address", "")).strip()
+        self._pending_trusted_mirror = normalize_address(address)
+        host._ble.add_mirror_device(address)
 
     def request_add_mirror(self) -> None:
         """Entry point for the 'Add strip' button: add a known second strip, or
@@ -730,10 +1057,12 @@ class BleEventHandler:
 
     def _handle_mirror_scan_result(self, devices: list[dict[str, Any]]) -> None:
         host = self._host
+        devices = self._ranked(devices)
         host._devices = devices
-        host.device_combo.clear()
-        for device in devices:
-            host.device_combo.addItem(self._device_label(device), device["address"])
+        with self._quiet_picker():
+            host.device_combo.clear()
+            for device in devices:
+                host.device_combo.addItem(self._device_label(device), device_choice(device["address"]))
         host._sync_connect_buttons()
         # A mirror scan temporarily borrows the discovery field. If it found
         # nothing new (including when it only rediscovered an existing extra),
@@ -753,6 +1082,13 @@ class BleEventHandler:
         # "live first, then the remembered ones that aren't up right now".
         self._remember_extras(addresses)
         live = {item.strip().upper() for item in addresses}
+        # Granted only once the strip is really there. A press that ended in an
+        # error adds nothing, and the silent restore of a saved extra adds
+        # nothing either — that one was already chosen, on the day it was added.
+        wanted = self._pending_trusted_mirror
+        if wanted and wanted in live:
+            self._pending_trusted_mirror = ""
+            self._store_trusted(wanted)
         for address in live:
             self._cancel_restore(address)  # it is up; stop the retry schedule
         primary = str(host._settings.get("last_device_address", "")).strip().upper()

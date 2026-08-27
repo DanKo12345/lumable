@@ -488,3 +488,69 @@ def test_the_caption_stops_naming_a_strip_that_is_not_there(app, monkeypatch) ->
     finally:
         controller.stop_if_running()
     assert controller.preview_hint_key() == "ambient.preview_hint"
+
+
+# ── asking for more than you are owed ─────────────────────────────────
+def test_asking_to_go_live_does_not_grant_it(app, monkeypatch) -> None:
+    """The argument is a request, not an instruction.
+
+    It sets the permission to write directly, so honouring it unchecked walks
+    past all three of the things that decide where colours go: the licence, the
+    strip being present, and the mode's own gate. Nobody passes it today, which
+    is exactly when a door is worth closing.
+    """
+    host = _Host(connected=False, ble=_UntouchableStrip())
+    controller = _controller(host, monkeypatch)
+
+    assert controller.activate(target=LIVE) is True
+    try:
+        assert controller.target() == PREVIEW, "a request became a permission"
+        _run_until_shown(app, controller, host)
+        assert host.power_toggles == 0, "the strip was reached for anyway"
+    finally:
+        controller.stop_if_running()
+
+
+def test_a_free_licence_cannot_be_asked_past_either(app, monkeypatch) -> None:
+    """The same door, with a strip attached and no licence for the mode."""
+    host = _Host(connected=True, ble=_UntouchableStrip())
+    controller = _controller(host, monkeypatch, licensed=False)
+
+    assert controller.activate(target=LIVE) is True
+    try:
+        assert controller.target() == PREVIEW
+    finally:
+        controller.stop_if_running()
+
+
+def test_asking_to_preview_is_always_honoured(app, monkeypatch) -> None:
+    """Narrowing is the direction that is always safe: there is nothing to lose
+    by not lighting a strip."""
+    strip = _CountingStrip()
+    host = _Host(connected=True, ble=strip)
+    controller = _controller(host, monkeypatch)
+
+    assert controller.intended_target() == LIVE
+    assert controller.activate(target=PREVIEW) is True
+    try:
+        assert controller.target() == PREVIEW
+        _run_until_shown(app, controller, host)
+        assert strip.writes == [], "a run asked to preview wrote to the strip"
+    finally:
+        controller.stop_if_running()
+
+
+def test_what_the_local_api_asks_before_it_answers_a_phone(monkeypatch) -> None:
+    """One question, asked of the mode being requested rather than the one this
+    machine happens to be showing."""
+    connected = _Host(connected=True, ble=_UntouchableStrip())
+    live = _controller(connected, monkeypatch)
+    assert live.would_light_the_strip("screen") is True
+
+    alone = _Host(connected=False, ble=_UntouchableStrip())
+    preview = _controller(alone, monkeypatch)
+    assert preview.would_light_the_strip("screen") is False
+
+    free_host = _Host(connected=True, ble=_UntouchableStrip())
+    free = _controller(free_host, monkeypatch, licensed=False)
+    assert free.would_light_the_strip("screen") is False

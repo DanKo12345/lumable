@@ -94,9 +94,17 @@ class _Ble:
 class _FakeFusion:
     """The controller that runs both screen modes."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, lights_the_strip: bool = True) -> None:
         self._mode = "screen"
         self._running = False
+        # Whether a start would reach a strip. False stands for a Free licence
+        # or no strip attached — the cases where the mode still runs, as a
+        # preview on the desktop, and a phone would be told "on" for a room
+        # that stays dark.
+        self.lights_the_strip = lights_the_strip
+
+    def would_light_the_strip(self, _mode=None) -> bool:
+        return self.lights_the_strip
 
     def mode(self) -> str:
         return self._mode
@@ -517,3 +525,35 @@ def test_quick_mode_validates_key() -> None:
     assert backend.apply_quick_mode("gaming") is True
     assert backend.apply_quick_mode("does-not-exist") is False
     assert "gaming" in backend._host.activated
+
+
+def test_a_phone_is_refused_when_the_mode_would_only_preview() -> None:
+    """A phone asking for the light to come on has no screen of ours to show it.
+
+    Without a licence or without a strip the mode still runs — as a preview
+    beside the desktop card — and answering the phone "on" for a room that
+    stays dark is the one reply this endpoint must not give. It already
+    documents the refusal; what changed is that a preview started counting as a
+    start.
+    """
+    host = _Host()
+    host._fusion_ui = _FakeFusion(lights_the_strip=False)
+    host._ambient_ui = _FakeMode()
+    backend = QtApiBackend(host)
+
+    assert backend.set_pc_mode("screen") is False
+    assert host._ambient_ui.activated == 0, (
+        "a capture nobody can see was left running after the refusal"
+    )
+    assert backend.status()["pc_mode"] is None
+
+
+def test_the_same_command_is_allowed_when_it_really_lights_the_strip() -> None:
+    """The other half: the refusal is about previewing, not about the phone."""
+    host = _Host()
+    host._fusion_ui = _FakeFusion(lights_the_strip=True)
+    host._ambient_ui = _FakeMode()
+    backend = QtApiBackend(host)
+
+    assert backend.set_pc_mode("screen") is True
+    assert host._ambient_ui.activated == 1

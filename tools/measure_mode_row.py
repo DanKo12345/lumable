@@ -32,6 +32,16 @@ SIZES = ((860, 420), (1000, 700))
 # at the smallest window, so a wider button would push the row over instead.
 TOGGLE_KEYS = ("ambient.toggle_off", "ambient.toggle_on", "ambient.toggle_preview")
 
+# The device picker gained group names, a row that opens the unrecognised
+# devices and a sentence about the signal on every strip. All of it shares one
+# combo box whose width the window decides.
+PICKER_KEYS = (
+    "device.group.trusted",
+    "device.group.nearby",
+    "device.group.back",
+    "device.signal.insufficient",
+)
+
 
 def _isolated_data_dir() -> None:
     """Never touch the real LumaBLE data — same care as shoot_screen."""
@@ -116,10 +126,35 @@ def main() -> int:
                     }
                 button.setText(original_label)
                 app.processEvents()
+                # The device picker, on its own screen. Measured with the
+                # longest row it can hold: a named strip, its address, and the
+                # longest of the four signal sentences.
+                select_section(window, "settings")
+                for _ in range(6):
+                    app.processEvents()
+                picker = window.device_combo
+                sample_row = "  |  ".join(
+                    (
+                        "ELK-BLEDOM CE",
+                        "BE:68:3D:0C:5C:03",
+                        window._tr("device.signal.insufficient"),
+                    )
+                )
+                picker_needs = picker.fontMetrics().horizontalAdvance(sample_row)
+                report_button = window.save_report_button
+                report_needs = report_button.sizeHint().width()
+                select_section(window, "ambient")
+                for _ in range(6):
+                    app.processEvents()
                 results.append(
                     {
                         "language": language,
                         "size": f"{width}x{height}",
+                        "picker_width": picker.width(),
+                        "picker_needs": picker_needs,
+                        "picker_texts": {key: window._tr(key) for key in PICKER_KEYS},
+                        "report_button_width": report_button.width(),
+                        "report_button_needs": report_needs,
                         "toggle_button_width": button.width(),
                         "toggle_needs": toggle_needs,
                         "row_needs": row.minimumSizeHint().width(),

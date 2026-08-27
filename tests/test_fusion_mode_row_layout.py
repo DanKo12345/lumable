@@ -193,3 +193,38 @@ def test_the_start_button_says_something_different_in_each_language(measurements
     }
     assert len(set(words.values())) == len(words), f"a language was not applied: {words}"
     assert not any(word.startswith("ambient.") for word in words.values()), words
+
+
+def test_the_device_picker_fits_its_longest_row(measurements) -> None:
+    """The picker now holds a name, an address and a sentence about the signal.
+
+    A combo box elides rather than complaining, and what it elides first is the
+    end of the row — which is exactly where the sentence is. Measured with the
+    longest of the four signal words in each language.
+    """
+    tight = [
+        f"{row['language']} at {row['size']}: the longest row needs "
+        f"{row['picker_needs']}px in {row['picker_width']}px"
+        for row in measurements
+        if row["picker_needs"] > row["picker_width"]
+    ]
+    assert not tight, "; ".join(tight)
+
+
+def test_the_report_button_fits_its_word(measurements) -> None:
+    clipped = [
+        f"{row['language']} at {row['size']}: needs {row['report_button_needs']}px "
+        f"in {row['report_button_width']}px"
+        for row in measurements
+        if row["report_button_needs"] > row["report_button_width"]
+    ]
+    assert not clipped, "; ".join(clipped)
+
+
+def test_the_picker_speaks_each_language(measurements) -> None:
+    """One widget serves every language, so a line nobody retranslated shows up
+    as the same text in all four rather than as an error."""
+    for key in ("device.group.trusted", "device.group.nearby", "device.signal.insufficient"):
+        texts = {row["language"]: row["picker_texts"][key] for row in measurements}
+        assert len(set(texts.values())) == len(texts), f"{key} was not applied: {texts}"
+        assert not any(text.startswith("device.") for text in texts.values()), texts

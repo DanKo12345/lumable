@@ -2,6 +2,33 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.4.2] - 2026-08-27
+
+Find your strip, faster. LumaBLE now keeps your strips together, makes signal quality easy to read
+and offers a clearer path when a controller needs a closer look.
+
+### Added
+- A clearer controller picker groups **My strips**, **Strips nearby** and other devices, so familiar
+  lights stay easy to recognise even in a busy room.
+- Signal quality is shown as Strong, Medium, Weak or Not enough data instead of a fluctuating number.
+- A **Save BLE report** action appears when a scan or compatibility check needs a closer look.
+
+### Changed
+- Scanning now listens throughout the search before ordering results, giving nearby strips a steadier
+  place in the list without moving choices while you use them.
+- Saved main and additional strips are recognised automatically, while unfamiliar controllers wait
+  for your confirmation before becoming part of the setup.
+- Pro licence checks are more reliable during offline use and temporary service interruptions.
+- The Windows tray notification uses shorter, more natural wording in every supported language.
+
+### Fixed
+- Browsing other devices or refreshing the list no longer triggers a connection, selects a heading
+  or quietly changes the main strip.
+- Searching for an additional strip keeps the connected main strip and its place in your setup.
+- The Local API no longer reports Screen Sync as active when only an on-PC preview started and no
+  strip could be lit.
+- Exported text diagnostics now hide Bluetooth addresses consistently before they are shared.
+
 ## [0.4.1] - 2026-08-23
 
 Preview and polish: Screen Sync can now be tried without a connected strip, device scans keep the

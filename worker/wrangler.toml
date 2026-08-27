@@ -1,0 +1,34 @@
+name = "lumable-license"
+main = "src/worker.js"
+
+# Ed25519 in WebCrypto arrived with this date. Pinned rather than left to
+# drift: a runtime that changes underneath a service nobody is watching is a
+# service that stops signing on a day of its own choosing.
+compatibility_date = "2024-09-23"
+
+# No KV, no D1, no Durable Objects, no queue. The service stores nothing, and
+# every binding it does not have is a place customer data cannot end up.
+
+# The one secret, set with `wrangler secret put SIGNING_KEY` and never written
+# down here:
+#
+#   SIGNING_KEY - the Ed25519 private key, PKCS#8 DER, base64.
+#
+# Lemon Squeezy licence endpoints need no API key, so there is no second one.
+
+[observability]
+enabled = true
+
+[[ratelimits]]
+name = "ISSUE_RATE_LIMITER"
+namespace_id = "1001"
+
+[ratelimits.simple]
+limit = 30
+period = 60
+
+[observability.logs]
+enabled = true
+# Sampled, and the code logs nothing itself. What lands here is Cloudflare own
+# record of a request having happened - never a body, never a key.
+head_sampling_rate = 0.1

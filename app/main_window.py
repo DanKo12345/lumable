@@ -148,7 +148,7 @@ class MainWindow(QMainWindow):
             app.installEventFilter(self._tooltip_manager)
         self._start_deferred(300, self.maybe_show_onboarding)
         self._start_deferred(500, self._ble_events.start_autoconnect)
-        self._start_deferred(900, self._license_refresher.refresh)
+        self._start_deferred(900, self._license_refresher.start_watching)
         self._start_deferred(1300, self._app_triggers.start)
         self._start_deferred(1400, self._apply_hotkeys)
         self._start_deferred(1600, self._update_controller.check_silent)
@@ -179,6 +179,11 @@ class MainWindow(QMainWindow):
         self._profiles = load_profiles()
         self._custom_quick_modes: list[dict] = list(self._settings.get("custom_quick_modes", []))
         self._devices: list = []
+        # Whether the moment calls for offering the BLE report: a scan that
+        # found nothing anybody here can drive, or a compatibility check that
+        # has run. Both are points where the next useful step is sending what
+        # was seen to somebody who can write a driver for it.
+        self._offer_report = False
         self._is_connected = False
         self._initializing = False
         self._close_after_ble_shutdown = False
@@ -672,6 +677,9 @@ class MainWindow(QMainWindow):
         self.disconnect_button.clicked.connect(self._ble.disconnect)
         self.add_mirror_button.clicked.connect(self._ble_events.request_add_mirror)
         self.logs_toggle_button.clicked.connect(self._show_logs_overlay)
+        # The existing export, reached from where the question comes up. A second
+        # exporter would be a second thing to keep in step with the snapshot.
+        self.save_report_button.clicked.connect(self._diagnostics_ctrl.export_scan_snapshot)
         self.supported_controllers_button.clicked.connect(self._show_about_overlay)
         self.rename_device_button.clicked.connect(self._rename_primary_device)
 
@@ -1197,8 +1205,13 @@ class MainWindow(QMainWindow):
             parts.append(self._tr("device.meta.driver", driver=view.driver_name))
         elif view.is_unknown:
             parts.append(self._tr("device.meta.unknown_protocol"))
-        if view.signal_rssi is not None:
-            parts.append(self._tr("device.meta.signal", rssi=view.signal_rssi))
+        # No figure here. What reaches this card is one reading — the last that
+        # happened to arrive — and one reading cannot honestly be turned into
+        # "strong" or "weak": the same strip varies by several dB from moment to
+        # moment, which is the whole reason a scan now keeps all of them. The
+        # words belong where a scan's worth of readings exists, in the picker,
+        # and the figure belongs in the report. ``view.signal_rssi`` is still
+        # carried for the report and is deliberately not read here.
         parts.extend(f"{self._tr(label)}: {self._tr(value) if value.startswith('device.fact.') else value}"
                      for label, value in view.facts)
         meta.setText("  ·  ".join(parts) if parts else self._tr("device.primary_empty"))
@@ -1209,6 +1222,10 @@ class MainWindow(QMainWindow):
 
     def _on_device_selection_changed(self, _index: int) -> None:
         self._clear_device_problem()
+        # Some rows are not strips: one opens the devices no driver claims and
+        # one closes them again. Acted on here, where the selection happens, so
+        # there is no second way for a row to mean something.
+        self._ble_events.on_choice_activated()
         self._sync_connect_buttons()
 
     def _clear_device_problem(self) -> None:
@@ -1218,10 +1235,14 @@ class MainWindow(QMainWindow):
             self._device_problem = ""
 
     def _selected_device(self) -> dict | None:
-        index = self.device_combo.currentIndex()
-        if index < 0 or index >= len(self._devices):
-            return None
-        return self._devices[index]
+        """Whatever the highlighted row of the discovery field stands for.
+
+        Delegated rather than worked out again here: the field holds rows that
+        are not controllers, and two places deciding separately what a
+        selection means is two chances to disagree about which strip is about
+        to be opened.
+        """
+        return self._ble_events._selected_scan_device()
 
     def _selected_device_is_unknown(self) -> bool:
         device = self._selected_device()
@@ -1232,6 +1253,12 @@ class MainWindow(QMainWindow):
         if getattr(inspection, "token", None) != self._inspection_token:
             return  # a rescan or a close happened while this was running
         self._inspect_in_progress = False
+        # Whatever it found, the report is now the useful next step.
+        self._offer_report = True
+        # A compatibility check is a read, not a choice. It never grants trust,
+        # and it ends whatever the last deliberate attempt was waiting for so
+        # the next connection cannot inherit it.
+        self._ble_events._clear_pending_trust()
         self._sync_connect_buttons()
         if inspection.error:
             # The user gets what to do about it, not the exception text.
@@ -1246,6 +1273,9 @@ class MainWindow(QMainWindow):
         )
 
     def _sync_connect_buttons(self):
+        report_button = getattr(self, "save_report_button", None)
+        if report_button is not None:
+            report_button.setVisible(bool(self._offer_report) and not self._is_connected)
         connected = bool(self._is_connected)
         connecting = bool(self._connect_in_progress)
         has_devices = bool(self._devices)

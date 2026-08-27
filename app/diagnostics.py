@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+import re
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,6 +15,10 @@ from app.live_sync_text import format_live_sync
 from app.localization import localization_manager
 from app.motion_policy import motion_policy
 from app.music_analysis import MusicSyncReport
+from app.scan_snapshot import mask_address
+from app.signal_quality import measure
+
+_BLE_ADDRESS_RE = re.compile(r"(?i)(?<![0-9a-f])(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}(?![0-9a-f])")
 
 
 def _line(label: str, value: object) -> str:
@@ -126,7 +131,7 @@ def sanitize_report_text(text: str) -> str:
     sanitized = text
     for variant in variants:
         sanitized = sanitized.replace(variant, "~")
-    return sanitized
+    return _BLE_ADDRESS_RE.sub(lambda match: mask_address(match.group(0)), sanitized)
 
 
 def _ambient_section(ambient: dict[str, Any] | None) -> list[str]:
@@ -175,6 +180,40 @@ def _strips_section(snapshot: dict[str, Any]) -> list[str]:
         state = _t("strip_connected") if item.get("connected") else _t("strip_offline")
         name = str(item.get("name") or "").strip() or str(item.get("address"))
         lines.append(f"- {role}: {name} ({item.get('address')}) — {state}")
+    return lines
+
+
+def _scan_results_section(snapshot: dict[str, Any]) -> list[str]:
+    """Every device the last scan offered, with what was heard from each.
+
+    The unrecognised list below answers "why is my device missing". This one
+    answers the other question — why the list came out in that order — and it
+    has to include the recognised controllers, because those are the ones being
+    compared with each other.
+    """
+    raw = snapshot.get("nearby_scan")
+    items = raw if isinstance(raw, list) else []
+    if not items:
+        return []
+    lines = ["", _t("last_scan_section")]
+    for item in items[:16]:
+        if not isinstance(item, dict):
+            continue
+        name = sanitize_report_text(str(item.get("name", "")).strip()) or "-"
+        address = str(item.get("address", "")).strip() or "-"
+        rssi = str(item.get("rssi", "")).strip() or "-"
+        quality = measure(item.get("rssi_samples"))
+        median = "-" if quality.median is None else f"{quality.median:.1f} dBm"
+        lines.append(f"- {name} ({address})")
+        lines.append(f"    Supported: {'yes' if item.get('supported', True) else 'no'}")
+        # Four figures, because they answer different questions and one of them
+        # is routinely mistaken for the others. "latest" is the last reading
+        # that happened to arrive: kept for compatibility and for debugging, and
+        # not what anything is decided on. The median is.
+        lines.append(f"    RSSI latest: {rssi}{' dBm' if rssi != '-' else ''}")
+        lines.append(f"    RSSI median: {median}")
+        lines.append(f"    RSSI samples: {quality.samples}")
+        lines.append(f"    Signal level: {quality.level}")
     return lines
 
 
@@ -424,6 +463,7 @@ def build_diagnostics_report(
     sections.extend(_ambient_section(ambient))
     sections.extend(_music_section(music))
     sections.extend(_fusion_section(fusion))
+    sections.extend(_scan_results_section(snapshot))
     sections.extend(_nearby_unknown_section(snapshot))
 
     sections.extend(["", _t("session_logs_section"), *(log_lines[-80:] if log_lines else ["-"])])
@@ -433,4 +473,7 @@ def build_diagnostics_report(
         if crashes:
             sections.extend(["", _t("recent_crash_logs_section"), *crashes])
 
-    return "\n".join(sections).strip() + "\n"
+    # The text report is commonly pasted into public issues. Apply privacy at
+    # the final boundary so addresses embedded in translated status messages,
+    # session logs, and future sections cannot bypass the field-level helpers.
+    return sanitize_report_text("\n".join(sections).strip()) + "\n"

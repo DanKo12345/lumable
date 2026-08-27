@@ -24,8 +24,9 @@ def test_report_lists_every_strip_with_its_role_and_state() -> None:
     report = build_diagnostics_report(snapshot, [], include_crashes=False)
 
     assert "Strips" in report
-    assert "Main: Main demo strip (AA:BB:CC:DD:EE:01) — connected" in report
-    assert "Extra: Extra demo strip (AA:BB:CC:DD:EE:02) — unavailable" in report
+    assert "Main: Main demo strip (…:EE:01) — connected" in report
+    assert "Extra: Extra demo strip (…:EE:02) — unavailable" in report
+    assert "AA:BB:CC:DD:EE" not in report
 
 
 def test_report_omits_the_strips_block_for_a_single_strip() -> None:
@@ -70,7 +71,7 @@ def test_diagnostics_report_includes_device_driver_and_write_characteristic() ->
     localization_manager.set_language("en")
     snapshot = {
         "connected": True,
-        "device": {"name": "ELK-BLEDOM", "address": "AA:BB:CC", "rssi": "-54"},
+        "device": {"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:01", "rssi": "-54"},
         "driver": {
             "id": "bledom",
             "name": "BLEDOM / ELK-BLEDOM",
@@ -93,7 +94,8 @@ def test_diagnostics_report_includes_device_driver_and_write_characteristic() ->
     report = build_diagnostics_report(snapshot, ["Connected"], include_crashes=False)
 
     assert "Name: ELK-BLEDOM" in report
-    assert "Address: AA:BB:CC" in report
+    assert "Address: …:EE:01" in report
+    assert "AA:BB:CC:DD:EE:01" not in report
     assert "ID: bledom" in report
     assert "Copyright" not in report
     assert "Transport: BLE" in report
@@ -112,6 +114,14 @@ def test_sanitize_report_text_hides_home_path(monkeypatch) -> None:
     monkeypatch.setattr("app.diagnostics.Path", FakeHomePath)
 
     assert sanitize_report_text("C:\\Users\\ExampleUser\\Desktop\\report.txt") == "~\\Desktop\\report.txt"
+
+
+def test_sanitize_report_text_masks_ble_addresses_anywhere() -> None:
+    text = "Primary AA:BB:CC:DD:EE:01; log aa-bb-cc-dd-ee-02"
+
+    sanitized = sanitize_report_text(text)
+
+    assert sanitized == "Primary …:EE:01; log …:ee:02"
 
 
 def test_diagnostics_report_normalizes_localized_session_logs() -> None:
@@ -297,7 +307,7 @@ def test_diagnostics_report_uses_current_language_for_report_labels() -> None:
         include_crashes=False,
     )
 
-    assert "Версия: 0.4.1" in report
+    assert "Версия: 0.4.2" in report
     assert "Устройство" in report
     assert "Подключено: да" in report
     assert "Поддерживаемые команды" in report
@@ -501,3 +511,38 @@ def test_a_live_run_still_reports_its_commands() -> None:
     assert "output: strip" in report
     assert "12 submitted" in report
     assert "48.0 ms p50" in report
+
+
+def test_the_scan_section_speaks_the_interface_language() -> None:
+    """Its neighbours are translated, so an English heading between two Russian
+    ones reads as something half-finished rather than as a deliberate choice.
+    The field names inside stay English on purpose: they are what somebody
+    debugging quotes back."""
+    from app.localization import localization_manager
+
+    original = localization_manager.language
+    try:
+        for language in ("en", "ru", "es", "zh"):
+            localization_manager.set_language(language)
+            heading = localization_manager.t("diagnostics.report.last_scan_section")
+            assert heading and not heading.startswith("diagnostics."), language
+        localization_manager.set_language("ru")
+        report = build_diagnostics_report(
+            {
+                "nearby_scan": [
+                    {
+                        "name": "ELK-BLEDOM",
+                        "address": "AA:BB:CC:DD:EE:01",
+                        "supported": True,
+                        "rssi": "-68",
+                        "rssi_samples": (-70, -68, -69),
+                    }
+                ]
+            },
+            [],
+            include_crashes=False,
+        )
+        assert localization_manager.t("diagnostics.report.last_scan_section") in report
+        assert "Last scan" not in report
+    finally:
+        localization_manager.set_language(original)

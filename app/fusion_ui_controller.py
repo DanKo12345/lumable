@@ -138,6 +138,36 @@ class FusionUiController:
         """What the current run was started as."""
         return self._target
 
+    def would_light_the_strip(self, mode: str | None = None) -> bool:
+        """Whether starting now would reach a strip, rather than only show.
+
+        For callers that have nothing to show — a phone asking for the light to
+        come on has no screen of ours to preview it on, so "it started" would be
+        a false yes.
+        """
+        return self.intended_target(mode) == LIVE
+
+    def _narrowed_target(self, requested: str | None) -> str:
+        """What a caller may actually have, given what it asked for.
+
+        A request can only ever *narrow*. Asking to preview is always allowed —
+        there is nothing to lose by not lighting a strip. Asking to go live is a
+        request, not an instruction: it is granted only when a start would have
+        chosen live anyway.
+
+        Without this the argument was a way past all three of the checks that
+        decide where colours go — the licence, the strip being present, and the
+        mode's own gate — because it set the permission directly. Nobody passes
+        it today. Doors are worth closing before somebody walks through them,
+        not after: a caller added later would inherit the hole silently, and the
+        first symptom would be a Free machine writing to a strip that is not
+        there.
+        """
+        permitted = self.intended_target()
+        if requested == PREVIEW:
+            return PREVIEW
+        return permitted
+
     def previewing(self) -> bool:
         """Whether what is running is showing rather than lighting."""
         return self.is_running() and self._target == PREVIEW
@@ -247,7 +277,7 @@ class FusionUiController:
         self._reason = self.unavailable_reason()
         if self._reason:
             return False
-        target = target if target in (LIVE, PREVIEW) else self.intended_target()
+        target = self._narrowed_target(target)
         host.stop_streams(exclude=self)
         self._run_token += 1
         self._audio_lost = False

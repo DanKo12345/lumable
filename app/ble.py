@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -30,15 +30,20 @@ from app.ble_routing import plan_targets, swap_primary
 from app.color_fade import color_distance, fade_frames
 from app.known_signatures import identify_record
 from app.localization import localization_manager
+from app.scan_observations import ScanObservations
+from app.scan_ranking import by_signal
 from app.scan_snapshot import (
     AdvertisementRecord,
     ScanSnapshot,
     is_possible_controller,
-    record_from_advertisement,
 )
 
 CONNECT_TIMEOUT_SECONDS = 10.0
 FIND_DEVICE_TIMEOUT_SECONDS = 8.0
+# How long a scan listens. Unchanged from what it always was — what changed is
+# that the whole five seconds are now kept rather than summarised by whichever
+# advertisement happened to arrive last.
+SCAN_SECONDS = 5.0
 WRITE_TIMEOUT_SECONDS = 3.0
 WRITE_RETRY_ATTEMPTS = 2
 WRITE_RETRY_DELAY_SECONDS = 0.12
@@ -68,18 +73,6 @@ class ConnectionLostError(RuntimeError):
 
 BLE_OPERATION_ERRORS = (asyncio.TimeoutError, BleakError, ConnectionLostError, OSError, ProtocolCompatibilityError, RuntimeError)
 DRIVER_CAPABILITY_ERRORS = (AttributeError, LookupError, NotImplementedError, TypeError, ValueError)
-
-def _rssi_value(text) -> int:
-    try:
-        return int(str(text))
-    except (TypeError, ValueError):
-        return -999  # unknown signal sorts last
-
-
-def _strongest_signal_first(devices: Iterable[dict]) -> list[dict]:
-    """Return scan choices ordered from strongest to weakest signal."""
-    return sorted(devices, key=lambda item: -_rssi_value(item.get("rssi")))
-
 
 @dataclass
 class DeviceConnection:
@@ -186,6 +179,8 @@ class BleController(QObject):
         self._device: BLEDevice | None = None
         self._driver: LedBleDriver | None = None
         self._scan_driver_hints: dict[str, str] = {}
+        # What the last scan offered, kept for the report.
+        self._last_scan_results: list[dict[str, Any]] = []
         self._write_characteristic: BleakGATTCharacteristic | None = None
         self._write_characteristics: list[BleakGATTCharacteristic] = []
         self._last_red = 88
@@ -797,6 +792,11 @@ class BleController(QObject):
                 "events": list(getattr(self, "_ble_history", [])),
             },
             "nearby_unknown": list(getattr(self, "_unknown_devices", [])),
+            # Everything the last scan offered, recognised or not. The
+            # unrecognised list alone answers "why is my device missing"; it
+            # cannot answer "why did it pick that one", because the strips being
+            # compared are exactly the ones it leaves out.
+            "nearby_scan": list(getattr(self, "_last_scan_results", [])),
         }
 
     def _record_ble_history(self, event: str, **details: object) -> None:
@@ -921,41 +921,58 @@ class BleController(QObject):
             "speed": speed,
         }
 
+    async def _listen_for_advertisements(self) -> ScanObservations:
+        """Hear out a whole scan, keeping every advertisement it brings.
+
+        ``discover()`` returned one advertisement per device — the last one —
+        and the five seconds of listening produced a single reading each. The
+        readings vary by several dB from one moment to the next, so a distant
+        strip that happened to send a strong one outranked a close one that did
+        not, and no amount of care further down could recover what was never
+        kept.
+
+        The scanner is stopped by leaving the block, on every path out of it
+        including an exception and a cancellation. A scanner left running holds
+        the adapter, and the next scan on a machine whose adapter is already
+        busy is the one that finds nothing at all.
+        """
+        seen = ScanObservations()
+        async with BleakScanner(detection_callback=seen.observe):
+            await asyncio.sleep(SCAN_SECONDS)
+        return seen
+
     async def _scan(self) -> None:
-        devices = await BleakScanner.discover(timeout=5.0, return_adv=True)
-        results: list[dict[str, str]] = []
-        unknown: list[dict[str, str]] = []
+        # Nothing is decided or announced until the scanner has stopped. A list
+        # that reorders itself while advertisements arrive moves the row a
+        # person is reaching for, and the reading it reorders on is the noisy
+        # single one this exists to stop trusting.
+        seen = await self._listen_for_advertisements()
+        results: list[dict[str, Any]] = []
+        unknown: list[dict[str, Any]] = []
         captured: list[AdvertisementRecord] = []
         self._scan_driver_hints.clear()
-        for _, (device, advertisement) in devices.items():
-            # Recorded before any filtering: a controller nobody recognises is
-            # exactly the one a snapshot exists for, and it is the first thing
-            # dropped from the lists below. Best-effort — a capture that raises
-            # must never cost the user their scan.
-            record = None
-            try:
-                record = record_from_advertisement(device, advertisement)
-                captured.append(record)
-            except Exception:
-                pass
-            name = device.name or advertisement.local_name or "Unknown BLE Device"
-            service_uuids = [uuid.lower() for uuid in (advertisement.service_uuids or [])]
+        for observed in seen.devices():
+            record = observed.record
+            captured.append(record)
+            handle = observed.handle
+            address = str(getattr(handle, "address", "") or observed.address)
+            name = record.name or "Unknown BLE Device"
+            service_uuids = list(record.service_uuids)
             driver = detect_scan_driver(name, service_uuids)
-            known = identify_record(record) if record is not None else None
+            known = identify_record(record)
             if driver is not None:
-                self._scan_driver_hints[device.address] = driver.id
+                self._scan_driver_hints[address] = driver.id
                 results.append(
                     {
                         "name": name,
-                        "address": device.address,
-                        "rssi": str(advertisement.rssi),
+                        "address": address,
+                        "rssi": str(record.rssi if record.rssi is not None else ""),
+                        "rssi_samples": observed.rssi_samples,
                         "driver": driver.display_name,
                         "supported": True,
                     }
                 )
-            elif record is not None and (
-                known is not None or is_possible_controller(record)
-            ):
+            elif known is not None or is_possible_controller(record):
                 # Judged on the *captured* record, not on `name` above: that one
                 # has already been given the "Unknown BLE Device" placeholder,
                 # and the old heuristic matched the "ble" in it — which offered
@@ -967,20 +984,25 @@ class BleController(QObject):
                 unknown.append(
                     {
                         "name": name,
-                        "address": device.address,
-                        "rssi": str(advertisement.rssi),
+                        "address": address,
+                        "rssi": str(record.rssi if record.rssi is not None else ""),
+                        "rssi_samples": observed.rssi_samples,
                         "services": ", ".join(service_uuids) or "-",
                         "supported": False,
                         "known_name": known.display_name if known is not None else "",
                     }
                 )
 
-        # Supported controllers always lead the picker; within each group the
-        # strongest signal comes first. RSSI is only an estimate of distance,
-        # but it is much more useful than Bleak's arbitrary dictionary order.
-        results = _strongest_signal_first(results)
-        unknown = _strongest_signal_first(unknown)
+        # Ordered on the median of everything heard, not on whichever reading
+        # arrived last. The trusted group is applied further up, where what this
+        # person has chosen is known; here the two lists only need to be in a
+        # settled order — the cap below decides which unrecognised devices
+        # survive, and deciding that on one noisy reading is how a strip that
+        # was in the room fails to appear at all.
+        results = by_signal(results)
+        unknown = by_signal(unknown)
         self._unknown_devices = unknown[:12]
+        self._last_scan_results = results + self._unknown_devices
         # Replaces the previous capture rather than accumulating: a snapshot
         # describes one scan, and a stale device from ten minutes ago in the
         # file would send a driver author chasing hardware that has left.

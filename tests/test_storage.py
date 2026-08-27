@@ -104,6 +104,7 @@ def test_validate_settings_normalizes_broken_payload() -> None:
         "license_id": "",
         "instance_id": "",
         "checked_at": "",
+        "receipt": None,
         "grace_days": 7,
     }
     assert settings["color_history"] == [

@@ -54,9 +54,15 @@ class _AmbientUi:
 class _FusionUi:
     """The controller that actually runs both screen modes now."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, lights_the_strip: bool = True) -> None:
         self._mode = "screen"
         self._running = False
+        # A scene applied on a machine with a licence and a strip. The refusal
+        # case has its own test in the Local API suite.
+        self.lights_the_strip = lights_the_strip
+
+    def would_light_the_strip(self, _mode=None) -> bool:
+        return self.lights_the_strip
 
     def mode(self) -> str:
         return self._mode

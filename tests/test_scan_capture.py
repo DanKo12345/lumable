@@ -9,18 +9,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from concurrent.futures import CancelledError as FuturesCancelledError
 
 import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from app.app_info import APP_VERSION
-from app.ble import (
-    BleController,
-    _strongest_signal_first,
-)
+from app.ble import BleController
 from app.scan_snapshot import SNAPSHOT_VERSION, ScanSnapshot, save_snapshot, snapshot_from_dict
 
 
@@ -49,30 +48,54 @@ def controller():
         ble.shutdown()
 
 
+class _StubScanner:
+    """Stands in for the library's scanner, and records its own lifecycle.
+
+    The real one is entered, listened to, and left; the leaving is what stops
+    it and releases the adapter. So this records both ends rather than only the
+    advertisements — a scanner that was never left is the fault worth catching,
+    and it looks identical from the results alone.
+    """
+
+    log: list[str] = []
+    feed: list[tuple] = []
+    fail_on_enter: BaseException | None = None
+
+    def __init__(self, detection_callback=None, **_kwargs) -> None:
+        self._callback = detection_callback
+
+    async def __aenter__(self):
+        # Raised before the scanner is marked active, which is what a failure
+        # inside start() looks like: nothing is listening, nothing holds the
+        # adapter, and there is nothing for a stop to undo. A stub that marked
+        # itself active first would be describing a different failure and
+        # demanding cleanup the real one does not need.
+        if type(self).fail_on_enter is not None:
+            raise type(self).fail_on_enter
+        type(self).log.append("started")
+        for device, advertisement in type(self).feed:
+            self._callback(device, advertisement)
+        return self
+
+    async def __aexit__(self, *_exc):
+        type(self).log.append("stopped")
+        return False
+
+
+def _install_scanner(monkeypatch, feed) -> type[_StubScanner]:
+    """Point the adapter at the stub and make the listening instant."""
+    _StubScanner.log = []
+    _StubScanner.feed = list(feed)
+    _StubScanner.fail_on_enter = None
+    monkeypatch.setattr("app.ble.BleakScanner", _StubScanner)
+    monkeypatch.setattr("app.ble.SCAN_SECONDS", 0.0)
+    return _StubScanner
+
+
 def _run_scan(ble, monkeypatch, found: dict) -> None:
     """Drive the real _scan() with a stubbed scanner."""
-
-    class _Scanner:
-        @staticmethod
-        async def discover(timeout=5.0, return_adv=True):
-            return found
-
-    monkeypatch.setattr("app.ble.BleakScanner", _Scanner)
+    _install_scanner(monkeypatch, list(found.values()))
     asyncio.run_coroutine_threadsafe(ble._scan(), ble._loop).result(timeout=5)
-
-
-def test_scan_choices_are_ordered_by_signal_strength() -> None:
-    devices = [
-        {"name": "Other room", "rssi": "-78"},
-        {"name": "No reading", "rssi": "-"},
-        {"name": "Desk", "rssi": "-41"},
-    ]
-
-    assert [item["name"] for item in _strongest_signal_first(devices)] == [
-        "Desk",
-        "Other room",
-        "No reading",
-    ]
 
 
 def test_a_named_non_controller_stays_out_of_the_main_picker(controller, monkeypatch) -> None:
@@ -286,3 +309,158 @@ def test_a_write_that_fails_says_so_instead_of_raising(tmp_path) -> None:
     target.parent.write_text("I am a file, not a directory", encoding="utf-8")
 
     assert save_snapshot(target, ScanSnapshot()) is False
+
+
+# ── the scanner is stopped, on every way out ──────────────────────────
+def _events_of(ble) -> list[str]:
+    """The scanner's lifecycle and the announcement, in the order they happened."""
+    order: list[str] = []
+    _StubScanner.log = order
+    # Direct, so the moment of the announcement is recorded where it happens.
+    # The ordinary queued delivery would run the slot later, on the interface
+    # thread, and record an order that is about event loops rather than about
+    # whether the scanner had stopped.
+    ble.devices_discovered.connect(
+        lambda _devices: order.append("announced"), Qt.DirectConnection
+    )
+    return order
+
+
+def test_the_result_is_announced_only_after_the_scanner_has_stopped(controller, monkeypatch) -> None:
+    """Announcing from inside the scan would put a list on screen that the rest
+    of the five seconds then rearranges — and rearranges on exactly the single
+    noisy reading this change exists to stop trusting."""
+    _install_scanner(monkeypatch, [(_Device("ELK-BLEDOM", "AA:BB:CC:DD:EE:01"), _Advertisement(rssi=-55))])
+    order = _events_of(controller)
+
+    asyncio.run_coroutine_threadsafe(controller._scan(), controller._loop).result(timeout=5)
+
+    assert order == ["started", "stopped", "announced"]
+
+
+def test_a_scanner_that_fails_while_starting_leaves_nothing_running(controller, monkeypatch) -> None:
+    """Nothing began, so there is nothing holding the adapter.
+
+    The block is never entered when starting raises, so no stop follows — and
+    none is owed. The failure that *would* owe one is the next test: a scanner
+    that did start and then met trouble.
+    """
+    _install_scanner(monkeypatch, [])
+    _StubScanner.fail_on_enter = RuntimeError("no radio today")
+    order = _events_of(controller)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run_coroutine_threadsafe(
+            controller._listen_for_advertisements(), controller._loop
+        ).result(timeout=5)
+
+    assert order == [], "a scan that never started still claimed to be listening"
+
+
+def test_a_scanner_is_left_when_the_listening_raises(controller, monkeypatch) -> None:
+    """The failure that matters more: the scanner did start, and something went
+    wrong afterwards."""
+    _install_scanner(monkeypatch, [])
+    order = _events_of(controller)
+
+    async def _explode(_seconds):
+        raise RuntimeError("interrupted")
+
+    monkeypatch.setattr("app.ble.asyncio.sleep", _explode)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run_coroutine_threadsafe(
+            controller._listen_for_advertisements(), controller._loop
+        ).result(timeout=5)
+
+    assert order == ["started", "stopped"]
+
+
+def test_a_cancelled_scan_still_leaves_the_scanner(controller, monkeypatch) -> None:
+    """Cancellation is not an error and does not unwind by itself — it unwinds
+    through the same block, which is the point of putting the stop there."""
+    _install_scanner(monkeypatch, [])
+    order = _events_of(controller)
+
+    async def _cancelled(_seconds):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr("app.ble.asyncio.sleep", _cancelled)
+
+    # Surfaces here as the concurrent-futures cancellation, not the asyncio one.
+    with pytest.raises(FuturesCancelledError):
+        asyncio.run_coroutine_threadsafe(
+            controller._listen_for_advertisements(), controller._loop
+        ).result(timeout=5)
+
+    assert order == ["started", "stopped"]
+
+
+def test_scanning_for_another_strip_while_one_is_connected(controller, monkeypatch) -> None:
+    """Adding an extra strip scans with the primary still open, and that path
+    is the one where a scanner left running costs the connection as well as the
+    scan. This proves the lifecycle only — whether the radio tolerates both at
+    once is a question for real hardware.
+    """
+    _install_scanner(monkeypatch, [(_Device("ELK-BLEDOM", "AA:BB:CC:DD:EE:02"), _Advertisement(rssi=-61))])
+    order = _events_of(controller)
+
+    class _OpenClient:
+        is_connected = True
+
+        async def disconnect(self) -> None:
+            """The adapter closes it on shutdown; a stand-in has to allow that."""
+            type(self).is_connected = False
+
+    controller._client = _OpenClient()
+
+    asyncio.run_coroutine_threadsafe(controller._scan(), controller._loop).result(timeout=5)
+
+    assert order == ["started", "stopped", "announced"]
+    assert controller._client is not None, "the scan closed the connection it was scanning beside"
+
+
+def test_the_whole_scan_of_readings_reaches_the_picker(controller, monkeypatch) -> None:
+    """Five seconds of listening, and every reading kept.
+
+    This is the point of the change reaching the place that will use it. The
+    same strip advertises several times with readings that differ by nine dB,
+    and the result carries all of them rather than whichever arrived last —
+    which is what the ordering used to be decided on.
+    """
+    offered: list[list[dict]] = []
+    controller.devices_discovered.connect(offered.append)
+    strip = _Device("ELK-BLEDOM", "AA:BB:CC:DD:EE:07")
+    _install_scanner(
+        monkeypatch,
+        [
+            (strip, _Advertisement(rssi=-70)),
+            (strip, _Advertisement(rssi=-61)),
+            (strip, _Advertisement(rssi=-66)),
+        ],
+    )
+
+    asyncio.run_coroutine_threadsafe(controller._scan(), controller._loop).result(timeout=5)
+    QApplication.instance().processEvents()
+
+    assert offered, "the completed scan never reached the device picker"
+    assert offered[-1][0]["rssi_samples"] == (-70, -61, -66)
+
+
+def test_an_unrecognised_device_keeps_its_readings_too(controller, monkeypatch) -> None:
+    """The unknown group is ranked as well, and the report about it is what a
+    driver gets written from."""
+    offered: list[list[dict]] = []
+    controller.devices_discovered.connect(offered.append)
+    device = _Device("SP630E", "AA:BB:CC:DD:EE:08")
+    _install_scanner(
+        monkeypatch,
+        [(device, _Advertisement(rssi=-50)), (device, _Advertisement(rssi=-58))],
+    )
+
+    asyncio.run_coroutine_threadsafe(controller._scan(), controller._loop).result(timeout=5)
+    QApplication.instance().processEvents()
+
+    unknown = [item for item in offered[-1] if item["supported"] is False]
+    assert unknown, "the unrecognised device was not offered at all"
+    assert unknown[0]["rssi_samples"] == (-50, -58)

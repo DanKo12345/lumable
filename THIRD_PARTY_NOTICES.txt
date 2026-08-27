@@ -23,6 +23,11 @@ License: BSD 3-Clause
 Project: https://github.com/albertosottile/darkdetect
 Used for detecting the operating system theme.
 
+cryptography
+License: Apache License 2.0 or BSD 3-Clause
+Project: https://cryptography.io
+Used for verifying Pro licence responses.
+
 Lucide Icons
 License: ISC
 Project: https://lucide.dev

@@ -71,17 +71,25 @@ def build_device_section(host: PanelHost) -> GlassCard:
     host.rename_device_button = host._button(host._tr("device.rename_primary"), "ghost")
     host.rename_device_button.setVisible(False)
     host.logs_toggle_button = host._button(host._tr("device.show_logs"), "ghost")
+    # Shown when a scan found no controller anybody here can drive, or when a
+    # compatibility check has finished. Those are the two moments where the
+    # report is the useful next step and where, until now, somebody had to know
+    # that Diagnostics existed and what to look for inside it.
+    host.save_report_button = host._button(host._tr("device.save_report"), "ghost")
+    host.save_report_button.setVisible(False)
     for button in (
         host.connect_button,
         host.disconnect_button,
         host.rename_device_button,
         host.logs_toggle_button,
+        host.save_report_button,
     ):
         button.setMinimumWidth(DEVICE_ACTION_MIN_WIDTH)
     primary_layout.addLayout(primary_info, 1)
     primary_layout.addWidget(host.connect_button)
     primary_layout.addWidget(host.disconnect_button)
     primary_layout.addWidget(host.rename_device_button)
+    primary_layout.addWidget(host.save_report_button)
     primary_layout.addWidget(host.logs_toggle_button)
     host.device_card.content_layout.addWidget(host.primary_strip_row)
 

@@ -468,7 +468,9 @@ def test_clicking_a_diy_step_chip_targets_that_step(monkeypatch) -> None:
     would quietly read as step 0."""
     # DIY is Pro-gated; in Free mode the chips are disabled and click() is a
     # no-op, so the test would pass without ever exercising the connection.
-    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
+    monkeypatch.setattr(
+        "app.feature_gate._local_state", lambda: (True, {}, None)
+    )
     invalidate_pro_cache()
 
     app = QApplication.instance() or QApplication([])
@@ -502,7 +504,9 @@ def test_clicking_a_diy_step_chip_targets_that_step(monkeypatch) -> None:
 
 
 def test_diy_motion_names_fit_inside_their_chips(monkeypatch) -> None:
-    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
+    monkeypatch.setattr(
+        "app.feature_gate._local_state", lambda: (True, {}, None)
+    )
     invalidate_pro_cache()
 
     from app.diy_effects import MOTION_KEYS
@@ -538,7 +542,9 @@ def test_diy_motion_names_fit_inside_their_chips(monkeypatch) -> None:
 
 
 def test_diy_library_actions_stay_compact_and_named_at_the_minimum_size(monkeypatch) -> None:
-    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
+    monkeypatch.setattr(
+        "app.feature_gate._local_state", lambda: (True, {}, None)
+    )
     invalidate_pro_cache()
 
     from app.widgets.diy_row import DiyRow

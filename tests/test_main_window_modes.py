@@ -77,7 +77,9 @@ def test_edition_badge_shows_free_and_pro(monkeypatch) -> None:
         window.close()
         app.processEvents()
 
-    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
+    monkeypatch.setattr(
+        "app.feature_gate._local_state", lambda: (True, {}, None)
+    )
     invalidate_pro_cache()
     window = MainWindow()
     try:
@@ -227,7 +229,9 @@ def test_status_dot_stays_static_when_scan_starts_reduced(preserve_motion_policy
 
 
 def test_collected_scene_state_includes_schedule(monkeypatch) -> None:
-    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
+    monkeypatch.setattr(
+        "app.feature_gate._local_state", lambda: (True, {}, None)
+    )
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     try:
@@ -251,7 +255,9 @@ def test_collected_scene_state_includes_schedule(monkeypatch) -> None:
 
 
 def test_loading_scene_restores_schedule_controls(monkeypatch) -> None:
-    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
+    monkeypatch.setattr(
+        "app.feature_gate._local_state", lambda: (True, {}, None)
+    )
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     profile = {

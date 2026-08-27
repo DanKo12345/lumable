@@ -40,3 +40,6 @@ aoh2_launcher_build/obj/
 # OS noise
 Thumbs.db
 Desktop.ini
+worker/node_modules/
+.wrangler/
+*.b64

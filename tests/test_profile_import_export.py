@@ -50,7 +50,7 @@ def test_profile_controller_exports_profiles_with_metadata(tmp_path) -> None:
 
     assert count == 1
     assert payload["app"] == "LumaBLE"
-    assert payload["version"] == "0.4.1"
+    assert payload["version"] == "0.4.2"
     assert payload["profiles"][0]["name"] == "Desk"
 
 
@@ -159,7 +159,9 @@ def test_profile_controller_does_not_count_builtin_presets_toward_free_limit(mon
 def test_profile_controller_allows_more_than_three_custom_profiles_in_pro(monkeypatch) -> None:
     _ensure_app()
     monkeypatch.setattr("app.profile_controller.save_profiles", lambda _profiles: None)
-    monkeypatch.setattr("app.feature_gate.is_license_active", lambda _settings, **_kw: True)
+    monkeypatch.setattr(
+        "app.feature_gate._local_state", lambda: (True, {}, None)
+    )
     controller = ProfileController([_profile("One"), _profile("Two"), _profile("Three")])
 
     controller.save_profile(

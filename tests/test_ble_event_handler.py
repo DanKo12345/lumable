@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 
 from app import ble_event_handler
 from app.ble_event_handler import BleEventHandler
+from app.scan_choices import address_of, device_choice
 from app.widgets.static_popup_combo_box import StaticPopupComboBox
 
 
@@ -26,6 +27,15 @@ class FakeCombo:
 
     def currentIndex(self) -> int:
         return self.index
+
+    def currentData(self) -> Any:
+        """What the highlighted row carries — Qt's own answer, not a shortcut.
+
+        Spelled out rather than left off: the code under test now asks the row
+        what it stands for, and a stand-in that could not be asked would have
+        sent that question nowhere.
+        """
+        return self.itemData(self.index)
 
     def setCurrentIndex(self, index: int) -> None:
         self.index = index
@@ -87,6 +97,8 @@ class FakeBle:
         self.scan_called = False
         self.connected_to: list[str] = []
         self.restored: list[str] = []
+        self.mirrored: list[str] = []
+        self.inspected: list[str] = []
 
     def scan(self) -> None:
         self.scan_called = True
@@ -100,6 +112,13 @@ class FakeBle:
 
     def restore_mirror_device(self, address: str) -> None:
         self.restored.append(address)
+
+    def add_mirror_device(self, address: str) -> None:
+        self.mirrored.append(address)
+
+    def inspect_device(self, address: str, name: str = "", *, token: int = 0) -> None:
+        """A read-only compatibility check. Records the ask; answers later."""
+        self.inspected.append(address)
 
 
 class FakeFeedback:
@@ -177,7 +196,8 @@ def test_start_scan_resets_ui_and_calls_ble_scan() -> None:
 
     assert host._scan_in_progress is True
     assert host._devices == []
-    assert host.device_combo.items == [("device.choice.scan_placeholder", None)]
+    assert [text for text, _ in host.device_combo.items] == ["device.choice.scan_placeholder"]
+    assert address_of(host.device_combo.itemData(0)) == "", "a placeholder offered itself as a strip"
     assert host.device_status.text == "device.status.scanning"
     assert host.device_onboarding_label.visible is False
     assert host.connect_button.enabled is False
@@ -242,7 +262,7 @@ def test_handle_connect_requires_selected_device() -> None:
 
 def test_handle_connect_marks_connection_in_progress() -> None:
     host = FakeHost(_devices=[{"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF", "rssi": -50}])
-    host.device_combo.addItem("ELK-BLEDOM", "AA:BB:CC:DD:EE:FF")
+    host.device_combo.addItem("ELK-BLEDOM", device_choice("AA:BB:CC:DD:EE:FF"))
     handler = BleEventHandler(host)
 
     handler.handle_connect()
@@ -255,7 +275,15 @@ def test_handle_connect_marks_connection_in_progress() -> None:
 
 
 def test_start_autoconnect_connects_to_saved_address() -> None:
-    host = FakeHost(_settings={"last_device_address": "AA:BB:CC:DD:EE:FF", "last_device_name": "Desk strip"})
+    host = FakeHost(
+        _settings={
+            "last_device_address": "AA:BB:CC:DD:EE:FF",
+            "last_device_name": "Desk strip",
+            # Chosen at some point, which is what makes reaching for it again
+            # a convenience rather than a guess.
+            "trusted_device_addresses": ["AA:BB:CC:DD:EE:FF"],
+        }
+    )
     handler = BleEventHandler(host)
 
     handler.start_autoconnect()
@@ -263,7 +291,8 @@ def test_start_autoconnect_connects_to_saved_address() -> None:
     assert host.device_status.text == "device.status.connecting"
     assert host.last_device_label.text == "device.last.autoconnecting:name=Desk strip,address=AA:BB:CC:DD:EE:FF"
     assert host._devices == [{"name": "Desk strip", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-"}]
-    assert host.device_combo.items == [("Desk strip  |  AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF")]
+    assert [text for text, _ in host.device_combo.items] == ["Desk strip  |  AA:BB:CC:DD:EE:FF"]
+    assert address_of(host.device_combo.itemData(0)) == "AA:BB:CC:DD:EE:FF"
     assert host.device_combo.currentIndex() == 0
     assert host._connect_in_progress is True
     assert host.scan_button.enabled is False
@@ -313,8 +342,8 @@ def test_last_device_hint_handles_empty_and_saved_state() -> None:
     assert saved_host.device_onboarding_label.visible is False
 
 
-def test_populate_devices_autoconnects_single_device() -> None:
-    host = FakeHost()
+def test_populate_devices_autoconnects_single_trusted_device() -> None:
+    host = FakeHost(_settings={"trusted_device_addresses": ["AA:BB:CC:DD:EE:FF"]})
     handler = BleEventHandler(host)
     devices = [{"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF", "rssi": -50}]
 
@@ -365,7 +394,7 @@ def test_scan_can_be_read_only_even_with_one_supported_device() -> None:
 
 
 def test_read_only_scan_policy_does_not_leak_into_the_next_manual_scan() -> None:
-    host = FakeHost()
+    host = FakeHost(_settings={"trusted_device_addresses": ["AA:BB:CC:DD:EE:FF"]})
     handler = BleEventHandler(host)
     device = {"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF", "rssi": -40}
 
@@ -396,9 +425,10 @@ def test_status_click_connects_the_selected_scan_result_instead_of_rescanning() 
 
 
 def test_populate_devices_autoconnects_single_supported_among_unknowns() -> None:
-    # A lone supported controller should auto-connect even when unrecognised BLE
-    # devices are also in the list (there usually are several nearby).
-    host = FakeHost()
+    # A lone supported controller that this person has chosen before should
+    # auto-connect even when unrecognised BLE devices are also in the list
+    # (there usually are several nearby).
+    host = FakeHost(_settings={"trusted_device_addresses": ["AA:BB:CC:DD:EE:FF"]})
     handler = BleEventHandler(host)
     devices = [
         {"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF", "rssi": -50, "supported": True},
@@ -432,7 +462,8 @@ def test_populate_devices_handles_empty_result() -> None:
 
     handler.populate_devices([])
 
-    assert host.device_combo.items == [("device.choice.not_found", None)]
+    assert [text for text, _ in host.device_combo.items] == ["device.choice.not_found"]
+    assert address_of(host.device_combo.itemData(0)) == "", "a placeholder offered itself as a strip"
     assert host.device_status.text == "device.status.not_found"
     assert host.connect_button.enabled is False
     assert host.connect_button.visible is True
@@ -443,7 +474,10 @@ def test_populate_devices_handles_empty_result() -> None:
 def test_connected_changed_saves_address_and_refreshes_ui(monkeypatch) -> None:
     saved: list[dict[str, Any]] = []
     monkeypatch.setattr(ble_event_handler, "save_settings", lambda settings: saved.append(dict(settings)))
-    host = FakeHost(_devices=[{"address": "AA:BB:CC:DD:EE:FF"}])
+    host = FakeHost(
+        _devices=[{"address": "AA:BB:CC:DD:EE:FF"}],
+        _settings={"trusted_device_addresses": ["AA:BB:CC:DD:EE:FF"]},
+    )
     handler = BleEventHandler(host)
 
     handler.on_connected_changed(True, "AA:BB:CC:DD:EE:FF")
@@ -459,13 +493,18 @@ def test_connected_changed_saves_address_and_refreshes_ui(monkeypatch) -> None:
     assert host.effect_refresh_count == 1
     assert host.quick_refresh_count == 1
     assert host._settings["last_device_address"] == "AA:BB:CC:DD:EE:FF"
-    assert saved == [{"last_device_address": "AA:BB:CC:DD:EE:FF"}]
+    assert saved[-1]["last_device_address"] == "AA:BB:CC:DD:EE:FF"
 
 
 def test_connected_changed_saves_device_name_when_known(monkeypatch) -> None:
     saved: list[dict[str, Any]] = []
     monkeypatch.setattr(ble_event_handler, "save_settings", lambda settings: saved.append(dict(settings)))
-    host = FakeHost(_devices=[{"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF"}])
+    host = FakeHost(
+        _devices=[{"name": "ELK-BLEDOM", "address": "AA:BB:CC:DD:EE:FF"}],
+        # An already-chosen strip coming back. What a *newly* chosen one does,
+        # and what an unchosen one is refused, live in their own tests.
+        _settings={"trusted_device_addresses": ["AA:BB:CC:DD:EE:FF"]},
+    )
     handler = BleEventHandler(host)
 
     handler.on_connected_changed(True, "AA:BB:CC:DD:EE:FF")
@@ -473,7 +512,8 @@ def test_connected_changed_saves_device_name_when_known(monkeypatch) -> None:
     assert host._settings["last_device_address"] == "AA:BB:CC:DD:EE:FF"
     assert host._settings["last_device_name"] == "ELK-BLEDOM"
     assert host.last_device_label.text == "device.last:name=ELK-BLEDOM,address=AA:BB:CC:DD:EE:FF"
-    assert saved == [{"last_device_address": "AA:BB:CC:DD:EE:FF", "last_device_name": "ELK-BLEDOM"}]
+    assert saved[-1]["last_device_address"] == "AA:BB:CC:DD:EE:FF"
+    assert saved[-1]["last_device_name"] == "ELK-BLEDOM"
 
 
 def test_connected_changed_fills_combo_when_connected_without_scan(monkeypatch) -> None:
@@ -484,7 +524,8 @@ def test_connected_changed_fills_combo_when_connected_without_scan(monkeypatch) 
 
     handler.on_connected_changed(True, "AA:BB:CC:DD:EE:FF")
 
-    assert host.device_combo.items == [("Desk strip  |  AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF")]
+    assert [text for text, _ in host.device_combo.items] == ["Desk strip  |  AA:BB:CC:DD:EE:FF"]
+    assert address_of(host.device_combo.itemData(0)) == "AA:BB:CC:DD:EE:FF"
     assert host.device_combo.currentIndex() == 0
     assert host._devices == [{"name": "Desk strip", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-"}]
 
@@ -523,18 +564,48 @@ def test_show_error_clears_connection_in_progress() -> None:
     assert host._ui_feedback.errors == ["boom"]
 
 
-def test_device_label_skips_duplicate_address_and_empty_rssi() -> None:
+def test_device_label_skips_a_duplicate_address_and_says_nothing_it_cannot() -> None:
     handler = BleEventHandler(FakeHost())
-    # Unresolved name (equals the address) -> shown once, no "RSSI -" tail.
+    # Unresolved name (equals the address) -> shown once. Nothing was heard,
+    # so nothing is said about the signal either.
     assert (
-        handler._device_label({"name": "AA:BB:CC:DD:EE:FF", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-"})
+        handler._device_label(
+            {"name": "AA:BB:CC:DD:EE:FF", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-"}
+        )
         == "AA:BB:CC:DD:EE:FF"
     )
-    # Distinct name + a real RSSI reading -> all three parts.
+    # A distinct name and a scan's worth of readings -> all three parts, and the
+    # third one is a sentence rather than a figure.
     assert (
-        handler._device_label({"name": "Desk strip", "address": "AA:BB:CC:DD:EE:FF", "rssi": "-42"})
-        == "Desk strip  |  AA:BB:CC:DD:EE:FF  |  RSSI -42"
+        handler._device_label(
+            {
+                "name": "Desk strip",
+                "address": "AA:BB:CC:DD:EE:FF",
+                "rssi": "-42",
+                "rssi_samples": (-42, -43, -41),
+            }
+        )
+        == "Desk strip  |  AA:BB:CC:DD:EE:FF  |  device.signal.strong"
     )
+
+
+def test_no_decibels_reach_the_ordinary_label() -> None:
+    """The figure is kept for the report. In the picker it is a number almost
+    nobody can act on, sitting where the useful sentence goes."""
+    handler = BleEventHandler(FakeHost())
+
+    label = handler._device_label(
+        {
+            "name": "Desk strip",
+            "address": "AA:BB:CC:DD:EE:FF",
+            "rssi": "-67",
+            "rssi_samples": (-67, -68, -66),
+        }
+    )
+
+    assert "-67" not in label
+    assert "RSSI" not in label
+    assert "dBm" not in label
 
 
 class FakeSignalSink:
@@ -586,7 +657,7 @@ def test_primary_changed_saves_the_new_main_strip(monkeypatch) -> None:
         {"name": "TV", "address": "11:22:33:44:55:66", "rssi": "-55"},
     ]
     for device in host._devices:
-        host.device_combo.addItem(device["name"], device["address"])
+        host.device_combo.addItem(device["name"], device_choice(device["address"]))
     host.device_combo.setCurrentIndex(0)
     handler = BleEventHandler(host)
 
@@ -597,7 +668,7 @@ def test_primary_changed_saves_the_new_main_strip(monkeypatch) -> None:
     assert saved and saved[-1]["last_device_address"] == "11:22:33:44:55:66"
     assert host.last_device_label.text == "device.last:name=TV,address=11:22:33:44:55:66"
     assert host.device_status_hint.text == "TV"
-    assert host.device_combo.itemData(host.device_combo.currentIndex()) == "11:22:33:44:55:66"
+    assert address_of(host.device_combo.currentData()) == "11:22:33:44:55:66"
     # Scene targets ("primary", groups) follow the new main strip.
     assert host._scene_ui.refreshed == 1
 
@@ -611,11 +682,11 @@ def test_primary_changed_adds_and_selects_a_primary_missing_from_scan_results(mo
         _settings={"last_device_address": old["address"], "last_device_name": old["name"]},
         _is_connected=True,
     )
-    host.device_combo.addItem("Desk", old["address"])
+    host.device_combo.addItem("Desk", device_choice(old["address"]))
 
     BleEventHandler(host).on_primary_changed("11:22:33:44:55:66", "TV")
 
-    assert host.device_combo.itemData(host.device_combo.currentIndex()) == "11:22:33:44:55:66"
+    assert address_of(host.device_combo.currentData()) == "11:22:33:44:55:66"
     assert any(device["address"] == "11:22:33:44:55:66" for device in host._devices)
 
 
@@ -633,7 +704,7 @@ def test_empty_mirror_scan_restores_visible_primary_in_real_combo(monkeypatch) -
 
     handler._handle_mirror_scan_result([])
 
-    assert host.device_combo.currentData() == primary
+    assert address_of(host.device_combo.currentData()) == primary
     assert host.device_combo.currentText() == "ELK-BLEDOM CE  |  BE:68:3D:0C:5C:03"
 
 
@@ -647,13 +718,13 @@ def test_mirror_refresh_returns_picker_from_extra_to_primary(monkeypatch) -> Non
         _settings={"last_device_address": primary, "last_device_name": "ELK-BLEDOM CE"},
         _is_connected=True,
     )
-    host.device_combo.addItem("ELK-BLEDOM 8E", extra)
+    host.device_combo.addItem("ELK-BLEDOM 8E", device_choice(extra))
     handler = BleEventHandler(host)
 
     # mirrors_changed arrives after the extra was accepted.
     handler.refresh_mirror_list([extra])
 
-    assert host.device_combo.itemData(host.device_combo.currentIndex()) == primary
+    assert address_of(host.device_combo.currentData()) == primary
 
 
 def test_mirror_candidates_compare_addresses_case_insensitively() -> None:

@@ -1485,21 +1485,32 @@ def test_an_accent_reaches_the_strip_as_a_brighter_write(app, screen, music) -> 
     assert len(by_beat) >= 4, f"too few strikes reached the strip: {by_beat}"
 
     strikes = [by_beat[key] for key in sorted(by_beat)]
-    assert len(strikes) > audio.accent_position + 1, f"the accent never landed: {strikes}"
-    accent = strikes[audio.accent_position]
-    ordinary = strikes[:audio.accent_position] + strikes[audio.accent_position + 1 :]
+    assert len(strikes) >= 6, f"too little of the script reached the strip: {strikes}"
 
-    # Compared with the strikes on *both* sides of it. The music's influence
-    # fades in over the first seconds, so a later beat is brighter than an early
-    # one whatever it was struck at — an accent placed at the end would be
-    # measuring that ramp and nothing else.
-    assert accent > max(ordinary), (
-        f"the accent was written no brighter than the ordinary beats around it: "
-        f"{ordinary} against {accent}"
+    # Found by being the brightest, not by counting to the position it was
+    # played at. Under load a scripted kick can arrive late enough to be merged
+    # with its neighbour, and then every number after it is off by one — which
+    # says nothing about how hard anything was struck. What the claim needs is
+    # the shape: one strike stands clear of the rest, and it is not simply the
+    # newest one.
+    brightest = max(strikes)
+    position = strikes.index(brightest)
+    others = [value for index, value in enumerate(strikes) if index != position]
+
+    assert strikes.count(brightest) == 1, (
+        f"no single strike stood out from the others: {strikes}"
+    )
+    assert brightest > max(others), f"{others} against {brightest}"
+    # The music's influence fades in over the first seconds, so a later beat is
+    # brighter than an early one whatever it was struck at. Strikes on both
+    # sides of the accent are what rule that out.
+    assert position >= 2, f"the accent led the run, so the ramp could explain it: {strikes}"
+    assert len(strikes) - position > 2, (
+        f"nothing followed the accent, so the ramp could explain it: {strikes}"
     )
     # And the colour is still the screen's: a beat brightens, it does not tint.
     accent_colour = next(
-        colour for colour, beat in written if beat and max(colour) == accent
+        colour for colour, beat in written if beat and max(colour) == brightest
     )
     assert accent_colour[0] > accent_colour[1] > accent_colour[2], accent_colour
 

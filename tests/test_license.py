@@ -1,16 +1,121 @@
 from __future__ import annotations
 
+import base64
+import io
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from app.install_identity import identity_hash
 from app.license import (
+    _LS_MAX_RESPONSE_BYTES,
+    _clear_license,
+    _ls_post,
+    _NoRedirects,
+    _read_json_response,
     activate_license_key,
     deactivate_license,
-    is_license_active,
+    local_verdict,
     normalize_license_key,
+    store_receipt,
     validate_license_state,
 )
+from app.license_receipt import (
+    AUDIENCE,
+    EXPECTED_VARIANT_ID,
+    MAX_LIFETIME,
+    RECEIPT_VERSION,
+    canonical_bytes,
+)
+
+NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+INSTALL = identity_hash("a" * 64)
+KEY_ID = "k1"
+
+
+class _Response(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.close()
+
+
+class _Opener:
+    def __init__(self, response):
+        self.response = response
+        self.request = None
+        self.timeout = None
+
+    def open(self, request, *, timeout):
+        self.request = request
+        self.timeout = timeout
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
+
+
+def _signing_keys():
+    private = Ed25519PrivateKey.generate()
+    public = private.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return private, {KEY_ID: public}
+
+
+def test_lemon_request_refuses_redirects_and_identifies_the_app() -> None:
+    opener = _Opener(_Response(b'{"valid": true}'))
+    with patch("app.license.urllib_request.build_opener", return_value=opener) as build:
+        result = _ls_post("validate", {"license_key": "secret", "instance_id": "one"})
+
+    assert result == {"valid": True}
+    assert build.call_args.args[0] is _NoRedirects
+    assert opener.request.get_header("User-agent").startswith("LumaBLE/")
+    assert opener.timeout == 10.0
+
+
+def test_lemon_response_is_bounded() -> None:
+    response = _Response(b"x" * (_LS_MAX_RESPONSE_BYTES + 1))
+    with pytest.raises(URLError):
+        _read_json_response(response)
+
+
+def test_lemon_server_error_is_not_returned_as_a_licence_answer() -> None:
+    failure = HTTPError(
+        "https://api.lemonsqueezy.com/v1/licenses/validate",
+        503,
+        "unavailable",
+        {},
+        _Response(b'{"valid": false}'),
+    )
+    opener = _Opener(failure)
+    with (
+        patch("app.license.urllib_request.build_opener", return_value=opener),
+        pytest.raises(URLError),
+    ):
+        _ls_post("validate", {"license_key": "secret", "instance_id": "one"})
+
+
+def _receipt(private, **overrides) -> dict:
+    receipt = {
+        "receipt_version": RECEIPT_VERSION,
+        "key_id": KEY_ID,
+        "audience": AUDIENCE,
+        "license_id": "42",
+        "instance_id": "inst-uuid-001",
+        "variant_id": EXPECTED_VARIANT_ID,
+        "installation_hash": INSTALL,
+        "issued_at": NOW.isoformat(),
+        "expires_at": (NOW + MAX_LIFETIME).isoformat(),
+    }
+    receipt.update(overrides)
+    receipt["signature"] = base64.b64encode(private.sign(canonical_bytes(receipt))).decode()
+    return receipt
 
 # ---------------------------------------------------------------------------
 # validate_license_state
@@ -27,6 +132,7 @@ def test_license_state_normalizes_broken_payload() -> None:
         "license_id": "",
         "instance_id": "",
         "checked_at": "",
+        "receipt": None,
         "grace_days": 7,
     }
     assert validate_license_state("broken") == expected_free_state
@@ -39,6 +145,7 @@ def test_license_state_normalizes_broken_payload() -> None:
         "license_id": "",
         "instance_id": "",
         "checked_at": "",
+        "receipt": None,
         "grace_days": 7,
     }
 
@@ -60,6 +167,7 @@ def test_license_state_preserves_future_lemonsqueezy_fields() -> None:
         "license_id": "lic_123",
         "instance_id": "inst_123",
         "checked_at": "2026-06-05T12:00:00Z",
+        "receipt": None,
         "grace_days": 7,
     }
 
@@ -69,150 +177,128 @@ def test_normalize_license_key_ignores_case_and_spaces() -> None:
 
 
 # ---------------------------------------------------------------------------
-# is_license_active
+# the local check: a receipt, and nothing else
 # ---------------------------------------------------------------------------
+def test_a_fresh_timestamp_without_a_receipt_grants_nothing() -> None:
+    """The door the whole redesign exists to close.
 
-
-def test_is_license_active_returns_false_when_no_credentials() -> None:
-    assert is_license_active({}) is False
-    assert is_license_active({"license": {}}) is False
-    assert is_license_active({"license": {"license_key": "KEY", "instance_id": ""}}) is False
-    assert is_license_active({"license": {"license_key": "", "instance_id": "inst-uuid"}}) is False
-
-
-def test_is_license_active_local_trusts_recent_without_network() -> None:
-    # The UI-thread path (allow_network=False) trusts a recent check, no network.
-    recent = datetime.now(UTC).isoformat()
+    A key, an instance and a date within every window the old rules allowed —
+    all of it typed into a file anybody can edit. Under the previous contract
+    this was Pro, offline, indefinitely. Now it is a licence with no receipt,
+    which is Free until one is fetched and checked.
+    """
     settings = {
         "license": {
-            "license_key": "LS-VALIDKEY",
-            "instance_id": "inst-uuid",
-            "checked_at": recent,
+            "license_key": "ANYTHING",
+            "instance_id": "ALSO-ANYTHING",
+            "checked_at": datetime.now(UTC).isoformat(),
         }
     }
-    with patch("app.license._ls_post") as mock_post:
-        result = is_license_active(settings, allow_network=False)
-    assert result is True
-    mock_post.assert_not_called()
+
+    verdict = local_verdict(
+        settings, installation_hash=INSTALL, public_keys={}, now=datetime.now(UTC)
+    )
+
+    assert verdict.ok is False
+    assert verdict.reason == "no_receipt"
 
 
-def test_is_license_active_network_revalidates_even_when_recent() -> None:
-    # Hardening: a hand-edited recent timestamp must NOT skip the server check on
-    # the authoritative path, so a forged local state can't grant Pro.
-    recent = datetime.now(UTC).isoformat()
-    settings = {
-        "license": {
-            "license_key": "LS-FORGED",
-            "instance_id": "inst-uuid",
-            "checked_at": recent,
-        }
-    }
-    with patch("app.license._ls_post", return_value={"valid": False}) as mock_post:
-        result = is_license_active(settings)  # allow_network=True by default
-    assert result is False
-    mock_post.assert_called_once()
-    assert settings["license"]["edition"] == "free"
+def test_nothing_at_all_grants_nothing() -> None:
+    assert local_verdict(
+        {}, installation_hash=INSTALL, public_keys={}, now=datetime.now(UTC)
+    ).ok is False
 
 
-def test_is_license_active_rejects_forged_future_timestamp() -> None:
-    # A future "checked_at" is forged: it earns neither the recent-shortcut nor
-    # the offline grace window.
-    future = (datetime.now(UTC) + timedelta(days=3650)).isoformat()
-    settings = {
-        "license": {
-            "license_key": "LS-FORGED",
-            "instance_id": "inst-uuid",
-            "checked_at": future,
-        }
-    }
-    with patch("app.license._ls_post") as mock_post:
-        assert is_license_active(settings, allow_network=False) is False
-        mock_post.assert_not_called()
-    with patch("app.license._ls_post", side_effect=URLError("offline")):
-        assert is_license_active(settings, allow_network=True) is False
+def test_a_signed_receipt_is_what_grants_pro() -> None:
+    private, keys = _signing_keys()
+    settings = {"license": {"license_key": "K", "instance_id": "I"}}
+    store_receipt(settings, _receipt(private))
+
+    verdict = local_verdict(
+        settings, installation_hash=INSTALL, public_keys=keys, now=NOW
+    )
+
+    assert verdict.ok is True
 
 
-def test_is_license_active_revalidates_when_stale() -> None:
-    stale = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
-    settings = {
-        "license": {
-            "license_key": "LS-VALIDKEY",
-            "instance_id": "inst-uuid",
-            "checked_at": stale,
-        }
-    }
-    with patch("app.license._ls_post", return_value={"valid": True, "meta": {"variant_id": 1776109}}) as mock_post:
-        result = is_license_active(settings)
-    assert result is True
-    mock_post.assert_called_once_with("validate", {"license_key": "LS-VALIDKEY", "instance_id": "inst-uuid"})
-    assert settings["license"]["edition"] == "pro"
+def test_a_receipt_belonging_to_another_installation_grants_nothing() -> None:
+    """The copied settings file. The signature is fine; it is about somebody
+    else's machine."""
+    private, keys = _signing_keys()
+    settings = {"license": {"license_key": "K", "instance_id": "I"}}
+    store_receipt(settings, _receipt(private))
+
+    verdict = local_verdict(
+        settings, installation_hash=identity_hash("z" * 64), public_keys=keys, now=NOW
+    )
+
+    assert verdict.ok is False
 
 
-def test_is_license_active_clears_state_on_remote_invalidation() -> None:
-    stale = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
-    settings = {
-        "license": {
-            "license_key": "LS-REVOKED",
-            "instance_id": "inst-uuid",
-            "checked_at": stale,
-        }
-    }
-    with patch("app.license._ls_post", return_value={"valid": False}):
-        result = is_license_active(settings)
-    assert result is False
-    assert settings["license"]["instance_id"] == ""
-    assert settings["license"]["license_id"] == ""
-    assert settings["license"]["checked_at"] == ""
-    assert settings["license"]["edition"] == "free"
+def test_a_build_with_no_keys_believes_nothing() -> None:
+    """Which is the state until the service is deployed, and deliberately so. A
+    build that fell back to something else "just until the keys arrive" would
+    make that fallback the real check."""
+    private, _keys = _signing_keys()
+    settings = {"license": {"license_key": "K", "instance_id": "I"}}
+    store_receipt(settings, _receipt(private))
+
+    assert local_verdict(
+        settings, installation_hash=INSTALL, public_keys={}, now=NOW
+    ).ok is False
 
 
-def test_is_license_active_rejects_other_lemon_squeezy_variant() -> None:
-    stale = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
-    settings = {
-        "license": {
-            "license_key": "LS-OTHER-PRODUCT",
-            "instance_id": "inst-uuid",
-            "checked_at": stale,
-        }
-    }
-    with patch("app.license._ls_post", return_value={"valid": True, "meta": {"variant_id": 123}}):
-        result = is_license_active(settings)
-    assert result is False
-    assert settings["license"]["instance_id"] == ""
-    assert settings["license"]["edition"] == "free"
+def test_an_expired_receipt_asks_for_a_new_one_rather_than_ending_the_licence() -> None:
+    private, keys = _signing_keys()
+    settings = {"license": {"license_key": "K", "instance_id": "I"}}
+    store_receipt(settings, _receipt(private))
+
+    verdict = local_verdict(
+        settings,
+        installation_hash=INSTALL,
+        public_keys=keys,
+        now=NOW + MAX_LIFETIME + timedelta(seconds=1),
+    )
+
+    assert verdict.ok is False
+    assert verdict.is_expired is True
+    assert settings["license"]["license_key"] == "K", "an expired receipt cost the licence"
 
 
-def test_is_license_active_grants_grace_on_network_error() -> None:
-    stale = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
-    settings = {
-        "license": {
-            "license_key": "LS-VALIDKEY",
-            "instance_id": "inst-uuid",
-            "checked_at": stale,
-        }
-    }
-    with patch("app.license._ls_post", side_effect=URLError("timeout")):
-        result = is_license_active(settings)
-    assert result is True
+def test_the_receipt_survives_being_validated() -> None:
+    """Not tidied, either: what makes it good is a signature over exact bytes,
+    and a validator straightening its fields would be changing them."""
+    private, _keys = _signing_keys()
+    settings = {"license": {"license_key": "K", "instance_id": "I"}}
+    store_receipt(settings, _receipt(private))
+    original = dict(settings["license"]["receipt"])
+
+    state = validate_license_state(settings["license"])
+
+    assert state["receipt"] == original
 
 
-def test_is_license_active_denies_grace_after_grace_period() -> None:
-    stale = (datetime.now(UTC) - timedelta(days=8)).isoformat()
-    settings = {
-        "license": {
-            "license_key": "LS-VALIDKEY",
-            "instance_id": "inst-uuid",
-            "checked_at": stale,
-        }
-    }
-    with patch("app.license._ls_post", side_effect=URLError("timeout")):
-        result = is_license_active(settings)
-    assert result is False
+def test_clearing_a_licence_takes_the_receipt_with_it() -> None:
+    """Otherwise Pro would outlive the answer that ended it, by up to a
+    fortnight."""
+    private, _keys = _signing_keys()
+    settings = {"license": {"license_key": "K", "instance_id": "I"}}
+    store_receipt(settings, _receipt(private))
+
+    _clear_license(settings["license"])
+
+    assert settings["license"]["receipt"] is None
+    assert settings["license"]["license_key"] == ""
 
 
 # ---------------------------------------------------------------------------
 # activate_license_key
 # ---------------------------------------------------------------------------
+
+# The identity every activation in this file happens under. Real activations
+# take one from the protected store; here it only has to be a stable string,
+# because what is being tested is what gets sent and what gets kept.
+INSTALL = "9f2c" * 10 + "abc"
 
 _ACTIVATE_SUCCESS = {
     "activated": True,
@@ -226,7 +312,7 @@ _ACTIVATE_SUCCESS = {
 def test_activate_license_key_success() -> None:
     settings: dict = {}
     with patch("app.license._ls_post", return_value=_ACTIVATE_SUCCESS):
-        result = activate_license_key("ls-testkey", settings)
+        result = activate_license_key("ls-testkey", settings, installation_hash=INSTALL)
     assert result is True
     lic = settings["license"]
     assert lic["license_key"] == "LS-TESTKEY"
@@ -242,7 +328,7 @@ def test_activate_license_key_rejects_other_lemon_squeezy_variant() -> None:
     response = dict(_ACTIVATE_SUCCESS)
     response["meta"] = {"variant_id": 123}
     with patch("app.license._ls_post", return_value=response):
-        result = activate_license_key("ls-testkey", settings)
+        result = activate_license_key("ls-testkey", settings, installation_hash=INSTALL)
     assert result is False
     assert settings == {}
 
@@ -250,7 +336,18 @@ def test_activate_license_key_rejects_other_lemon_squeezy_variant() -> None:
 def test_activate_license_key_rejected_by_server() -> None:
     settings: dict = {}
     with patch("app.license._ls_post", return_value={"activated": False, "error": "Invalid key"}):
-        result = activate_license_key("WRONG-KEY", settings)
+        result = activate_license_key("WRONG-KEY", settings, installation_hash=INSTALL)
+    assert result is False
+    assert settings == {}
+
+
+@pytest.mark.parametrize("missing", ["license_key", "instance"])
+def test_activate_license_key_requires_ids_from_successful_response(missing: str) -> None:
+    settings: dict = {}
+    response = dict(_ACTIVATE_SUCCESS)
+    response[missing] = {}
+    with patch("app.license._ls_post", return_value=response):
+        result = activate_license_key("ls-testkey", settings, installation_hash=INSTALL)
     assert result is False
     assert settings == {}
 
@@ -258,7 +355,7 @@ def test_activate_license_key_rejected_by_server() -> None:
 def test_activate_license_key_does_not_change_settings_on_rejection() -> None:
     settings = {"license": {"activated": False, "edition": "free", "kind": ""}}
     with patch("app.license._ls_post", return_value={"activated": False, "error": "Not found"}):
-        result = activate_license_key("wrong", settings)
+        result = activate_license_key("wrong", settings, installation_hash=INSTALL)
     assert result is False
     assert settings["license"]["edition"] == "free"
 
@@ -266,14 +363,14 @@ def test_activate_license_key_does_not_change_settings_on_rejection() -> None:
 def test_activate_license_key_network_error() -> None:
     settings: dict = {}
     with patch("app.license._ls_post", side_effect=URLError("no network")):
-        result = activate_license_key("LS-SOME-KEY", settings)
+        result = activate_license_key("LS-SOME-KEY", settings, installation_hash=INSTALL)
     assert result is False
     assert settings == {}
 
 
 def test_activate_license_key_empty_key() -> None:
     settings: dict = {}
-    assert activate_license_key("", settings) is False
+    assert activate_license_key("", settings, installation_hash=INSTALL) is False
     assert settings == {}
 
 
@@ -369,6 +466,24 @@ def test_deactivate_license_keeps_state_when_still_valid() -> None:
         result = deactivate_license(settings)
 
     assert result is False
+    assert settings["license"]["instance_id"] == "inst-uuid"
+
+
+def test_deactivate_license_keeps_state_on_ambiguous_json() -> None:
+    settings = {
+        "license": {
+            "license_key": "LS-VALIDKEY",
+            "instance_id": "inst-uuid",
+            "edition": "pro",
+        }
+    }
+
+    responses = iter([{"deactivated": False}, {"error": "service unavailable"}])
+    with patch("app.license._ls_post", side_effect=lambda *_args: next(responses)):
+        result = deactivate_license(settings)
+
+    assert result is False
+    assert settings["license"]["license_key"] == "LS-VALIDKEY"
     assert settings["license"]["instance_id"] == "inst-uuid"
 
 
@@ -704,3 +819,75 @@ def test_license_overlay_buy_button_falls_back_without_checkout_url() -> None:
         overlay.close_overlay()
         parent.deleteLater()
         app.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# the name an activation goes under
+# ---------------------------------------------------------------------------
+def test_the_instance_name_is_only_the_installation() -> None:
+    """The whole of the binding, and it carries nothing else.
+
+    The signing server has no way to know a machine's name and therefore no way
+    to rebuild a string containing one — which is why the readable dashboard
+    entry was given up. Matching part of a name rather than all of it is the
+    looseness this exists to remove.
+    """
+    from app.license import INSTANCE_NAME_PREFIX, canonical_instance_name
+
+    name = canonical_instance_name(INSTALL)
+
+    assert name == f"{INSTANCE_NAME_PREFIX}{INSTALL}"
+    assert INSTALL in name and name.startswith("LumaBLE:")
+
+    import platform
+
+    host = platform.node().strip()
+    if host:
+        assert host not in name, "the machine's name leaked into the binding"
+
+
+def test_a_real_length_name_stays_within_what_a_field_should_hold() -> None:
+    """The hash is 43 characters, so the whole name is 51. There is no
+    documented limit, which is why the live activation has to confirm it — but
+    a change that made it much longer should be noticed here first."""
+    from app.install_identity import identity_hash
+    from app.license import canonical_instance_name
+
+    name = canonical_instance_name(identity_hash("a" * 64))
+
+    assert len(name) == 51
+
+
+def test_an_installation_with_no_identity_cannot_activate() -> None:
+    """An activation whose name the server cannot rebuild is a slot spent on an
+    instance no receipt could ever be issued for — a licence gone for nothing.
+    """
+    from app.license import canonical_instance_name
+
+    assert canonical_instance_name("") == ""
+    assert canonical_instance_name(None) == ""
+
+    settings: dict = {}
+    calls = []
+    with patch("app.license._ls_post", side_effect=lambda *a, **k: calls.append(a) or {}):
+        assert activate_license_key("ls-testkey", settings, installation_hash="") is False
+
+    assert calls == [], "an activation was attempted without an identity"
+    assert settings == {}
+
+
+def test_the_activation_sends_exactly_the_canonical_name() -> None:
+    """What the server will compare against, byte for byte."""
+    from app.license import canonical_instance_name
+
+    sent = {}
+
+    def _capture(endpoint, payload):
+        sent.update(payload)
+        return _ACTIVATE_SUCCESS
+
+    settings: dict = {}
+    with patch("app.license._ls_post", side_effect=_capture):
+        assert activate_license_key("ls-testkey", settings, installation_hash=INSTALL) is True
+
+    assert sent["instance_name"] == canonical_instance_name(INSTALL)
