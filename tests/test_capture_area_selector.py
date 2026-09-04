@@ -288,7 +288,7 @@ def test_the_picker_fits_the_card_in_the_smallest_window() -> None:
             "the page scrolls sideways"
         )
     finally:
-        overlay = getattr(window, "_onboarding_overlay", None)
+        overlay = window._onboarding.overlay
         if overlay is not None:
             overlay.hide()
         window._ble.shutdown()

@@ -28,7 +28,7 @@ def window():
     try:
         yield win
     finally:
-        overlay = getattr(win, "_onboarding_overlay", None)
+        overlay = win._onboarding.overlay
         if overlay is not None:
             overlay.hide()
         win._ble.shutdown()
@@ -41,7 +41,7 @@ def tour(window, preserve_motion_policy):
     policy = preserve_motion_policy
     policy.set_provider(None)
     policy.set_mode("reduced")
-    overlay = OnboardingOverlay(window._onboarding_labels(), window)
+    overlay = OnboardingOverlay(window._onboarding.labels(), window)
     overlay.sectionRequested.connect(lambda key: select_section(window, key))
     overlay.open()
     QApplication.instance().processEvents()
@@ -61,6 +61,23 @@ def test_the_welcome_fits_the_minimum_window(window, tour) -> None:
     assert QRectF(tour.rect()).contains(QRectF(panel)), "the first dialog is clipped"
     assert panel.contains(tour._later_button.geometry().translated(tour._panel.pos()))
     assert panel.contains(tour._tour_button.geometry().translated(tour._panel.pos()))
+
+
+def test_first_run_tour_is_remembered_after_it_finishes(window) -> None:
+    window._settings["onboarding_seen"] = True
+    window.maybe_show_onboarding()
+    assert window._onboarding.overlay is None
+
+    window._settings["onboarding_seen"] = False
+    window.maybe_show_onboarding()
+    overlay = window._onboarding.overlay
+    assert overlay is not None
+
+    overlay._finish()
+    QApplication.instance().processEvents()
+
+    assert window._settings["onboarding_seen"] is True
+    assert window._onboarding.overlay is None
 
 
 def test_the_tour_reveals_real_sections_and_scrolls_to_diagnostics(window, tour) -> None:
@@ -190,7 +207,7 @@ def test_reopened_guide_follows_the_card_while_the_live_preview_expands(
     preserve_motion_policy.set_mode("full")
     select_section(window, "settings")
     window.body_scroll.verticalScrollBar().setValue(window.body_scroll.verticalScrollBar().maximum())
-    overlay = OnboardingOverlay(window._onboarding_labels(), window)
+    overlay = OnboardingOverlay(window._onboarding.labels(), window)
     overlay.sectionRequested.connect(lambda key: select_section(window, key))
     overlay.open()
     overlay._begin_tour()
@@ -241,7 +258,7 @@ def test_programmatic_scrolling_moves_through_intermediate_frames(
 ) -> None:
     preserve_motion_policy.set_provider(None)
     preserve_motion_policy.set_mode("full")
-    overlay = OnboardingOverlay(window._onboarding_labels(), window)
+    overlay = OnboardingOverlay(window._onboarding.labels(), window)
     overlay.sectionRequested.connect(lambda key: select_section(window, key))
     overlay.open()
     overlay._begin_tour()
@@ -268,7 +285,7 @@ def test_full_motion_fades_a_final_sized_frame_instead_of_cropping_the_target(
 ) -> None:
     preserve_motion_policy.set_provider(None)
     preserve_motion_policy.set_mode("full")
-    overlay = OnboardingOverlay(window._onboarding_labels(), window)
+    overlay = OnboardingOverlay(window._onboarding.labels(), window)
     overlay.sectionRequested.connect(lambda key: select_section(window, key))
     overlay.open()
     overlay._begin_tour()
@@ -286,7 +303,7 @@ def test_full_motion_fades_a_final_sized_frame_instead_of_cropping_the_target(
 def test_autoplay_waits_until_the_visual_demo_finishes(window, preserve_motion_policy) -> None:
     preserve_motion_policy.set_provider(None)
     preserve_motion_policy.set_mode("full")
-    overlay = OnboardingOverlay(window._onboarding_labels(), window)
+    overlay = OnboardingOverlay(window._onboarding.labels(), window)
     overlay.sectionRequested.connect(lambda key: select_section(window, key))
     overlay.open()
     overlay._begin_tour()
@@ -346,7 +363,7 @@ def test_the_colour_demo_visibly_moves_through_more_than_one_colour(
 ) -> None:
     preserve_motion_policy.set_provider(None)
     preserve_motion_policy.set_mode("full")
-    overlay = OnboardingOverlay(window._onboarding_labels(), window)
+    overlay = OnboardingOverlay(window._onboarding.labels(), window)
     overlay.sectionRequested.connect(lambda key: select_section(window, key))
     overlay.open()
     overlay._begin_tour()
@@ -384,7 +401,7 @@ def test_a_demo_scene_fades_in_without_becoming_a_saved_scene(
     preserve_motion_policy.set_mode("full")
     before_settings = deepcopy(window._settings)
     before_ids = [tile.scene_id for tile in window.scenes_grid.tiles()]
-    overlay = OnboardingOverlay(window._onboarding_labels(), window)
+    overlay = OnboardingOverlay(window._onboarding.labels(), window)
     overlay.sectionRequested.connect(lambda key: select_section(window, key))
     overlay.open()
     overlay._begin_tour()
@@ -445,7 +462,7 @@ def test_screen_sync_animates_the_profile_and_both_controls_without_saving(
     for slider in sliders:
         slider.valueChanged.connect(lambda _value: emissions.__setitem__(0, emissions[0] + 1))
     profile.selected.connect(lambda _key: emissions.__setitem__(0, emissions[0] + 1))
-    overlay = OnboardingOverlay(window._onboarding_labels(), window)
+    overlay = OnboardingOverlay(window._onboarding.labels(), window)
     overlay.sectionRequested.connect(lambda key: select_section(window, key))
     overlay.open()
     overlay._begin_tour()
@@ -501,7 +518,7 @@ def test_the_demo_rule_expands_smoothly_and_the_frame_follows_it(
 ) -> None:
     preserve_motion_policy.set_provider(None)
     preserve_motion_policy.set_mode("full")
-    overlay = OnboardingOverlay(window._onboarding_labels(), window)
+    overlay = OnboardingOverlay(window._onboarding.labels(), window)
     overlay.sectionRequested.connect(lambda key: select_section(window, key))
     overlay.open()
     overlay._begin_tour()
