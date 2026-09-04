@@ -45,7 +45,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from PySide6.QtCore import QCoreApplication, QObject, QTimer
+from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QTimer, Signal
 
 from app import scene_store
 from app.automation.ble_executor import BleActionExecutor
@@ -271,7 +271,8 @@ def _run_one(
         print("LumaBLE automation has no saved controller address.", file=sys.stderr)
         return EXIT_NO_ADDRESS
 
-    app = QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
+    QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
+    run_loop = QEventLoop()
     runner = _RuleRunner(
         winner,
         address,
@@ -281,8 +282,9 @@ def _run_one(
         context=context,
         timeout_ms=timeout_ms,
     )
+    runner.finished.connect(run_loop.quit)
     QTimer.singleShot(0, runner.start)
-    app.exec()
+    run_loop.exec()
 
     if runner.exit_code == EXIT_OK:
         # Recorded only on success, exactly as the engine's ack does: a run that
@@ -676,6 +678,8 @@ def execution_lock_path() -> Path:
 class _RuleRunner(QObject):
     """Connects, runs one rule's action, and reports what actually happened."""
 
+    finished = Signal()
+
     def __init__(
         self,
         rule: Rule,
@@ -851,4 +855,4 @@ class _RuleRunner(QObject):
         try:
             self._ble.shutdown()
         finally:
-            QCoreApplication.quit()
+            self.finished.emit()

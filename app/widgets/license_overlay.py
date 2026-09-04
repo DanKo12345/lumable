@@ -250,15 +250,53 @@ class LicenseOverlay(QWidget):
         license_key: str = "",
     ) -> None:
         super().__init__(parent)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFocusPolicy(Qt.StrongFocus)
+        self._store_dependencies(
+            labels,
+            activate_callback,
+            buy_callback,
+            deactivate_callback,
+            mode,
+            license_key,
+        )
+        self._configure_overlay(parent)
+        self._configure_runtime_state()
+
+        active = self._is_active_mode()
+        panel_layout = self._build_panel_shell(active)
+        self._build_header(panel_layout, active)
+        self._build_centre(panel_layout, active)
+        self._build_footer(panel_layout, active)
+        self._build_deactivation_action(panel_layout)
+
+    def _store_dependencies(
+        self,
+        labels: dict[str, str],
+        activate_callback: Callable[[str], tuple[bool, str]],
+        buy_callback: Callable[[], bool] | None,
+        deactivate_callback: Callable[[], tuple[bool, str]] | None,
+        mode: str,
+        license_key: str,
+    ) -> None:
         self._labels = labels
         self._activate_callback = activate_callback
-        self._activate_worker: _ActivateWorker | None = None
         self._buy_callback = buy_callback
         self._deactivate_callback = deactivate_callback
         self._mode = mode
         self._license_key = str(license_key or "").strip()
+
+    def _configure_overlay(self, parent: QWidget | None) -> None:
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFocusPolicy(Qt.StrongFocus)
+        if parent is not None:
+            self.setGeometry(parent.rect())
+        self._apply_style()
+
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity_effect)
+
+    def _configure_runtime_state(self) -> None:
+        self._activate_worker: _ActivateWorker | None = None
         self._fade_anim: QPropertyAnimation | None = None
         self._panel_anim: QPropertyAnimation | None = None
         self._panel_opacity: QGraphicsOpacityEffect | None = None
@@ -268,15 +306,6 @@ class LicenseOverlay(QWidget):
         self._disarm_timer.setSingleShot(True)
         self._disarm_timer.setInterval(4000)
         self._disarm_timer.timeout.connect(self._disarm_deactivate)
-        if parent is not None:
-            self.setGeometry(parent.rect())
-        self._apply_style()
-
-        self._opacity_effect = QGraphicsOpacityEffect(self)
-        self._opacity_effect.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity_effect)
-
-        active = self._is_active_mode()
         self._key_revealed = False
         self._spinner_frame = 0
         self._activating = False
@@ -285,6 +314,7 @@ class LicenseOverlay(QWidget):
         self._spinner_timer.timeout.connect(self._tick_spinner)
         motion_policy.changed.connect(self._on_spinner_motion_changed)
 
+    def _build_panel_shell(self, active: bool) -> QVBoxLayout:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addStretch(1)
@@ -297,15 +327,14 @@ class LicenseOverlay(QWidget):
         panel_layout = QVBoxLayout(self._panel)
         panel_layout.setContentsMargins(34, 20, 34, 24)
         panel_layout.setSpacing(12)
+        return panel_layout
 
-        # --- Pinned header: a compact title + the × close. Nothing tall lives
-        # here, so on a short window (860×420) the title and close stay visible
-        # while the value content below scrolls. Esc also closes via keyPressEvent.
+    def _build_header(self, panel_layout: QVBoxLayout, active: bool) -> None:
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
         if active:
-            title = QLabel(labels["active_title"], self._panel)
+            title = QLabel(self._labels["active_title"], self._panel)
             title.setObjectName("licenseTitle")
             title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             header.addWidget(title, 1, Qt.AlignVCenter)
@@ -316,7 +345,7 @@ class LicenseOverlay(QWidget):
             title_layout = QHBoxLayout(title_row)
             title_layout.setContentsMargins(0, 0, 0, 0)
             title_layout.setSpacing(6)
-            title_text = str(labels["title"]).strip()
+            title_text = str(self._labels["title"]).strip()
             brand_text = title_text[:-4].rstrip() if title_text.lower().endswith(" pro") else title_text
             title = QLabel(brand_text, title_row)
             title.setObjectName("licenseTitle")
@@ -335,14 +364,13 @@ class LicenseOverlay(QWidget):
         self._close_button.setFixedSize(32, 32)
         self._close_button.setAlignment(Qt.AlignCenter)
         self._close_button.setCursor(Qt.PointingHandCursor)
-        self._close_button.setToolTip(labels.get("close", ""))
-        self._close_button.setAccessibleName(labels.get("close", "Close"))
+        self._close_button.setToolTip(self._labels.get("close", ""))
+        self._close_button.setAccessibleName(self._labels.get("close", "Close"))
         self._close_button.clicked.connect(self.close_overlay)
         header.addWidget(self._close_button, 0, Qt.AlignTop | Qt.AlignRight)
         panel_layout.addLayout(header)
 
-        # --- Scrollable centre: emblem/status, benefits, key field, message.
-        # Only this area gives up height on a short window; header and footer stay.
+    def _build_centre(self, panel_layout: QVBoxLayout, active: bool) -> None:
         self._scroll = QScrollArea(self._panel)
         self._scroll.setObjectName("licenseScroll")
         self._scroll.setWidgetResizable(True)
@@ -361,15 +389,18 @@ class LicenseOverlay(QWidget):
 
         self._hero_title: QLabel | None = None
         self._features_grid: QWidget | None = None
-        if not active and labels.get("hero_title"):
-            hero_title = QLabel(labels["hero_title"], centre)
+        if not active and self._labels.get("hero_title"):
+            hero_title = QLabel(self._labels["hero_title"], centre)
             hero_title.setObjectName("licenseHeroTitle")
             hero_title.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
             hero_title.setWordWrap(True)
             centre_layout.addWidget(hero_title)
             self._hero_title = hero_title
 
-        subtitle = QLabel(self._active_message() if active else labels["subtitle"], centre)
+        subtitle = QLabel(
+            self._active_message() if active else self._labels["subtitle"],
+            centre,
+        )
         subtitle.setObjectName("licenseSubtitle")
         subtitle.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         subtitle.setWordWrap(True)
@@ -396,24 +427,24 @@ class LicenseOverlay(QWidget):
                 centre_layout.addWidget(features_grid)
                 self._features_grid = features_grid
 
-        # The key field belongs with the footer actions, not with the benefits.
-        # This flexible gap pushes it down on a tall window and collapses to zero
-        # when the centre has to scroll at the minimum window height.
         centre_layout.addStretch(1)
+        self._build_key_field(centre, centre_layout)
 
-        # The key field: always built, but hidden until the user asks for it in
-        # free mode (and always hidden in the active/licensed state).
+        self._scroll.setWidget(centre)
+        panel_layout.addWidget(self._scroll, 1)
+
+    def _build_key_field(self, centre: QWidget, centre_layout: QVBoxLayout) -> None:
         field_box = QFrame(centre)
         self._field_box = field_box
         field_box.setObjectName("licenseFieldBox")
         field_layout = QVBoxLayout(field_box)
         field_layout.setContentsMargins(18, 10, 18, 10)
         field_layout.setSpacing(6)
-        field_label = QLabel(labels["key_label"], field_box)
+        field_label = QLabel(self._labels["key_label"], field_box)
         field_label.setObjectName("licenseFieldLabel")
         self.key_input = ThemedLineEdit(field_box)
         self.key_input.setObjectName("licenseKeyInput")
-        self.key_input.setPlaceholderText(labels["placeholder"])
+        self.key_input.setPlaceholderText(self._labels["placeholder"])
         self.key_input.returnPressed.connect(self._activate)
         self.key_input.installEventFilter(self)
         field_layout.addWidget(field_label)
@@ -429,20 +460,19 @@ class LicenseOverlay(QWidget):
         centre_layout.addWidget(self.message_label)
         centre_layout.addStretch(1)
 
-        self._scroll.setWidget(centre)
-        panel_layout.addWidget(self._scroll, 1)
-
-        # --- Pinned footer: the primary CTA / OK, Back, and deactivate stay put.
-        # Active: a single OK. Free default: one primary "Buy Pro" plus a quiet
-        # "I already have a key" link. Revealing the key swaps in Back + Activate.
-        self.buy_button = LiquidButton(labels.get("buy", ""), "premium", self._panel)
+    def _build_footer(self, panel_layout: QVBoxLayout, active: bool) -> None:
+        self.buy_button = LiquidButton(self._labels.get("buy", ""), "premium", self._panel)
         self.buy_button.set_icon_kind("crown")
         self.buy_button.clicked.connect(self._show_buy_message)
-        self._activate_button = LiquidButton(labels.get("activate", ""), "accent", self._panel)
+        self._activate_button = LiquidButton(
+            self._labels.get("activate", ""),
+            "accent",
+            self._panel,
+        )
         self._activate_button.clicked.connect(self._activate)
 
         if active:
-            ok_button = LiquidButton(labels.get("ok", ""), "ghost", self._panel)
+            ok_button = LiquidButton(self._labels.get("ok", ""), "ghost", self._panel)
             self._cancel_button = ok_button
             ok_button.setMinimumSize(140, 40)
             ok_button.clicked.connect(self.close_overlay)
@@ -460,7 +490,6 @@ class LicenseOverlay(QWidget):
             divider.setFixedHeight(1)
             panel_layout.addWidget(divider)
 
-            # Default: buy hero + quiet "have key" link.
             self._buy_row = QWidget(self._panel)
             buy_layout = QVBoxLayout(self._buy_row)
             buy_layout.setContentsMargins(0, 0, 0, 0)
@@ -471,7 +500,7 @@ class LicenseOverlay(QWidget):
             buy_inner.addWidget(self.buy_button)
             buy_inner.addStretch(1)
             buy_layout.addLayout(buy_inner)
-            have_key_text = labels.get("have_key", "")
+            have_key_text = self._labels.get("have_key", "")
             self._have_key_link = ClickableLabel(f"{have_key_text}  →", self._buy_row)
             self._have_key_link.setObjectName("licenseHaveKey")
             self._have_key_link.setAlignment(Qt.AlignHCenter)
@@ -481,12 +510,15 @@ class LicenseOverlay(QWidget):
             buy_layout.addWidget(self._have_key_link, 0, Qt.AlignHCenter)
             panel_layout.addWidget(self._buy_row)
 
-            # Revealed: Back + Activate.
             self._reveal_row = QWidget(self._panel)
             reveal_layout = QHBoxLayout(self._reveal_row)
             reveal_layout.setContentsMargins(0, 0, 0, 0)
             reveal_layout.setSpacing(10)
-            self._back_button = LiquidButton(labels.get("back", ""), "ghost", self._panel)
+            self._back_button = LiquidButton(
+                self._labels.get("back", ""),
+                "ghost",
+                self._panel,
+            )
             self._cancel_button = self._back_button
             self._back_button.setMinimumSize(120, 40)
             self._back_button.clicked.connect(self._hide_key)
@@ -498,11 +530,10 @@ class LicenseOverlay(QWidget):
             self._reveal_row.setVisible(False)
             panel_layout.addWidget(self._reveal_row)
 
-        # Deactivation is a rare, destructive action: keep it as a quiet link
-        # under the primary button and require a second click to confirm.
+    def _build_deactivation_action(self, panel_layout: QVBoxLayout) -> None:
         self.deactivate_link: ClickableLabel | None = None
         if self._mode == "license":
-            link = ClickableLabel(labels.get("deactivate", ""), self._panel)
+            link = ClickableLabel(self._labels.get("deactivate", ""), self._panel)
             link.setObjectName("licenseDeactivateLink")
             link.setAlignment(Qt.AlignHCenter)
             link.setCursor(Qt.PointingHandCursor)

@@ -552,6 +552,25 @@ def test_a_confirmed_write_is_a_success() -> None:
     assert entry.decided_at is not None and entry.decided_at > DUE_OCCURRENCE
 
 
+def test_finishing_one_run_does_not_quit_the_process(monkeypatch) -> None:
+    """A headless run owns its local loop, not the process-wide Qt application."""
+    process_quits: list[bool] = []
+    monkeypatch.setattr(
+        headless_module.QCoreApplication,
+        "quit",
+        lambda: process_quits.append(True),
+    )
+    runner, controller, _journal_obj = _runner()
+    finished: list[bool] = []
+    runner.finished.connect(lambda: finished.append(True))
+
+    controller.arrive()
+    controller.answer(1, ok=True)
+
+    assert finished == [True]
+    assert process_quits == []
+
+
 def test_a_successful_run_updates_the_power_the_app_will_restore() -> None:
     """Reconnecting restores the desired power state, so without this the next launch
     would undo the background run."""
