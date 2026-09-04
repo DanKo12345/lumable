@@ -15,11 +15,13 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
 
 from app.license_transfer import FREED, NOT_FREED, masked_key
 from app.theme import theme_manager
 from app.widgets.license_transfer_overlay import LicenseTransferDialog
+from app.widgets.section_icon import LUCIDE_ICON_DIR
 
 ROOT = Path(__file__).resolve().parent.parent
 KEY = "LS-1234-ABCD"
@@ -44,6 +46,13 @@ _STRINGS = (
     "transfer.failed_body",
     "transfer.unavailable",
 )
+
+
+def test_the_transfer_row_has_a_real_key_glyph() -> None:
+    icon = LUCIDE_ICON_DIR / "key.svg"
+
+    assert icon.is_file()
+    assert QSvgRenderer(str(icon)).isValid()
 
 
 @pytest.fixture
