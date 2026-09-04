@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QImage, QPainter
-from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QWidget
 
 from app.theme import qcolor_from_token, theme_manager
-
-LUCIDE_ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons" / "lucide"
+from app.widgets.lucide_icon import lucide_renderer
 
 
 class SectionIcon(QWidget):
@@ -22,7 +18,7 @@ class SectionIcon(QWidget):
     def __init__(self, kind: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.kind = ""
-        self._renderer = QSvgRenderer(self)
+        self._renderer = lucide_renderer("circle-dot", self)
         self.setFixedSize(self.ICON_BOX, self.ICON_BOX)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.set_kind(kind)
@@ -32,7 +28,8 @@ class SectionIcon(QWidget):
         if kind == self.kind:
             return
         self.kind = kind
-        self._renderer.load(str(LUCIDE_ICON_DIR / f"{kind}.svg"))
+        previous, self._renderer = self._renderer, lucide_renderer(kind, self)
+        previous.deleteLater()
         self.update()
 
     def sizeHint(self) -> QSize:

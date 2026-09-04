@@ -23,6 +23,7 @@ from app.automation_ui_controller import (
     _PAUSE_TILES,
     _TRIGGER_TILES,
 )
+from app.widgets.lucide_icon import FALLBACK_ICON, lucide_renderer
 
 ICON_DIR = Path("app/assets/icons/lucide")
 
@@ -71,5 +72,21 @@ def test_the_icons_actually_render() -> None:
     from PySide6.QtWidgets import QApplication
 
     QApplication.instance() or QApplication([])
-    for name, _colour in _TRIGGER_TILES.values():
-        assert QSvgRenderer(str(ICON_DIR / f"{name}.svg")).isValid(), name
+    for icon in ICON_DIR.glob("*.svg"):
+        assert QSvgRenderer(str(icon)).isValid(), icon.name
+
+
+@pytest.mark.parametrize("name", ["bluetooth", "key", "plus", "square"])
+def test_every_previously_silent_icon_request_has_a_glyph(name: str) -> None:
+    """These four were all requested by visible controls without an asset.
+    Keep the regression list explicit even though exercised missing icons also
+    fail through RuntimeWarning."""
+    assert (ICON_DIR / f"{name}.svg").is_file()
+
+
+def test_a_missing_icon_is_reported_and_gets_a_visible_runtime_glyph() -> None:
+    with pytest.warns(RuntimeWarning, match="missing or invalid"):
+        renderer = lucide_renderer("definitely-not-an-icon")
+
+    assert renderer.isValid()
+    assert (ICON_DIR / f"{FALLBACK_ICON}.svg").is_file()

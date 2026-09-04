@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -106,3 +107,16 @@ def test_navigation_text_stays_vertically_centered_while_the_button_springs() ->
     assert pressed_origin.x() != released_origin.x(), "text stopped following the click spring"
     assert pressed_origin.y() == released_origin.y(), "click changed the text baseline"
     assert pressed_origin.y() + glyphs.center().y() == pressed.center().y()
+def test_an_unknown_button_role_is_a_programming_error() -> None:
+    app = QApplication.instance() or QApplication([])
+    with pytest.raises(ValueError, match="Unknown LiquidButton role"):
+        LiquidButton("Broken", "primray")
+
+    button = LiquidButton("Safe", "ghost")
+    try:
+        with pytest.raises(ValueError, match="Unknown LiquidButton role"):
+            button.set_role("primray")
+        assert button._role == "ghost"
+    finally:
+        button.deleteLater()
+        app.processEvents()

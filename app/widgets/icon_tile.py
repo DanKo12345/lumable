@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath
-from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QWidget
 
 from app.theme import theme_manager
-from app.widgets.section_icon import LUCIDE_ICON_DIR
+from app.widgets.lucide_icon import lucide_renderer
 
 
 class IconTile(QWidget):
@@ -36,7 +35,7 @@ class IconTile(QWidget):
         self._tint = QColor(tint)
         self._tile_size = int(tile_size or self.TILE)
         self._glyph_size = int(glyph_size or self.GLYPH)
-        self._renderer = QSvgRenderer(str(LUCIDE_ICON_DIR / f"{kind}.svg"), self)
+        self._renderer = lucide_renderer(kind, self)
         self.setFixedSize(self._tile_size, self._tile_size)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
 
@@ -58,7 +57,7 @@ class IconTile(QWidget):
         if kind == self.kind:
             return
         self.kind = kind
-        previous, self._renderer = self._renderer, QSvgRenderer(str(LUCIDE_ICON_DIR / f"{kind}.svg"), self)
+        previous, self._renderer = self._renderer, lucide_renderer(kind, self)
         previous.deleteLater()
         self.update()
 

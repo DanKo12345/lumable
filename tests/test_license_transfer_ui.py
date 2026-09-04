@@ -21,7 +21,7 @@ from PySide6.QtWidgets import QApplication
 from app.license_transfer import FREED, NOT_FREED, masked_key
 from app.theme import theme_manager
 from app.widgets.license_transfer_overlay import LicenseTransferDialog
-from app.widgets.section_icon import LUCIDE_ICON_DIR
+from app.widgets.lucide_icon import LUCIDE_ICON_DIR
 
 ROOT = Path(__file__).resolve().parent.parent
 KEY = "LS-1234-ABCD"

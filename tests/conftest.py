@@ -25,9 +25,14 @@ os.environ.setdefault("LUMABLE_NO_STARTUP_SERVICES", "1")
 # A value copied from the real installation is held for the life of the process,
 # and repointing storage.DATA_DIR afterwards does not reach it. conftest.py is
 # loaded before collection, which is the only moment early enough.
-os.environ.setdefault(
-    "LUMABLE_DATA_DIR", tempfile.mkdtemp(prefix="lumable-tests-")
-)
+_xdist_worker = os.environ.get("PYTEST_XDIST_WORKER", "").strip()
+if _xdist_worker:
+    # The xdist controller imports this file before it starts workers. They
+    # inherit its environment, so setdefault would give every process the same
+    # journal and lock files. Replace the inherited path inside each worker.
+    os.environ["LUMABLE_DATA_DIR"] = tempfile.mkdtemp(prefix=f"lumable-tests-{_xdist_worker}-")
+else:
+    os.environ.setdefault("LUMABLE_DATA_DIR", tempfile.mkdtemp(prefix="lumable-tests-"))
 
 
 def production_data_dir() -> Path:

@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from app.localization import localization_manager
 from app.theme import qcolor_from_token, theme_manager
 from app.widgets.color_swatch import paint_color_tile
-
-LUCIDE_ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons" / "lucide"
+from app.widgets.lucide_icon import lucide_renderer
 
 
 class ProfileListDelegate(QStyledItemDelegate):
@@ -131,9 +127,7 @@ class ProfileListDelegate(QStyledItemDelegate):
         return QRectF(left, row.center().y() - self.ACTION_SIZE / 2.0, self.ACTION_SIZE, self.ACTION_SIZE)
 
     def _paint_action_icon(self, painter: QPainter, rect: QRectF, kind: str, hovered: bool) -> None:
-        renderer = QSvgRenderer(str(LUCIDE_ICON_DIR / f"{kind}.svg"))
-        if not renderer.isValid():
-            return
+        renderer = lucide_renderer(kind)
         # No filled box behind the glyph — a background tile would pick up the
         # blue selected-row fill and read as a coloured button. Just the glyph,
         # brighter on hover, so it stays a neutral icon in any theme.

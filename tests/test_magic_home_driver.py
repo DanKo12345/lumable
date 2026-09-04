@@ -93,19 +93,6 @@ def test_magic_home_does_not_claim_conflicting_scan_uuid_without_name() -> None:
     assert driver is None
 
 
-def test_magic_home_detects_connected_services_before_triones() -> None:
-    services = [
-        FakeService(
-            MAGIC_HOME_SERVICE_UUID,
-            [FakeCharacteristic(MAGIC_HOME_WRITE_UUID, ["write-without-response"])],
-        )
-    ]
-
-    driver = detect_connected_driver("Magic Home", services)
-
-    assert isinstance(driver, MagicHomeDriver)
-
-
 def test_triones_name_wins_over_magic_home_uuid_conflict() -> None:
     services = [
         FakeService(

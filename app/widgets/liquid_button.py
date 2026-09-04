@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import Property, QEasingCurve, QPointF, QRectF, Qt, QVariantAnimation
 from PySide6.QtGui import (
     QBrush,
@@ -27,14 +25,37 @@ from app.widgets.animation_helpers import (
     play_or_complete,
     restart_animation,
 )
+from app.widgets.lucide_icon import lucide_renderer
 
-LUCIDE_ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons" / "lucide"
+BUTTON_ROLES = frozenset(
+    {
+        "accent",
+        "accent_soft",
+        "danger",
+        "ghost",
+        "led",
+        "mode",
+        "mode_active",
+        "nav",
+        "nav_active",
+        "premium",
+        "primary",
+        "primary_warm",
+    }
+)
+
+
+def _checked_role(role: str) -> str:
+    value = str(role)
+    if value not in BUTTON_ROLES:
+        raise ValueError(f"Unknown LiquidButton role: {value!r}")
+    return value
 
 
 class LiquidButton(ButtonAnimationMixin, QPushButton):
     def __init__(self, text: str = "", role: str = "ghost", parent=None):
         super().__init__(text, parent)
-        self._role = role
+        self._role = _checked_role(role)
         self._hover = 0.0
         self._scale = 1.0
         self._ripple = 0.0
@@ -91,7 +112,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
 
     def set_icon_kind(self, kind: str) -> None:
         self._icon_kind = kind
-        self._icon_renderer = QSvgRenderer(str(LUCIDE_ICON_DIR / f"{kind}.svg"), self) if kind else None
+        self._icon_renderer = lucide_renderer(kind, self) if kind else None
         self._icon_pixmap_cache.clear()
         self.update()
 
@@ -105,6 +126,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self.update()
 
     def set_role(self, role: str) -> None:
+        role = _checked_role(role)
         if role == self._role:
             return
         self._role = role

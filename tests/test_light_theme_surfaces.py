@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -29,7 +34,7 @@ def test_shell_surfaces_take_their_colours_from_the_theme(tokens) -> None:
     assert tokens["text"] in _rule(stylesheet, "QLabel#statusText")
 
 
-def test_live_light_theme_surfaces_are_paintable_and_refresh_the_idle_dot() -> None:
+def _check_live_light_theme_surfaces() -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     try:
@@ -53,3 +58,29 @@ def test_live_light_theme_surfaces_are_paintable_and_refresh_the_idle_dot() -> N
         window._ble.shutdown()
         window.close()
         app.processEvents()
+
+
+def test_live_light_theme_surfaces_are_paintable_and_refresh_the_idle_dot() -> None:
+    """Run the full-window smoke check without inherited Qt global state."""
+    root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env.pop("PYTEST_XDIST_WORKER", None)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(root), env.get("PYTHONPATH", "")) if part
+    )
+    with tempfile.TemporaryDirectory(prefix="lumable-theme-smoke-") as data_dir:
+        env["LUMABLE_DATA_DIR"] = data_dir
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--live-check"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+if __name__ == "__main__" and sys.argv[1:] == ["--live-check"]:
+    _check_live_light_theme_surfaces()

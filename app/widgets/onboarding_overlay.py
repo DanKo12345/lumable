@@ -28,7 +28,6 @@ from PySide6.QtGui import (
     QPixmap,
     QRadialGradient,
 )
-from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
@@ -40,6 +39,7 @@ from PySide6.QtWidgets import (
 from app.theme import qcolor_from_token, theme_manager
 from app.widgets.animation_helpers import motion_reduced, play_or_complete
 from app.widgets.liquid_button import LiquidButton
+from app.widgets.lucide_icon import lucide_renderer
 from app.widgets.profile_action_overlay import _ProfileActionPanel
 from app.widgets.scene_tile_grid import SceneTileData
 
@@ -50,7 +50,6 @@ _TIP_HEIGHT = 214
 _SURFACE_MARGIN = 14
 _AUTOPLAY_MS = 5600
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
-_LUCIDE_DIR = _ASSETS / "icons" / "lucide"
 _ICON_PATH = _ASSETS / "icon.png"
 
 
@@ -1317,10 +1316,9 @@ class OnboardingOverlay(QWidget):
 
     @staticmethod
     def _lucide_glyph(name: str, size: int, color: QColor) -> QPixmap | None:
-        svg = _LUCIDE_DIR / f"{name}.svg"
-        if not svg.exists():
+        if not str(name).strip():
             return None
-        renderer = QSvgRenderer(str(svg))
+        renderer = lucide_renderer(name)
         glyph = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
         glyph.fill(Qt.transparent)
         glyph_painter = QPainter(glyph)
