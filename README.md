@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/DanKo12345/lumable/releases">
-    <img alt="Download LumaBLE 0.4.2 beta for Windows" src="https://img.shields.io/badge/Download_for_Windows-0.4.2_beta-2f78d4?style=for-the-badge&logo=windows11&logoColor=white">
+    <img alt="Download LumaBLE 0.4.3 beta for Windows" src="https://img.shields.io/badge/Download_for_Windows-0.4.3_beta-2f78d4?style=for-the-badge&logo=windows11&logoColor=white">
   </a>
 </p>
 
@@ -142,4 +142,4 @@ support.
 
 Author: `dollza`
 
-Current release: `0.4.2 beta`
+Current release: `0.4.3 beta`

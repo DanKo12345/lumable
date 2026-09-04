@@ -39,11 +39,23 @@ def test_release_version_is_consistent_across_build_metadata() -> None:
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     installer = (root / "installer" / "LumaBLE.iss").read_text(encoding="utf-8")
     version_info = (root / "build" / "version_info.txt").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    localized_readmes = {
+        "ru": (root / "README.ru.md").read_text(encoding="utf-8"),
+        "es": (root / "README.es.md").read_text(encoding="utf-8"),
+        "zh": (root / "README.zh.md").read_text(encoding="utf-8"),
+    }
 
     assert project["project"]["version"] == APP_VERSION
     assert f'#define MyAppVersion "{APP_VERSION}"' in installer
     assert f"StringStruct('FileVersion', '{APP_VERSION}')" in version_info
     assert f"StringStruct('ProductVersion', '{APP_VERSION}')" in version_info
+    assert f"Download LumaBLE {APP_VERSION} beta for Windows" in readme
+    assert f"Download_for_Windows-{APP_VERSION}_beta" in readme
+    assert f"Current release: `{APP_VERSION} beta`" in readme
+    assert f"Версия: `{APP_VERSION} beta`" in localized_readmes["ru"]
+    assert f"Versión: `{APP_VERSION} beta`" in localized_readmes["es"]
+    assert f"版本：`{APP_VERSION} beta`" in localized_readmes["zh"]
 
 
 def test_author_signature_mark_uses_shared_signature() -> None:
