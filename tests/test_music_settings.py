@@ -14,16 +14,27 @@ def test_non_dict_falls_back_to_defaults() -> None:
 
 
 def test_sliders_are_clamped_0_100() -> None:
-    result = validate_music({"saturation": 999, "smoothing": -5, "speed": 250})
+    result = validate_music(
+        {"saturation": 999, "smoothing": -5, "speed": 250, "sensitivity": -20}
+    )
     assert result["saturation"] == 100
     assert result["smoothing"] == 0
     assert result["speed"] == 100
+    assert result["sensitivity"] == 0
 
 
 def test_speed_present_with_default() -> None:
     # A config saved before the speed slider existed still gets a valid speed.
     legacy = {"saturation": 70, "smoothing": 40}
     assert validate_music(legacy)["speed"] == DEFAULT_SETTINGS["music"]["speed"]
+
+
+def test_legacy_settings_get_default_bass_sensitivity() -> None:
+    legacy = {"saturation": 70, "smoothing": 40, "beat": 60}
+    assert (
+        validate_music(legacy)["sensitivity"]
+        == DEFAULT_SETTINGS["music"]["sensitivity"]
+    )
 
 
 def test_band_colors_coerced_and_clamped() -> None:
@@ -44,4 +55,15 @@ def test_band_colors_coerced_and_clamped() -> None:
 
 def test_unknown_keys_dropped() -> None:
     result = validate_music({"saturation": 50, "bogus": 1})
-    assert set(result.keys()) == {"saturation", "smoothing", "speed", "beat", "gate", "source", "device", "mic_device", "colors"}
+    assert set(result.keys()) == {
+        "saturation",
+        "smoothing",
+        "speed",
+        "beat",
+        "sensitivity",
+        "gate",
+        "source",
+        "device",
+        "mic_device",
+        "colors",
+    }

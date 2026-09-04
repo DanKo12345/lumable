@@ -14,6 +14,19 @@ from app.music_analysis import MusicAnalyzer, MusicSyncReport
 from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb
 from app.onset_detection import OnsetAgreement, SuperFluxOnset
 
+MIN_BEAT_RATIO = 1.08
+MAX_BEAT_RATIO = 1.48
+
+
+def beat_ratio_for_sensitivity(value: float) -> float:
+    """Map an intuitive 0..100 sensitivity to the detector's onset ratio.
+
+    A higher sensitivity means a smaller rise above the learned bass share is
+    enough. The midpoint reproduces the detector's established 1.28 threshold.
+    """
+    sensitivity = max(0.0, min(100.0, float(value))) / 100.0
+    return MAX_BEAT_RATIO - sensitivity * (MAX_BEAT_RATIO - MIN_BEAT_RATIO)
+
 
 @lru_cache(maxsize=8)
 def _analysis_kernels(n: int, samplerate: int):
@@ -121,7 +134,7 @@ class MusicOptions:
     # 0 disables it; sensitivity is how far above the running average counts as a
     # beat; decay is how fast the pop fades.
     beat_strength: float = 0.4
-    beat_sensitivity: float = 1.3
+    beat_sensitivity: float = 1.28
     beat_decay: float = 0.82
     # Noise gate (0..1): loudness at/below this fraction is treated as silence so
     # faint room noise / hiss doesn't make the strip react (useful for the mic).
@@ -555,6 +568,7 @@ class MusicController(QObject):
             rms=rms,
             now_ms=monotonic() * 1000.0,
             manual_gate=self._manual_gate(options),
+            beat_ratio=options.beat_sensitivity,
         )
         self._shadow_onset(block, samplerate, monotonic() * 1000.0, reading.beat)
         # Ease the raw energies toward each reading (EMA) so the colour glides;

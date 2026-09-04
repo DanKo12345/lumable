@@ -362,6 +362,9 @@ class UiLocalizationController:
             host.music_card.subtitle_label.setText(host._tr("music.subtitle"))
         host._set_slider_label_text("music.speed", host._tr("music.speed"))
         host._set_slider_label_text("music.beat", host._tr("music.beat"))
+        host._set_slider_label_text(
+            "music.sensitivity", host._tr("music.sensitivity")
+        )
         host._set_slider_label_text("music.gate", host._tr("music.gate"))
         host.music_mode_label.setText(host._tr("music.mode_title"))
         host.music_source_label.setText(host._tr("music.source_title"))

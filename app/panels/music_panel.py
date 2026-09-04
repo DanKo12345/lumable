@@ -125,6 +125,19 @@ def build_music_section(host: PanelHost) -> GlassCard:
         )
     )
 
+    host.music_sensitivity_slider = host._slider("green")
+    host.music_sensitivity_slider.setRange(0, 100)
+    host.music_sensitivity_value = host._pill("50%")
+    reaction_layout.addSpacing(host._sz(5))
+    reaction_layout.addLayout(
+        host._slider_row(
+            host._tr("music.sensitivity"),
+            host.music_sensitivity_slider,
+            host.music_sensitivity_value,
+            "music.sensitivity",
+        )
+    )
+
     # Noise gate — only meaningful for the microphone (ignores room noise), so it
     # lives in its own container the controller collapses/reveals with the source.
     host.music_gate_slider = host._slider("green")

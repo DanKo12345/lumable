@@ -262,6 +262,7 @@ def test_the_refreshed_music_card_keeps_its_grid_at_the_minimum_window() -> None
             window.music_toggle_button,
             window.music_source_segment,
             window.music_source_combo,
+            window.music_sensitivity_slider,
             window.music_bass_swatch,
             window.music_mid_swatch,
             window.music_treble_swatch,

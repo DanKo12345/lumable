@@ -223,7 +223,13 @@ class MusicAnalyzer:
         return self._open
 
     # ── the beat ──────────────────────────────────────────────────────
-    def _update_beat(self, bass: float, total: float, now_ms: float) -> bool:
+    def _update_beat(
+        self,
+        bass: float,
+        total: float,
+        now_ms: float,
+        beat_ratio: float,
+    ) -> bool:
         """A rise in the bass *share*, no sooner than the cooldown allows."""
         share = bass / total if total > 1e-9 else 0.0
         if self._share_avg <= 0.0:
@@ -232,7 +238,8 @@ class MusicAnalyzer:
         ready = (
             self._last_beat_ms is None or (now_ms - self._last_beat_ms) >= MIN_BEAT_GAP_MS
         )
-        beat = ready and share > self._share_avg * _BEAT_RATIO
+        ratio = max(1.01, float(beat_ratio))
+        beat = ready and share > self._share_avg * ratio
         # The average follows regardless, so a sustained heavy bass line becomes
         # the new normal instead of a beat on every block.
         self._share_avg += (share - self._share_avg) * _SHARE_RATE
@@ -300,6 +307,7 @@ class MusicAnalyzer:
         rms: float,
         now_ms: float,
         manual_gate: float = 0.0,
+        beat_ratio: float = _BEAT_RATIO,
     ) -> Reading:
         """Judge one block. ``manual_gate`` is an RMS, not a fraction."""
         self._seen += 1
@@ -329,7 +337,12 @@ class MusicAnalyzer:
         # Taken before the baseline is moved, or the strike would be measured
         # against a level it has itself just raised.
         attack = max(0.0, bass - (self._bass_baseline or 0.0))
-        beat = self._update_beat(bass, bass + mid + treble, now_ms)
+        beat = self._update_beat(
+            bass,
+            bass + mid + treble,
+            now_ms,
+            beat_ratio,
+        )
         self._move_baseline(bass, rate)
 
         if beat:

@@ -809,6 +809,7 @@
         "music.smoothing": "Плавность",
         "music.speed": "Скорость",
         "music.beat": "Бит",
+        "music.sensitivity": "Чувствительность баса",
         "music.gate": "Порог шума",
         "music.source_default": "Системный по умолчанию",
         "music.source_default_mic": "Микрофон по умолчанию",

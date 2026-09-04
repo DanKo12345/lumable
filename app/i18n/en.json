@@ -809,6 +809,7 @@
         "music.smoothing": "Smoothing",
         "music.speed": "Speed",
         "music.beat": "Beat",
+        "music.sensitivity": "Bass sensitivity",
         "music.gate": "Noise gate",
         "music.source_default": "System default",
         "music.source_default_mic": "Default microphone",

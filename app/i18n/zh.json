@@ -809,6 +809,7 @@
         "music.smoothing": "平滑",
         "music.speed": "速度",
         "music.beat": "节拍",
+        "music.sensitivity": "低音灵敏度",
         "music.gate": "噪声门限",
         "music.source_default": "系统默认",
         "music.source_default_mic": "默认麦克风",

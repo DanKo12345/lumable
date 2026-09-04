@@ -265,6 +265,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "smoothing": 50,
         "speed": 30,
         "beat": 40,
+        "sensitivity": 50,
         "gate": 16,
         "source": "system",
         "device": "",
@@ -581,6 +582,9 @@ def validate_music(data: Any) -> dict[str, Any]:
         "smoothing": _coerce_int(data.get("smoothing"), int(defaults["smoothing"]), 0, 100),
         "speed": _coerce_int(data.get("speed"), int(defaults["speed"]), 0, 100),
         "beat": _coerce_int(data.get("beat"), int(defaults["beat"]), 0, 100),
+        "sensitivity": _coerce_int(
+            data.get("sensitivity"), int(defaults["sensitivity"]), 0, 100
+        ),
         "gate": _coerce_int(data.get("gate"), int(defaults["gate"]), 0, 100),
         "source": "mic" if str(data.get("source", "system")) == "mic" else "system",
         "device": _coerce_str(data.get("device"), str(defaults["device"])),

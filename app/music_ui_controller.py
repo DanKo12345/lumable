@@ -7,12 +7,24 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QGraphicsOpacityEffect
 
 from app.feature_gate import can_use
-from app.music_controller import MusicController, list_audio_inputs, list_audio_outputs
+from app.music_controller import (
+    MusicController,
+    beat_ratio_for_sensitivity,
+    list_audio_inputs,
+    list_audio_outputs,
+)
 from app.storage import save_settings
 from app.widgets import ColorPickerOverlay
 from app.widgets.animation_helpers import play_or_complete
 
-_DEFAULTS = {"saturation": 60, "smoothing": 50, "speed": 30, "beat": 40, "gate": 16}
+_DEFAULTS = {
+    "saturation": 60,
+    "smoothing": 50,
+    "speed": 30,
+    "beat": 40,
+    "sensitivity": 50,
+    "gate": 16,
+}
 _BANDS = ("bass", "mid", "treble")
 _DEFAULT_BAND_RGB = {"bass": (255, 80, 70), "mid": (180, 90, 255), "treble": (60, 190, 255)}
 
@@ -39,6 +51,7 @@ class MusicUiController:
         host.music_source_combo.currentIndexChanged.connect(self._on_source_changed)
         host.music_speed_slider.valueChanged.connect(self._on_options_changed)
         host.music_beat_slider.valueChanged.connect(self._on_options_changed)
+        host.music_sensitivity_slider.valueChanged.connect(self._on_options_changed)
         # The compact controls on the screen card. Views of the same values, not
         # a second set: they hand the change to the same handler and are written
         # back from the same refresh, so there is one saved number and one place
@@ -228,9 +241,11 @@ class MusicUiController:
         smoothing = int(saved.get("smoothing", _DEFAULTS["smoothing"]))
         speed = int(saved.get("speed", _DEFAULTS["speed"]))
         beat = int(saved.get("beat", _DEFAULTS["beat"]))
+        sensitivity = int(saved.get("sensitivity", _DEFAULTS["sensitivity"]))
         gate = int(saved.get("gate", _DEFAULTS["gate"]))
         host.music_speed_slider.jump_to(speed)
         host.music_beat_slider.jump_to(beat)
+        host.music_sensitivity_slider.jump_to(sensitivity)
         host.music_gate_slider.jump_to(gate)
         host.music_saturation_slider.jump_to(saturation)
         host.music_smoothing_slider.jump_to(smoothing)
@@ -618,6 +633,9 @@ class MusicUiController:
         reactivity = 0.05 + (host.music_speed_slider.value() / 100.0) * 0.95
         # Beat slider -> brightness pop strength (0 disables the beat punch).
         beat_strength = host.music_beat_slider.value() / 100.0
+        beat_sensitivity = beat_ratio_for_sensitivity(
+            host.music_sensitivity_slider.value()
+        )
         # Gate slider 0..100% -> noise-gate fraction 0..0.5 of full loudness.
         # Only applied for the microphone (system audio doesn't need it).
         noise_gate = (host.music_gate_slider.value() / 100.0) * 0.5 if self._source == "mic" else 0.0
@@ -627,6 +645,7 @@ class MusicUiController:
             smoothing=smoothing,
             reactivity=reactivity,
             beat_strength=beat_strength,
+            beat_sensitivity=beat_sensitivity,
             noise_gate=noise_gate,
             source=self._source,
             device_name=device_name,
@@ -694,6 +713,9 @@ class MusicUiController:
         host = self._host
         host.music_speed_value.setText(f"{host.music_speed_slider.value()}%")
         host.music_beat_value.setText(f"{host.music_beat_slider.value()}%")
+        host.music_sensitivity_value.setText(
+            f"{host.music_sensitivity_slider.value()}%"
+        )
         self._refresh_shared_views()
         host.music_gate_value.setText(f"{host.music_gate_slider.value()}%")
         host.music_saturation_value.setText(f"{host.music_saturation_slider.value()}%")
@@ -710,6 +732,7 @@ class MusicUiController:
             "smoothing": int(host.music_smoothing_slider.value()),
             "speed": int(host.music_speed_slider.value()),
             "beat": int(host.music_beat_slider.value()),
+            "sensitivity": int(host.music_sensitivity_slider.value()),
             "gate": int(host.music_gate_slider.value()),
             "source": self._source,
             # Remember the chosen device per source so switching back restores it.

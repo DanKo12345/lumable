@@ -19,9 +19,25 @@ def _quiet(analyzer: MusicAnalyzer, rms: float, blocks: int = 60, start: float =
     return now
 
 
-def _block(analyzer: MusicAnalyzer, *, bass, mid, treble, rms, now, gate=0.0):
+def _block(
+    analyzer: MusicAnalyzer,
+    *,
+    bass,
+    mid,
+    treble,
+    rms,
+    now,
+    gate=0.0,
+    beat_ratio=1.28,
+):
     return analyzer.feed(
-        bass=bass, mid=mid, treble=treble, rms=rms, now_ms=now, manual_gate=gate
+        bass=bass,
+        mid=mid,
+        treble=treble,
+        rms=rms,
+        now_ms=now,
+        manual_gate=gate,
+        beat_ratio=beat_ratio,
     )
 
 
@@ -186,6 +202,34 @@ def test_regular_bass_hits_are_found() -> None:
         beats += int(reading.beat)
 
     assert 6 <= beats <= 10, f"found {beats} of about 10 kicks"
+
+
+def test_bass_sensitivity_changes_which_onsets_count_as_beats() -> None:
+    def marginal_hit(ratio: float) -> bool:
+        analyzer = MusicAnalyzer()
+        now = _quiet(analyzer, 0.001, blocks=40)
+        for index in range(30):
+            _block(
+                analyzer,
+                bass=0.2,
+                mid=0.2,
+                treble=0.2,
+                rms=0.1,
+                now=now + index * 20,
+                beat_ratio=ratio,
+            )
+        return _block(
+            analyzer,
+            bass=0.3,
+            mid=0.2,
+            treble=0.2,
+            rms=0.12,
+            now=now + 700,
+            beat_ratio=ratio,
+        ).beat
+
+    assert not marginal_hit(1.48)
+    assert marginal_hit(1.08)
 
 
 def test_one_hit_after_silence_is_one_beat() -> None:

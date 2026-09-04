@@ -4,7 +4,12 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
-from app.music_controller import MusicController, MusicOptions, analyze_block  # noqa: E402  (after importorskip)
+from app.music_controller import (  # noqa: E402  (after importorskip)
+    MusicController,
+    MusicOptions,
+    analyze_block,
+    beat_ratio_for_sensitivity,
+)
 
 _SR = 48000
 _N = 1024
@@ -42,6 +47,14 @@ def test_stereo_is_downmixed() -> None:
 
 def test_empty_block_is_safe() -> None:
     assert analyze_block(np.zeros((0,)), _SR) == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_bass_sensitivity_maps_to_a_bounded_detector_ratio() -> None:
+    assert beat_ratio_for_sensitivity(-10) == pytest.approx(1.48)
+    assert beat_ratio_for_sensitivity(0) == pytest.approx(1.48)
+    assert beat_ratio_for_sensitivity(50) == pytest.approx(1.28)
+    assert beat_ratio_for_sensitivity(100) == pytest.approx(1.08)
+    assert beat_ratio_for_sensitivity(120) == pytest.approx(1.08)
 
 
 class _FakeMic:

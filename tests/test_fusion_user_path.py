@@ -631,6 +631,20 @@ def test_the_two_beat_sliders_are_one_value(window) -> None:
     assert window._fusion_ui.coordinator()._beat_gain == pytest.approx(0.2)
 
 
+def test_bass_sensitivity_reaches_the_running_analyzer(window, monkeypatch) -> None:
+    configured = []
+    music = window._music_ui._music
+    monkeypatch.setattr(music, "is_running", lambda: True)
+    monkeypatch.setattr(music, "configure", lambda **options: configured.append(options))
+
+    window.music_sensitivity_slider.setValue(80)
+    QApplication.instance().processEvents()
+
+    assert window.music_sensitivity_value.text() == "80%"
+    assert window._settings["music"]["sensitivity"] == 80
+    assert configured[-1]["beat_sensitivity"] == pytest.approx(1.16)
+
+
 def test_the_two_source_choosers_are_one_value(window) -> None:
     """The same for the audio source, including reopening the device: the
     compact control hands the change to the music card's own handler rather
