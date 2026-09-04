@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.panels.list_rows import BTN_H, BTN_W, divider, list_container, list_row, plain_row
 from app.panels.types import PanelHost
@@ -46,8 +46,12 @@ def build_app_triggers_section(host: PanelHost) -> GlassCard:
     host.app_triggers_empty_hint.setObjectName("cardSubtitle")
     host.app_triggers_empty_hint.setWordWrap(True)
 
-    rules_surface = QWidget()
+    # This is the same grouped surface as the settings list above. QSS narrows
+    # that surface to QFrame#settingsList, and QWidget also needs an explicit
+    # styled background before Qt will paint it reliably after a theme switch.
+    rules_surface = QFrame()
     rules_surface.setObjectName("settingsList")
+    rules_surface.setAttribute(Qt.WA_StyledBackground, True)
     rules_layout = QVBoxLayout(rules_surface)
     rules_layout.setContentsMargins(host._sz(16), host._sz(14), host._sz(16), host._sz(14))
     rules_layout.setSpacing(host._sz(10))

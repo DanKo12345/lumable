@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Property, QEasingCurve, QRectF, Qt, QVariantAnimation
+from PySide6.QtCore import Property, QEasingCurve, QPointF, QRectF, Qt, QVariantAnimation
 from PySide6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QFontMetricsF,
     QImage,
     QLinearGradient,
     QPainter,
@@ -22,6 +23,7 @@ from app.theme import qcolor_from_token, theme_manager
 from app.widgets.animation_helpers import (
     ButtonAnimationMixin,
     make_property_animation,
+    motion_reduced,
     play_or_complete,
     restart_animation,
 )
@@ -38,6 +40,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._ripple = 0.0
         self._ripple_opacity = 0.0
         self._impact = 0.0
+        self._nav_content_scale = 1.0
         self._ripple_x = 0.0
         self._ripple_y = 0.0
         self._pointer_x = 0.5
@@ -56,6 +59,9 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._anim = make_property_animation(self, b"hoverValue", 180, QEasingCurve.OutCubic)
         self._init_button_motion()
         self._impact_anim = make_property_animation(self, b"impactValue", 260, QEasingCurve.OutCubic)
+        self._nav_content_anim = make_property_animation(
+            self, b"navContentScale", 260, QEasingCurve.OutCubic
+        )
 
         # Smoothly eased fill colour for the "led" role (the power button) so it
         # glides to the new strip colour instead of snapping.
@@ -134,6 +140,15 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
 
     scaleValue = Property(float, get_scale, set_scale)
 
+    def get_nav_content_scale(self):
+        return self._nav_content_scale
+
+    def set_nav_content_scale(self, value):
+        self._nav_content_scale = float(value)
+        self.update()
+
+    navContentScale = Property(float, get_nav_content_scale, set_nav_content_scale)
+
     def get_ripple(self):
         return self._ripple
 
@@ -179,6 +194,36 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._handle_button_release()
         super().mouseReleaseEvent(event)
 
+    def _handle_button_press(self, x: float, y: float) -> None:
+        super()._handle_button_press(x, y)
+        if self._role not in {"nav", "nav_active"}:
+            return
+        self._nav_content_anim.stop()
+        if motion_reduced():
+            self.set_nav_content_scale(1.0)
+            return
+        self._nav_content_anim.setDuration(100)
+        self._nav_content_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._nav_content_anim.setKeyValues(
+            [(0.0, self._nav_content_scale), (1.0, 0.98)]
+        )
+        play_or_complete(self._nav_content_anim)
+
+    def _handle_button_release(self) -> None:
+        super()._handle_button_release()
+        if self._role not in {"nav", "nav_active"}:
+            return
+        self._nav_content_anim.stop()
+        if motion_reduced():
+            self.set_nav_content_scale(1.0)
+            return
+        self._nav_content_anim.setDuration(260)
+        self._nav_content_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._nav_content_anim.setKeyValues(
+            [(0.0, self._nav_content_scale), (0.58, 1.04), (1.0, 1.0)]
+        )
+        play_or_complete(self._nav_content_anim)
+
     # ── shared light-mode palette ──────────────────────────────────────
     @staticmethod
     def _light_palette() -> dict:
@@ -193,15 +238,26 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             "text": QColor("#202329"),
         }
 
+    def _animated_rect(self) -> QRectF:
+        grow = max(0.0, self._scale - 1.0)
+        inset = max(0.8, 4.0 - grow * 75.0)
+        return QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
+
+    def _nav_content_rect(self) -> QRectF:
+        delta = self._nav_content_scale - 1.0
+        if delta >= 0.0:
+            inset = max(0.8, 4.0 - delta * 75.0)
+        else:
+            inset = 4.0 + abs(delta) * 75.0
+        return QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        grow = max(0.0, self._scale - 1.0)
-        inset = max(0.8, 4.0 - grow * 75.0)
-        rect = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
+        rect = self._animated_rect()
 
         if self._role in ("nav", "nav_active"):
-            self._paint_nav(painter, rect)
+            self._paint_nav(painter, rect, self._nav_content_rect())
             return
 
         is_ghost = self._role == "ghost"
@@ -239,7 +295,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._paint_label(painter, rect, lc)
 
     # ── flat navigation item (sidebar) ─────────────────────────────────
-    def _paint_nav(self, painter: QPainter, rect: QRectF) -> None:
+    def _paint_nav(self, painter: QPainter, rect: QRectF, content_rect: QRectF) -> None:
         active = self._role == "nav_active"
         dark = theme_manager.is_dark
         radius = 10.0
@@ -272,7 +328,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         font.setWeight(QFont.Weight.DemiBold if active else QFont.Weight.Medium)
         painter.setFont(font)
         painter.setPen(text_color)
-        content = rect.adjusted(16.0, 0.0, -8.0, 0.0)
+        content = content_rect.adjusted(16.0, 0.0, -8.0, 0.0)
         if self._icon_renderer is not None and self._icon_renderer.isValid():
             requested = self.iconSize()
             icon_size = float(requested.width() or 18)
@@ -284,7 +340,16 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             )
             self._draw_svg_icon(painter, icon_rect, text_color)
             content.setLeft(icon_rect.right() + 10.0)
-        painter.drawText(content, Qt.AlignLeft | Qt.AlignVCenter, self.text())
+        painter.drawText(self._centered_text_origin(content, QFontMetricsF(font), self.text()), self.text())
+
+    @staticmethod
+    def _centered_text_origin(content: QRectF, metrics: QFontMetricsF, text: str) -> QPointF:
+        # AlignVCenter changes its pixel rounding as the spring changes the
+        # height of this floating-point rect. Anchor the actual glyph bounds to
+        # the centre instead, while their x position still follows the spring.
+        glyphs = metrics.tightBoundingRect(text)
+        baseline = content.center().y() - glyphs.center().y()
+        return QPointF(content.left(), baseline)
 
     # ── ghost (Liquid Glass) ───────────────────────────────────────────
     def _paint_ghost(self, painter: QPainter, path: QPainterPath, rect: QRectF, radius: float, lc: dict) -> None:

@@ -17,12 +17,17 @@ in that environment.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+# This process measures widgets, not services. Set it here rather than relying
+# on a pytest parent: the tool is also useful by hand, and a deferred BLE scan
+# can finish after Qt has closed and crash an otherwise successful measurement.
+os.environ["LUMABLE_NO_STARTUP_SERVICES"] = "1"
 
 LANGUAGES = ("en", "ru", "es", "zh")
 SIZES = ((860, 420), (1000, 700))
@@ -159,6 +164,12 @@ def main() -> int:
                         "toggle_needs": toggle_needs,
                         "row_needs": row.minimumSizeHint().width(),
                         "row_has": row.width(),
+                        "identity_right": label.parentWidget().mapTo(
+                            row, label.parentWidget().rect().topRight()
+                        ).x(),
+                        "controls_left": window.fusion_mode_controls.mapTo(
+                            row, window.fusion_mode_controls.rect().topLeft()
+                        ).x(),
                         "title": label.text(),
                         "title_needs": label.fontMetrics().horizontalAdvance(label.text()),
                         "title_has": label.width(),

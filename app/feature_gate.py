@@ -8,6 +8,7 @@ from app.install_identity import advance_high_water, load_identity, save_identit
 from app.license import clear_licence, has_licence, local_verdict, store_receipt
 from app.license_client import ISSUED, is_refresh_due, request_receipt
 from app.license_keys import public_keys
+from app.license_status import Facts
 from app.storage import load_settings, save_settings
 
 FREE_EFFECT_COUNT = 12
@@ -65,6 +66,11 @@ def invalidate_pro_cache() -> None:
 # How far behind the mark a clock may sit and still be believed. Machines
 # correct themselves by seconds; a few minutes is generous and still nothing
 # like the days it would take to keep a receipt alive.
+# What the service said the last time it was asked. Session-scoped: it is there
+# so a refusal can be explained at the moment it happens, not remembered
+# forever and repeated at every launch.
+_last_outcome = ""
+
 CLOCK_TOLERANCE = timedelta(minutes=5)
 
 
@@ -160,11 +166,73 @@ def obtain_receipt(settings: dict, identity, *, now: datetime) -> str:
     if result.ok:
         store_receipt(settings, result.receipt)
         save_settings(settings)
+        note_outcome(ISSUED)
         return ISSUED
     if result.ends_pro:
         clear_licence(settings)
         save_settings(settings)
+    note_outcome(result.outcome)
     return result.outcome
+
+
+def note_outcome(outcome: str) -> None:
+    """Record what the service just said, or clear it.
+
+    Every path that changes a licence comes through here, which is the point.
+    The activation path used to ask for a receipt without recording the answer,
+    so a refusal about the *previous* key survived into the session that
+    replaced it and the window went on saying Pro had ended while Pro was
+    running.
+
+    Clearing is as important as recording: handing a licence back, or starting a
+    fresh activation, means whatever was last said is no longer about anything
+    that is here.
+    """
+    global _last_outcome
+    _last_outcome = str(outcome or "")
+
+
+def last_outcome() -> str:
+    """What the service said the last time it was asked, this session.
+
+    Held in memory on purpose. It exists so somebody whose licence was refused
+    can be told why rather than finding themselves on Free with no explanation,
+    and that is a thing to say once, at the time. Writing it down would mean
+    repeating it at every launch afterwards, long after it stopped being news.
+    """
+    return _last_outcome
+
+
+def current_facts(*, checking: bool = False) -> Facts:
+    """Everything the status model needs, read from disk and the clock.
+
+    The impure half, kept in one function so the decision itself stays a thing
+    anybody can write cases for.
+    """
+    if checking:
+        # Nothing else is read: while a request is out, what is on disk is
+        # about to be out of date, and a guess made from it would be a specific
+        # complaint invented before anything specific had gone wrong.
+        return Facts(checking=True)
+
+    settings = load_settings()
+    licence = settings.get("license", {}) if isinstance(settings, dict) else {}
+    if not isinstance(licence, dict):
+        licence = {}
+    outcome = load_identity(has_licence=has_licence(settings))
+    identity = outcome.identity
+    return Facts(
+        has_licence=bool(
+            str(licence.get("license_key", "")).strip()
+            and str(licence.get("instance_id", "")).strip()
+        ),
+        pro=is_pro(),
+        clock_went_back=(
+            identity is not None and clock_went_back(identity, datetime.now(UTC))
+        ),
+        has_receipt=licence.get("receipt") is not None,
+        last_outcome=_last_outcome,
+    )
 
 
 def refresh_pro_status() -> bool:
@@ -191,7 +259,7 @@ def refresh_pro_status() -> bool:
             if not result or is_refresh_due(
                 receipt, installation_hash=identity.installation_hash, now=now
             ):
-                obtain_receipt(settings, identity, now=now)
+                note_outcome(obtain_receipt(settings, identity, now=now))
                 result, _settings, _identity = _local_state()
     except (OSError, TypeError, ValueError):
         result = _pro_cache if _pro_cache is not None else False

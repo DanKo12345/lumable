@@ -19,6 +19,7 @@
  */
 
 import worker from "../src/worker.js";
+import assert from "node:assert/strict";
 
 const HASH = "6gMgc3K5w-RS6E8LZVKT6_HcWsMEA7UepSyCrmhaT4k";
 const INSTANCE = "inst-uuid-001";
@@ -248,4 +249,44 @@ await check("upstream_refused", () => {
   throw new Error("connection refused");
 });
 
-process.stdout.write(JSON.stringify(results, null, 2));
+if (process.argv.includes("--assert")) {
+  assert.equal(results.issued.status, 200);
+  assert.equal(results.issued.upstream_calls, 1);
+  const signed = new TextEncoder().encode(
+    [
+      "receipt_version",
+      "key_id",
+      "audience",
+      "license_id",
+      "instance_id",
+      "variant_id",
+      "installation_hash",
+      "issued_at",
+      "expires_at",
+    ].map((field) => field + "=" + String(results.issued.body[field])).join("\n"),
+  );
+  assert.equal(
+    await crypto.subtle.verify(
+      "Ed25519",
+      pair.publicKey,
+      Buffer.from(results.issued.body.signature, "base64"),
+      signed,
+    ),
+    true,
+  );
+  assert.deepEqual(
+    [results.no_key.status, results.no_key.upstream_calls],
+    [400, 0],
+  );
+  assert.deepEqual(
+    [results.another_machine_name.status, results.another_machine_name.upstream_calls],
+    [409, 1],
+  );
+  assert.deepEqual(
+    [results.upstream_500_that_parses.status, results.upstream_500_that_parses.body.error],
+    [502, "upstream_unavailable"],
+  );
+  process.stdout.write("Worker contract smoke test passed.\n");
+} else {
+  process.stdout.write(JSON.stringify(results, null, 2));
+}

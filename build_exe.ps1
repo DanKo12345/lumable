@@ -1,15 +1,27 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$python311 = Join-Path $root ".venv311\Scripts\python.exe"
-$python = Join-Path $root ".venv\Scripts\python.exe"
-
-if (Test-Path -LiteralPath $python311) {
-    $python = $python311
+$python = $null
+foreach ($candidate in @(
+    (Join-Path $root ".venv311\Scripts\python.exe"),
+    (Join-Path $root ".venv\Scripts\python.exe")
+)) {
+    if (-not (Test-Path -LiteralPath $candidate)) {
+        continue
+    }
+    # A copied venv still contains python.exe, but its launcher points at the
+    # base interpreter on the old computer. Existence alone therefore selects
+    # an environment that cannot run at all. Prove each candidate before using
+    # it; stderr is intentionally hidden because the next candidate may work.
+    & $candidate -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        $python = $candidate
+        break
+    }
 }
 
-if (-not (Test-Path -LiteralPath $python)) {
-    throw "Virtual environment was not found. Expected .venv311 or .venv in: $root"
+if (-not $python) {
+    throw "A working Python 3.11+ virtual environment was not found. Expected .venv311 or .venv in: $root"
 }
 
 $version = & $python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"

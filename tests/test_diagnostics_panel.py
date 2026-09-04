@@ -7,12 +7,18 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication
 
+from app.ble import BleController
 from app.constants import WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH
 from app.diagnostics_controller import DiagnosticsController
 from app.main_layout import select_section
 from app.main_window import MainWindow
 from app.scan_choices import address_of
 from app.scan_snapshot import AdvertisementRecord, ScanSnapshot
+
+
+@pytest.fixture(autouse=True)
+def _keep_diagnostics_ui_tests_off_the_bluetooth_adapter(monkeypatch) -> None:
+    monkeypatch.setattr(BleController, "scan", lambda _self: None)
 
 
 def _inside(widget, ancestor) -> bool:
@@ -240,7 +246,7 @@ def _kinds(window) -> list[str]:
     return [kind_of(window.device_combo.itemData(i)) for i in range(window.device_combo.count())]
 
 
-def test_opening_the_other_devices_through_the_real_signal_keeps_them_open() -> None:
+def test_opening_the_other_devices_through_the_real_signal_keeps_them_open(monkeypatch) -> None:
     """Driven the way a person drives it, which is the only way this failed.
 
     ``currentIndexChanged`` is connected straight through, and the first row
@@ -251,11 +257,14 @@ def test_opening_the_other_devices_through_the_real_signal_keeps_them_open() -> 
     """
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
+    errors: list[str] = []
     try:
+        monkeypatch.setattr(window._ui_feedback, "show_error", errors.append)
         window.show()
         select_section(window, "settings")
         app.processEvents()
         window._settings["trusted_device_addresses"] = ["AA:BB:CC:DD:EE:01"]
+        window._ble_events._scan_auto_connect = False
         window._ble_events.populate_devices(
             [
                 _strip("AA:BB:CC:DD:EE:01", "Desk strip"),
@@ -270,6 +279,8 @@ def test_opening_the_other_devices_through_the_real_signal_keeps_them_open() -> 
         assert _kinds(window) == ["back", "device"], (
             "the list closed itself while it was being built"
         )
+
+        assert errors == [], f"opening the list raised an error: {errors}"
 
         window.device_combo.setCurrentIndex(_index_of_kind(window, "back"))
         app.processEvents()

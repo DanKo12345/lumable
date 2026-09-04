@@ -54,6 +54,7 @@ from app.feature_gate import FREE_COLOR_HISTORY_COUNT, PRO_COLOR_HISTORY_COUNT, 
 from app.fusion_ui_controller import FusionUiController
 from app.hotkey_controller import HotkeyController
 from app.hotkey_ui_controller import HotkeyUiController
+from app.license_presenter import LicenseStatusPresenter
 from app.license_refresh import LicenseRefresher
 from app.local_api.controller import LocalApiController
 from app.localization import localization_manager
@@ -254,8 +255,10 @@ class MainWindow(QMainWindow):
         self._reconnect_ctrl = ReconnectController(self)
         self._local_api = LocalApiController(self)
         self._color_ctrl = ColorController(self)
+        self._license_presenter = LicenseStatusPresenter()
         self._license_refresher = LicenseRefresher(self)
         self._license_refresher.finished.connect(self._on_license_refreshed)
+        self._license_refresher.started.connect(self._on_license_check_started)
         # Everything about automations behind one object: the engine, the migration,
         # the Windows tasks and the journal. The window asks it for what it needs and
         # is told when something has been applied.
@@ -342,6 +345,9 @@ class MainWindow(QMainWindow):
 
     def _show_license_overlay(self) -> None:
         self._overlay_controller.show_license()
+
+    def _show_license_transfer(self) -> None:
+        self._overlay_controller.show_license_transfer()
 
     def _offer_protocol_candidate(self, address: str, driver_id: str, driver_name: str) -> None:
         """An unrecognised controller looks like a known driver — ask before
@@ -505,14 +511,46 @@ class MainWindow(QMainWindow):
             ],
         }
 
+    def _on_license_check_started(self) -> None:
+        self._show_license_status(checking=True)
+
     def _on_license_refreshed(self, is_pro_now: bool, changed: bool) -> None:
-        """React to a background license revalidation finishing."""
+        """React to a background license revalidation finishing.
+
+        The status line is refreshed whether or not Pro itself changed, because
+        plenty of what a person needs to be told does not move it: a licence
+        that was already unconfirmed and still is, a clock that is still wrong.
+        Only the heavier relabelling of the whole window waits for a real
+        change.
+        """
+        self._show_license_status()
         if not changed:
             return
         self._apply_localized_texts()
         self._refresh_color_history()
         self._apply_hotkeys()
         self._log(self._tr("license.activated_log") if is_pro_now else self._tr("license.expired_log"))
+
+    def _show_license_status(self, *, checking: bool = False) -> None:
+        banner = getattr(self, "license_status_banner", None)
+        if banner is None:
+            return
+        from app.feature_gate import current_facts
+
+        answer, worth_saying = self._license_presenter.update(current_facts(checking=checking))
+        banner.show_status(answer)
+        if worth_saying:
+            # Only when the state has actually moved. Writing it every hour for
+            # as long as a problem lasts buries the entry that mattered under
+            # two hundred copies of itself.
+            self._log(self._tr(answer.message))
+
+    def _recheck_license(self) -> None:
+        """What the button does. The request is the same one the hourly wake-up
+        makes, so there is one path to the service and one place it can go
+        wrong — but announced, because somebody pressed it and is owed a sign
+        that something is happening."""
+        self._license_refresher.refresh(announce=True)
 
     def _apply_hotkeys(self) -> None:
         config = self._settings.get("hotkeys", {}) if isinstance(self._settings, dict) else {}
@@ -1367,7 +1405,7 @@ class MainWindow(QMainWindow):
         elif self._reconnecting:
             color = "#ff9a5b"  # reconnecting (orange)
         else:
-            color = "rgba(255, 255, 255, 0.30)"  # idle
+            color = self._theme_tokens["muted"]  # idle, readable in both themes
         dot.setStyleSheet(f"background: {color}; border-radius: {max(2, dot.width() // 2)}px;")
         # _status_pulsing records what the connection state *wants*; whether the
         # animation actually runs is decided by _sync_status_pulse, so a reduced

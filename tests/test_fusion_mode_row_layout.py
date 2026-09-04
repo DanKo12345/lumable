@@ -89,12 +89,21 @@ def measurements():
 
 
 def test_the_row_fits_in_every_language_and_a_small_window(measurements) -> None:
-    too_wide = [
-        f"{row['language']} at {row['size']}: needs {row['row_needs']}px, has {row['row_has']}px"
+    """Judge the geometry Qt actually laid out, not its preferred minimum.
+
+    A large desktop gives the app a roomier density than a laptop. At the
+    minimum window width Qt can safely compress the row below minimumSizeHint,
+    while every word and control still fits. Treating that preference as an
+    overflow made the test fail on a larger monitor despite the rendered row
+    being intact. The real failure is the two columns crossing each other.
+    """
+    overlaps = [
+        f"{row['language']} at {row['size']}: text ends at {row['identity_right']}px, "
+        f"controls start at {row['controls_left']}px"
         for row in measurements
-        if row["row_needs"] > row["row_has"]
+        if row["identity_right"] > row["controls_left"]
     ]
-    assert not too_wide, "; ".join(too_wide)
+    assert not overlaps, "; ".join(overlaps)
 
 
 def test_no_title_is_clipped(measurements) -> None:

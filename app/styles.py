@@ -96,6 +96,25 @@ def _base_styles(T: dict, is_dark: bool) -> str:
         #contentShell {{
             background: transparent;
         }}
+        #navSeparator {{
+            background: {T["surface_line"]};
+            border: none;
+        }}
+        QPushButton#statusCard {{
+            background: transparent;
+            border: none;
+            color: {T["text"]};
+            text-align: left;
+        }}
+        QPushButton#statusCard:hover {{
+            background: {T["list_hover"]};
+            border-radius: 14px;
+        }}
+        QLabel#statusText {{
+            color: {T["text"]};
+            font-size: 12px;
+            font-weight: 600;
+        }}
         QLabel {{
             background: transparent;
             color: {T["text"]};

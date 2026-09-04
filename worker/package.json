@@ -1,5 +1,8 @@
 {
   "type": "module",
+  "scripts": {
+    "test": "node test/run.mjs --assert"
+  },
   "devDependencies": {
     "@napi-rs/keyring": "^1.3.0",
     "wrangler": "^4.126.0"

@@ -64,6 +64,9 @@ class ThemeController:
         self._host.body_scroll.viewport().setStyleSheet("background: transparent;")
         self.sync_theme_button()
         self._host.preview.set_theme("dark" if self._host._is_dark else "light")
+        update_status_dot = getattr(self._host, "_update_status_dot", None)
+        if callable(update_status_dot):
+            update_status_dot()
         self._host.hero_signature.refresh_theme()
         self._host.effect_preview.update()
         self._host.profile_list.viewport().update()

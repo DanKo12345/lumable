@@ -165,6 +165,43 @@ def _isolate_user_data(tmp_path, monkeypatch):
     feature_gate.invalidate_pro_cache()
 
 
+@pytest.fixture(autouse=True)
+def _forbid_unstubbed_bluetooth_scans(monkeypatch):
+    """A unit test must opt into a scanner double before touching Bluetooth.
+
+    A forgotten real scan survives longer than its asyncio loop on Windows and
+    reports hundreds of late WinRT callbacks during unrelated tests. Tests that
+    exercise scanning already replace ``app.ble.BleakScanner`` with their own
+    lifecycle-aware stub; that more specific patch is applied after this one.
+    """
+    try:
+        from app import ble
+    except Exception:
+        yield
+        return
+
+    calls: list[str] = []
+
+    class _UnstubbedScanner:
+        def __init__(self, *_args, **_kwargs) -> None:
+            calls.append("scan")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        @classmethod
+        async def find_device_by_address(cls, *_args, **_kwargs):
+            calls.append("find_device_by_address")
+            return None
+
+    monkeypatch.setattr(ble, "BleakScanner", _UnstubbedScanner)
+    yield
+    assert not calls, f"a test tried to use the real Bluetooth scanner: {calls}"
+
+
 @pytest.fixture
 def preserve_motion_policy():
     """Opt-in (NOT autouse): snapshot and restore the global motion_policy so a

@@ -40,13 +40,21 @@ from app.panels import (
 )
 from app.panels.list_rows import divider, list_container, list_row
 from app.widgets import AccentPreview, LiquidButton
+from app.widgets.license_status_banner import LicenseStatusBanner
 
 
 def _build_settings_card(host):
     """App settings as one compact grouped list."""
     card = host._card(host._tr("settings.title"), host._tr("settings.subtitle"), icon="settings")
     build_chrome_controls(host)  # creates host.language_combo / performance_combo / theme_button / about_button
-    for control in (host.language_combo, host.performance_combo, host.motion_combo, host.theme_button, host.about_button):
+    for control in (
+        host.language_combo,
+        host.performance_combo,
+        host.motion_combo,
+        host.theme_button,
+        host.about_button,
+        host.transfer_license_button,
+    ):
         control.setFixedWidth(host._sz(170))
     rows = (
         ("settings.language", "globe", "#78a7ff", host.language_combo),
@@ -54,6 +62,7 @@ def _build_settings_card(host):
         ("settings.motion", "orbit", "#b58fff", host.motion_combo),
         ("settings.theme", "sun", "#ffb066", host.theme_button),
         ("settings.about", "settings", "#a9b0bd", host.about_button),
+        ("transfer.row", "key", "#ffd166", host.transfer_license_button),
     )
     settings_list, settings_layout = list_container(host)
     host._settings_labels = []
@@ -75,6 +84,8 @@ def _build_settings_card(host):
         settings_layout.addWidget(row)
         if index < len(rows) - 1:
             settings_layout.addWidget(divider(host))
+    host.license_status_banner = LicenseStatusBanner(host._tr, host._recheck_license)
+    card.content_layout.addWidget(host.license_status_banner)
     card.content_layout.addWidget(settings_list)
     return card
 
@@ -181,7 +192,6 @@ def build_main_layout(host) -> QWidget:
     separator.setObjectName("navSeparator")
     separator.setFrameShape(QFrame.VLine)
     separator.setFixedWidth(1)
-    separator.setStyleSheet("background: rgba(255, 255, 255, 0.09); border: none;")
     root_layout.addWidget(separator)
 
     root_layout.addWidget(_build_main_area(host), 1)
@@ -316,10 +326,6 @@ def _build_sidebar(host) -> QWidget:
     # would clip the two-line content — pin a height that fits both lines.
     status_card.setMinimumHeight(host._sz(56))
     status_card.setToolTip(host._tr("device.find"))
-    status_card.setStyleSheet(
-        "QPushButton#statusCard { border: none; background: transparent; text-align: left; }"
-        "QPushButton#statusCard:hover { background: rgba(255, 255, 255, 0.05); border-radius: 14px; }"
-    )
     status_card.clicked.connect(lambda: _on_status_clicked(host))
     status_outer = QVBoxLayout(status_card)
     status_outer.setContentsMargins(host._sz(12), host._sz(8), host._sz(12), host._sz(8))
@@ -330,10 +336,11 @@ def _build_sidebar(host) -> QWidget:
     dot_size = host._sz(9)
     host.device_status_dot = QLabel()
     host.device_status_dot.setFixedSize(dot_size, dot_size)
-    host.device_status_dot.setStyleSheet(f"background: rgba(255, 255, 255, 0.30); border-radius: {dot_size // 2}px;")
+    host.device_status_dot.setStyleSheet(
+        f"background: {host._theme_tokens['muted']}; border-radius: {dot_size // 2}px;"
+    )
     host.device_status = QLabel(host._tr("device.status.not_connected"))
     host.device_status.setObjectName("statusText")
-    host.device_status.setStyleSheet("QLabel#statusText { font-size: 12px; font-weight: 600; }")
     host.device_status.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     host.device_status.setMinimumHeight(host._sz(20))  # avoid the text being clipped
     host.device_status.setMinimumWidth(STATUS_MIN_WIDTH)

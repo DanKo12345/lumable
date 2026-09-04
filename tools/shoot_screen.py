@@ -199,6 +199,49 @@ def _apply_license_key_demo(window) -> None:
         overlay._reveal_key()
 
 
+def _apply_license_transfer_demo(window) -> None:
+    """Open the transfer dialog with a deliberately fake licence key."""
+    from app.widgets.license_transfer_overlay import LicenseTransferDialog
+
+    dialog = LicenseTransferDialog(
+        "DEMO-KEY-THAT-IS-NOT-A-LICENCE-0042",
+        lambda: ("not_freed", ""),
+        window._tr,
+        parent=window,
+    )
+    window._screenshot_dialog = dialog
+    dialog.open()
+
+
+def _apply_about_demo(window) -> None:
+    """Open the ordinary About view."""
+    window._show_about_overlay()
+
+
+def _apply_update_demo(window) -> None:
+    """Show a representative update without checking the network."""
+    from types import SimpleNamespace
+
+    window._show_update_overlay(
+        SimpleNamespace(
+            current_version="0.4.2",
+            latest_version="0.4.3",
+            title="LumaBLE 0.4.3",
+            notes="A more polished light theme, clearer licence states, and smaller fixes.",
+        )
+    )
+
+
+def _apply_logs_demo(window) -> None:
+    """Open the log viewer with the window's isolated startup entries."""
+    window._show_logs_overlay()
+
+
+def _apply_onboarding_demo(window) -> None:
+    """Open the first-run guide over a fully built main window."""
+    window.show_onboarding()
+
+
 def _apply_confirm_demo(window) -> None:
     """Open the compact destructive confirmation used by scene deletion."""
     from app.widgets.profile_action_overlay import ProfileConfirmOverlay
@@ -334,11 +377,34 @@ def _apply_groups_demo(window) -> None:
     window.body_scroll.ensureWidgetVisible(window.groups_card, 0, 20)
 
 
+def _apply_bottom_demo(window) -> None:
+    """Scroll any long section to its last cards after layout has settled."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    for _ in range(8):
+        app.processEvents()
+    page = window._section_stack.currentWidget()
+    layout = page.layout() if page is not None else None
+    if layout is None:
+        return
+    for index in range(layout.count() - 1, -1, -1):
+        widget = layout.itemAt(index).widget()
+        if widget is not None:
+            window.body_scroll.ensureWidgetVisible(widget, 0, 24)
+            break
+
+
 DEMOS = {
     "automations": _apply_automations_demo,
     "journal": _apply_journal_demo,
     "license": _apply_license_demo,
     "license-key": _apply_license_key_demo,
+    "license-transfer": _apply_license_transfer_demo,
+    "about": _apply_about_demo,
+    "update": _apply_update_demo,
+    "logs": _apply_logs_demo,
+    "onboarding": _apply_onboarding_demo,
     "confirm": _apply_confirm_demo,
     "rule-new": _apply_rule_new_demo,
     "rule-edit": _apply_rule_edit_demo,
@@ -348,6 +414,7 @@ DEMOS = {
     "preview": _apply_preview_demo,
     "music": _apply_music_demo,
     "groups": _apply_groups_demo,
+    "bottom": _apply_bottom_demo,
 }
 
 
@@ -396,7 +463,8 @@ def main(argv: list[str] | None = None) -> int:
             f"{stem}-{args.theme}-{width}x{height}.png"
         )
         out.parent.mkdir(parents=True, exist_ok=True)
-        window.grab().save(str(out))
+        target = getattr(window, "_screenshot_dialog", window)
+        target.grab().save(str(out))
         print(out)
     finally:
         window._ble.shutdown()

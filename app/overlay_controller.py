@@ -7,7 +7,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 
 from app.app_info import APP_AUTHOR, APP_CHECKOUT_URL, APP_VERSION
-from app.feature_gate import invalidate_pro_cache, is_pro, obtain_receipt
+from app.feature_gate import invalidate_pro_cache, is_pro, note_outcome, obtain_receipt
 from app.install_identity import NEW, load_identity, save_identity
 from app.license import activate_license_key, deactivate_license, normalize_license_key
 from app.license_client import ISSUED
@@ -129,6 +129,42 @@ class OverlayController:
         overlay.guideRequested.connect(host.show_onboarding)
         overlay.open()
 
+    def show_license_transfer(self) -> None:
+        """Hand this machine's activation back so the key works elsewhere.
+
+        The two things that could go wrong are kept apart. Whether there is
+        anything to transfer is decided before a window opens, so somebody with
+        no licence is told so rather than shown a form that cannot do anything.
+        And the deactivation itself is handed to the dialog to run on its own
+        thread, because it is up to two calls to Lemon Squeezy and a window
+        frozen that long looks like one that has crashed.
+        """
+        from app.license_transfer import can_transfer, key_to_carry, transfer
+        from app.widgets.license_transfer_overlay import LicenseTransferDialog
+
+        host = self._host
+        if not can_transfer(host._settings):
+            host._log(host._tr("transfer.unavailable"))
+            return
+
+        def run() -> tuple[str, str]:
+            # deactivate_license is what clears the stored licence, and only
+            # once the server has confirmed. Nothing here may write before it.
+            return transfer(host._settings, deactivate_license, save_settings)
+
+        dialog = LicenseTransferDialog(
+            key_to_carry(host._settings), run, host._tr, parent=host
+        )
+        dialog.exec()
+        if dialog.freed:
+            # Nothing the service said about the licence that was here is about
+            # this machine any more.
+            note_outcome("")
+            invalidate_pro_cache()
+            host._log(host._tr("transfer.freed_headline"))
+            host._apply_localized_texts()
+            host._show_license_status()
+
     def show_license(self) -> None:
         host = self._host
         if self._license_overlay is not None:
@@ -214,6 +250,11 @@ class OverlayController:
                 # fail. Everything after this is repeatable; this is not.
                 save_settings(host._settings)
 
+            # Whatever the service last said was about some other licence.
+            # obtain_receipt records the new answer either way, but clearing it
+            # first means the window is never showing a refusal about a key
+            # that has just been replaced.
+            note_outcome("")
             invalidate_pro_cache()
             result = obtain_receipt(
                 host._settings, identity, now=datetime.now(UTC)
@@ -236,6 +277,7 @@ class OverlayController:
         def deactivate() -> tuple[bool, str]:
             if deactivate_license(host._settings):
                 save_settings(host._settings)
+                note_outcome("")
                 invalidate_pro_cache()
                 return True, labels["deactivated"]
             return False, labels["deactivate_failed"]
@@ -254,10 +296,14 @@ class OverlayController:
         def on_activated() -> None:
             host._apply_localized_texts()
             host._log(host._tr("license.activated_log"))
+            # At once, and not at the next hourly wake-up. Whatever the line
+            # said a moment ago was about the licence that is no longer here.
+            host._show_license_status()
 
         def on_deactivated() -> None:
             host._apply_localized_texts()
             host._log(host._tr("license.deactivated_log"))
+            host._show_license_status()
 
         overlay.activated.connect(on_activated)
         overlay.deactivated.connect(on_deactivated)

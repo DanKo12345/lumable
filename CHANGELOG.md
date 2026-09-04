@@ -2,6 +2,30 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.4.3] - 2026-09-04
+
+Light & Polish: a calmer light appearance, clearer Pro guidance and a simple way to carry your
+licence to another computer.
+
+### Added
+- **Transfer licence** in Settings releases the key on this computer and keeps it ready to copy to
+  the next one.
+- Clear, actionable messages explain when Pro needs its first check, a renewed connection or the
+  correct Windows date and time.
+
+### Changed
+- The light theme now follows the same visual hierarchy across cards, controls, lists and dialogs.
+- Licence checks remain quiet while Pro is working normally and offer **Check again** only when an
+  action can help.
+- Removing saved data warns about an active Pro licence first, with the safer choice selected by
+  default.
+
+### Fixed
+- Navigation labels keep the same baseline while their hover and press animations play.
+- The licence-transfer window is readable in both light and dark themes.
+- Visual review tools no longer start Bluetooth searches or scroll past the final card into empty
+  space.
+
 ## [0.4.2] - 2026-08-27
 
 Find your strip, faster. LumaBLE now keeps your strips together, makes signal quality easy to read

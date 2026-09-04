@@ -17,6 +17,10 @@ class LicenseRefresher(QObject):
     """
 
     finished = Signal(bool, bool)
+    # Emitted before a request somebody asked for, so a window can say it is
+    # asking. Never for the hourly one: an unannounced check that finds
+    # nothing must leave the screen exactly as it was.
+    started = Signal()
 
     # How often to wake and consider asking. Not how often anything is asked:
     # the check itself decides that from the receipt's own issued_at, so most
@@ -37,17 +41,34 @@ class LicenseRefresher(QObject):
         self._timer.timeout.connect(self.refresh)
 
     def start_watching(self) -> None:
-        """Ask now, and keep asking for as long as this window is open."""
+        """Ask now, and keep asking for as long as this window is open.
+
+        Silently. Nobody asked for this one, and a machine with no licence being
+        told its licence is being checked — or a healthy Pro watching a banner
+        come and go once an hour — is exactly the flicker the whole status
+        arrangement exists to avoid.
+        """
         self.refresh()
         self._timer.start()
 
     def stop_watching(self) -> None:
         self._timer.stop()
 
-    def refresh(self) -> None:
+    def refresh(self, *, announce: bool = False) -> None:
+        """Ask the service. ``announce`` is for a check somebody pressed.
+
+        The difference is who asked. Somebody who presses a button is owed an
+        acknowledgement that something is happening; somebody who opened the
+        application an hour ago is owed silence.
+        """
         if self._running:
             return
         self._running = True
+        if announce:
+            try:
+                self.started.emit()
+            except RuntimeError:
+                pass
         previous = is_pro()
         thread = threading.Thread(target=self._run, args=(previous,), daemon=True)
         thread.start()

@@ -136,3 +136,16 @@ def build_chrome_controls(host) -> None:
     about_font.setWeight(QFont.Weight.DemiBold)
     host.about_button.setFont(about_font)
     host.about_button.clicked.connect(host._show_about_overlay)
+
+    # Moving a licence to another computer. A named action rather than a link
+    # somebody finds afterwards: the slot is spent the moment a machine is wiped
+    # without it, and nothing can hand it back after that.
+    host.transfer_license_button = host._button(host._tr("transfer.action"), "ghost")
+    host.transfer_license_button.setObjectName("transferLicenseButton")
+    host.transfer_license_button.setFixedHeight(HERO_BUTTON_HEIGHT)
+    host.transfer_license_button.setFixedWidth(LANGUAGE_MIN_WIDTH)
+    transfer_font = host.transfer_license_button.font()
+    transfer_font.setPointSize(10)
+    transfer_font.setWeight(QFont.Weight.DemiBold)
+    host.transfer_license_button.setFont(transfer_font)
+    host.transfer_license_button.clicked.connect(host._show_license_transfer)
