@@ -7,10 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QAbstractAnimation,
     QCoreApplication,
-    QEasingCurve,
-    QPropertyAnimation,
     QSignalBlocker,
     Qt,
     QTimer,
@@ -18,7 +15,6 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
-    QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -47,7 +43,7 @@ from app.constants import (
     WINDOW_MIN_HEIGHT,
     WINDOW_MIN_WIDTH,
 )
-from app.device_view_state import describe_device
+from app.device_status_controller import DeviceStatusController
 from app.diagnostics_controller import DiagnosticsController
 from app.diy_ui_controller import DiyUiController
 from app.feature_gate import FREE_COLOR_HISTORY_COUNT, PRO_COLOR_HISTORY_COUNT, can_use
@@ -201,10 +197,7 @@ class MainWindow(QMainWindow):
         self._inspection_token = 0
         # Last failure worth showing on the card; cleared by the next attempt.
         self._device_problem = ""
-        self._connection_status_phase = 0
-        self._status_pulsing = False
         self._focus_follow_wired = False
-        motion_policy.changed.connect(self._on_motion_changed)
         self._reconnecting = False
         self._active_mode_key: str | None = None
         self._theme_transition = None
@@ -228,6 +221,7 @@ class MainWindow(QMainWindow):
         self._profile_actions = ProfileActions(self)
         self._ble = BleController()
         self._ble_events = BleEventHandler(self)
+        self._device_status = DeviceStatusController(self)
         self._update_controller = UpdateController(self, APP_VERSION, APP_UPDATE_URL, APP_RELEASES_URL)
         self._update_checker = self._update_controller.checker
         self._shortcut_controller = ShortcutController(self)
@@ -293,10 +287,6 @@ class MainWindow(QMainWindow):
         self._local_color_debounce.setSingleShot(True)
         self._local_color_debounce.setInterval(120)
         self._local_color_debounce.timeout.connect(self._apply_local_current_color)
-
-        self._connection_status_timer = QTimer(self)
-        self._connection_status_timer.setInterval(450)
-        self._connection_status_timer.timeout.connect(self._tick_connection_status_animation)
 
         # Re-resolve "auto" UI fps periodically so unplugging the laptop drops to
         # the battery-friendly rate (and plugging in restores the smooth rate).
@@ -1098,65 +1088,6 @@ class MainWindow(QMainWindow):
         # light"); when the strip is off it falls back to a neutral glass look.
         self.power_button.set_role("led" if powered_on else "ghost")
 
-    def _device_view(self):
-        """Ask the one function what the card should be saying.
-
-        The connected details come from the diagnostics snapshot the controller
-        already produces, so the card and the report can never disagree.
-        """
-        snapshot = self._ble.diagnostics_snapshot() if self._is_connected else {}
-        return describe_device(
-            connected=bool(self._is_connected),
-            scanning=bool(self._scan_in_progress),
-            connecting=bool(self._connect_in_progress),
-            checking=bool(self._inspect_in_progress),
-            error=getattr(self, "_device_problem", ""),
-            selected=self._selected_device(),
-            connected_name=str(
-                self._settings.get("last_device_name")
-                or self._settings.get("last_device_address")
-                or ""
-            ),
-            driver_name=str((snapshot.get("driver") or {}).get("name", "")),
-            connected_rssi=(snapshot.get("device") or {}).get("rssi"),
-            capabilities=snapshot.get("commands") or None,
-        )
-
-    def _render_device_meta(self, view) -> None:
-        """Second line of the card: protocol, signal, capabilities.
-
-        Rendered from the view-state only — the widget never re-derives any of
-        it, so there is one answer to "what is this device" and not three.
-        """
-        meta = getattr(self, "device_primary_meta", None)
-        if meta is None:
-            return
-        parts: list[str] = []
-        if view.detail and view.state in ("error", "unknown", "checking"):
-            # For these three the detail *is* the message — a failure, the name
-            # of an unrecognised device, the one being checked. Without it the
-            # card falls back to "pick a controller above", which reads as if
-            # nothing had happened at all.
-            parts.append(view.detail)
-        if view.driver_name:
-            parts.append(self._tr("device.meta.driver", driver=view.driver_name))
-        elif view.is_unknown:
-            parts.append(self._tr("device.meta.unknown_protocol"))
-        # No figure here. What reaches this card is one reading — the last that
-        # happened to arrive — and one reading cannot honestly be turned into
-        # "strong" or "weak": the same strip varies by several dB from moment to
-        # moment, which is the whole reason a scan now keeps all of them. The
-        # words belong where a scan's worth of readings exists, in the picker,
-        # and the figure belongs in the report. ``view.signal_rssi`` is still
-        # carried for the report and is deliberately not read here.
-        parts.extend(f"{self._tr(label)}: {self._tr(value) if value.startswith('device.fact.') else value}"
-                     for label, value in view.facts)
-        meta.setText("  ·  ".join(parts) if parts else self._tr("device.primary_empty"))
-
-    def _describe_connect_button(self, name: str, hint: str) -> None:
-        self.connect_button.setAccessibleName(name)
-        self.connect_button.setToolTip(hint)
-
     def _on_device_selection_changed(self, _index: int) -> None:
         self._clear_device_problem()
         # Some rows are not strips: one opens the devices no driver claims and
@@ -1210,127 +1141,10 @@ class MainWindow(QMainWindow):
         )
 
     def _sync_connect_buttons(self):
-        report_button = getattr(self, "save_report_button", None)
-        if report_button is not None:
-            report_button.setVisible(bool(self._offer_report) and not self._is_connected)
-        connected = bool(self._is_connected)
-        connecting = bool(self._connect_in_progress)
-        has_devices = bool(self._devices)
-        # Animate the "…" on both the scanning and connecting status text.
-        active = (connecting or self._scan_in_progress) and not connected
-        if active:
-            if not self._connection_status_timer.isActive():
-                self._connection_status_phase = 0
-                self._connection_status_timer.start()
-            self.device_status.setText(self._connection_status_text())
-        elif self._connection_status_timer.isActive():
-            self._connection_status_timer.stop()
-        self._update_status_dot()
-        view = self._device_view()
-        self._render_device_meta(view)
-        inspecting = bool(self._inspect_in_progress)
-        busy = connecting or self._scan_in_progress or inspecting
-        self.scan_button.setEnabled(not connected and not busy)
-        self.connect_button.setVisible(not connected)
-        self.connect_button.setEnabled(not connected and not busy and has_devices)
-        # An unrecognised device gets a read-only check instead of a connection.
-        # Offering "Connect" there would mean trying a guessed protocol on
-        # hardware we know nothing about.
-        if inspecting:
-            self.connect_button.setText(self._tr("device.inspect_running"))
-            self._describe_connect_button(self._tr("device.inspect_running"), "")
-        elif self._selected_device_is_unknown():
-            # Short label, full meaning in the tooltip and the accessible name:
-            # the whole phrase does not fit this button at the minimum window
-            # size, and a clipped label helps nobody.
-            self.connect_button.setText(self._tr("device.inspect"))
-            self._describe_connect_button(
-                self._tr("device.inspect_full"), self._tr("device.inspect_hint")
-            )
-        else:
-            self.connect_button.setText(self._tr("device.connect"))
-            self._describe_connect_button(self._tr("device.connect"), "")
-        self.disconnect_button.setVisible(connected)
-        self.disconnect_button.setEnabled(connected)
-        self.logs_toggle_button.setVisible(connected)
-        self.logs_toggle_button.setEnabled(connected)
-        self.logs_toggle_button.setText(self._tr("device.show_logs"))
-        self.rename_device_button.setVisible(connected)
-
-    def _connection_status_text(self) -> str:
-        key = "device.status.connecting" if self._connect_in_progress else "device.status.scanning"
-        return f"{self._tr(key).rstrip('.…')}{'.' * self._connection_status_phase}"
-
-    def _tick_connection_status_animation(self) -> None:
-        active = (self._connect_in_progress or self._scan_in_progress) and not self._is_connected
-        if not active:
-            self._connection_status_timer.stop()
-            self._sync_connect_buttons()
-            return
-        self._connection_status_phase = (self._connection_status_phase + 1) % 4
-        self.device_status.setText(self._connection_status_text())
-
-    def _ensure_status_pulse(self) -> None:
-        if getattr(self, "_status_dot_effect", None) is not None:
-            return
-        dot = getattr(self, "device_status_dot", None)
-        if dot is None:
-            return
-        self._status_dot_effect = QGraphicsOpacityEffect(dot)
-        dot.setGraphicsEffect(self._status_dot_effect)
-        self._status_dot_effect.setOpacity(1.0)
-        self._status_pulse = QPropertyAnimation(self._status_dot_effect, b"opacity", self)
-        self._status_pulse.setDuration(1100)
-        self._status_pulse.setLoopCount(-1)
-        self._status_pulse.setKeyValueAt(0.0, 1.0)
-        self._status_pulse.setKeyValueAt(0.5, 0.4)
-        self._status_pulse.setKeyValueAt(1.0, 1.0)
-        self._status_pulse.setEasingCurve(QEasingCurve.InOutSine)
+        self._device_status.sync()
 
     def _update_status_dot(self) -> None:
-        """Colour + soft pulse of the sidebar status dot for the current state:
-        amber while searching, blue while connecting, steady green when connected.
-        """
-        dot = getattr(self, "device_status_dot", None)
-        if dot is None:
-            return
-        self._ensure_status_pulse()
-        if self._is_connected:
-            color = "#46d39a"  # green
-        elif self._connect_in_progress:
-            color = "#6fa8ff"  # connecting (blue)
-        elif self._scan_in_progress:
-            color = "#f5b94a"  # searching (amber)
-        elif self._reconnecting:
-            color = "#ff9a5b"  # reconnecting (orange)
-        else:
-            color = self._theme_tokens["muted"]  # idle, readable in both themes
-        dot.setStyleSheet(f"background: {color}; border-radius: {max(2, dot.width() // 2)}px;")
-        # _status_pulsing records what the connection state *wants*; whether the
-        # animation actually runs is decided by _sync_status_pulse, so a reduced
-        # motion session can flip back to full and pick the pulse up again.
-        self._status_pulsing = (
-            self._connect_in_progress or self._scan_in_progress or self._reconnecting
-        ) and not self._is_connected
-        self._sync_status_pulse()
-
-    def _sync_status_pulse(self) -> None:
-        """Pulse the status dot only while an operation is in flight and motion is
-        allowed. Under reduced motion the dot sits at full opacity — its colour
-        already carries the state, so nothing is lost.
-        """
-        pulse = getattr(self, "_status_pulse", None)
-        if pulse is None:
-            return
-        if self._status_pulsing and not motion_policy.reduced:
-            if pulse.state() != QAbstractAnimation.Running:
-                pulse.start()
-            return
-        pulse.stop()
-        self._status_dot_effect.setOpacity(1.0)
-
-    def _on_motion_changed(self, _reduced: bool) -> None:
-        self._sync_status_pulse()
+        self._device_status.update_dot()
 
     def _apply_speed(self):
         self._color_ctrl.apply_speed()

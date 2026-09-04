@@ -183,23 +183,23 @@ def test_status_dot_pulse_stops_at_full_opacity_under_reduced_motion(preserve_mo
     try:
         window._scan_in_progress = True
         window._update_status_dot()
-        assert window._status_pulse.state() == QAbstractAnimation.Running
+        assert window._device_status._pulse.state() == QAbstractAnimation.Running
 
         policy.set_mode("reduced")
-        assert window._status_pulse.state() == QAbstractAnimation.Stopped
-        assert window._status_dot_effect.opacity() == 1.0
+        assert window._device_status._pulse.state() == QAbstractAnimation.Stopped
+        assert window._device_status._dot_effect.opacity() == 1.0
 
         # Back to full while the scan is still running: the pulse resumes.
         policy.set_mode("full")
-        assert window._status_pulse.state() == QAbstractAnimation.Running
+        assert window._device_status._pulse.state() == QAbstractAnimation.Running
 
         # ...but once the scan is over it must not come back.
         policy.set_mode("reduced")
         window._scan_in_progress = False
         window._update_status_dot()
         policy.set_mode("full")
-        assert window._status_pulse.state() == QAbstractAnimation.Stopped
-        assert window._status_dot_effect.opacity() == 1.0
+        assert window._device_status._pulse.state() == QAbstractAnimation.Stopped
+        assert window._device_status._dot_effect.opacity() == 1.0
     finally:
         window._ble.shutdown()
         window.close()
@@ -219,9 +219,9 @@ def test_status_dot_stays_static_when_scan_starts_reduced(preserve_motion_policy
         window._scan_in_progress = True
         window._update_status_dot()
 
-        assert window._status_pulsing is True  # the state wants a pulse...
-        assert window._status_pulse.state() == QAbstractAnimation.Stopped  # ...motion says no
-        assert window._status_dot_effect.opacity() == 1.0
+        assert window._device_status._wants_pulse is True
+        assert window._device_status._pulse.state() == QAbstractAnimation.Stopped
+        assert window._device_status._dot_effect.opacity() == 1.0
     finally:
         window._ble.shutdown()
         window.close()
@@ -502,16 +502,16 @@ def test_connection_status_animates_while_connecting() -> None:
 
         assert window.device_status.text() == window._tr("device.status.connecting").rstrip(".")
         assert window.connect_button.text() == window._tr("device.connect")
-        assert window._connection_status_timer.isActive()
+        assert window._device_status._text_timer.isActive()
 
-        window._tick_connection_status_animation()
+        window._device_status.tick_status_text()
         assert window.device_status.text() == f"{window._tr('device.status.connecting').rstrip('.')}."
         assert window.connect_button.text() == window._tr("device.connect")
 
         window._connect_in_progress = False
         window._sync_connect_buttons()
 
-        assert not window._connection_status_timer.isActive()
+        assert not window._device_status._text_timer.isActive()
         assert window.connect_button.text() == window._tr("device.connect")
     finally:
         window._ble.shutdown()

@@ -272,7 +272,7 @@ def test_a_failed_check_is_still_visible_on_the_card_afterwards(window, monkeypa
 
     window._on_inspection_finished(GattInspection(address="AA:BB", token=2, error="boom"))
 
-    assert window._device_view().state == "error"
+    assert window._device_status.view().state == "error"
     assert window._device_problem == window._tr("device.inspect_failed")
 
 
@@ -336,7 +336,7 @@ def test_choosing_another_device_drops_the_old_complaint(window) -> None:
     QApplication.instance().processEvents()
 
     assert window._device_problem == ""
-    assert window._device_view().state == "supported"
+    assert window._device_status.view().state == "supported"
 
 
 def test_a_new_scan_drops_the_old_complaint(window, monkeypatch) -> None:
@@ -364,7 +364,7 @@ def test_a_connected_strips_signal_is_kept_but_not_printed(window, monkeypatch) 
     )
     window._is_connected = True
 
-    assert window._device_view().signal_rssi == -57, "the figure stopped being carried"
+    assert window._device_status.view().signal_rssi == -57, "the figure stopped being carried"
     window._sync_connect_buttons()
     assert "-57" not in window.device_primary_meta.text()
     assert "BLEDOM" in window.device_primary_meta.text(), "the card lost the rest of its line"
