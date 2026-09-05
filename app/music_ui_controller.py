@@ -75,9 +75,8 @@ class MusicUiController:
         self.refresh_lock()
 
     # ── noise-gate reveal (mic only) ──────────────────────────────────
-    # Height-only accordion (no opacity effect): the row lives inside
-    # music_controls, which already carries its own opacity effect for the
-    # dim-when-off state, and nesting two QGraphicsEffects renders glitchy.
+    # The slot fades cached pixels, avoiding a second QGraphicsEffect inside
+    # music_controls, which already has a dim-when-off effect.
     def _setup_gate_reveal(self) -> None:
         host = self._host
         row = getattr(host, "music_gate_row", None)
@@ -85,15 +84,11 @@ class MusicUiController:
         if row is None or slot is None:
             return
         self._gate_height = max(row.sizeHint().height(), host._sz(40)) + host._sz(5)
-        self._gate_anim = QParallelAnimationGroup(host)
-        self._gate_min = QPropertyAnimation(slot, b"minimumHeight")
-        self._gate_max = QPropertyAnimation(slot, b"maximumHeight")
-        for anim in (self._gate_min, self._gate_max):
-            anim.setDuration(240)
-            anim.setEasingCurve(QEasingCurve.InOutCubic)
-            self._gate_anim.addAnimation(anim)
-        self._gate_hiding = False
-        self._gate_anim.finished.connect(self._on_gate_anim_finished)
+        slot.set_content_height(self._gate_height - host._sz(5))
+        self._gate_anim = QPropertyAnimation(slot, b"progress", host)
+        self._gate_anim.setDuration(240)
+        self._gate_anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self._gate_anim.finished.connect(slot.finish_transition)
 
     def _set_gate_visible_instant(self, visible: bool) -> None:
         row = getattr(self._host, "music_gate_row", None)
@@ -101,10 +96,8 @@ class MusicUiController:
         if row is None or slot is None or getattr(self, "_gate_anim", None) is None:
             return
         self._gate_anim.stop()
-        height = self._gate_height if visible else 0
-        slot.setMinimumHeight(height)
-        slot.setMaximumHeight(height)
-        row.setVisible(visible)
+        slot.set_progress(1.0 if visible else 0.0)
+        slot.finish_transition()
 
     def _animate_gate(self, *, opening: bool) -> None:
         row = getattr(self._host, "music_gate_row", None)
@@ -112,23 +105,10 @@ class MusicUiController:
         if row is None or slot is None or getattr(self, "_gate_anim", None) is None:
             return
         self._gate_anim.stop()
-        self._gate_hiding = not opening
-        if opening:
-            row.setVisible(True)
-        target = self._gate_height if opening else 0
-        self._gate_min.setStartValue(slot.minimumHeight())
-        self._gate_min.setEndValue(target)
-        self._gate_max.setStartValue(slot.maximumHeight())
-        self._gate_max.setEndValue(target)
+        slot.prepare_transition()
+        self._gate_anim.setStartValue(slot.get_progress())
+        self._gate_anim.setEndValue(1.0 if opening else 0.0)
         play_or_complete(self._gate_anim)
-
-    def _on_gate_anim_finished(self) -> None:
-        if not self._gate_hiding:
-            return
-        row = getattr(self._host, "music_gate_row", None)
-        if row is not None:
-            row.setVisible(False)
-        self._gate_hiding = False
 
     def _setup_preview_fade(self) -> None:
         """Reveal the live preview bar by growing its height + fading it in,

@@ -8,6 +8,7 @@ from app.panels.list_rows import Hairline, divider, list_container, list_row
 from app.panels.types import PanelHost
 from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.ambient_preview import AmbientPreview
+from app.widgets.collapsing_row import CollapsingRow
 from app.widgets.color_swatch import ColorSwatch
 from app.widgets.segmented_control import SegmentedControl
 
@@ -154,13 +155,7 @@ def build_music_section(host: PanelHost) -> GlassCard:
             "music.gate",
         )
     )
-    host.music_gate_slot = QWidget()
-    host.music_gate_slot.setMinimumHeight(0)
-    host.music_gate_slot.setMaximumHeight(0)
-    gate_slot_layout = QVBoxLayout(host.music_gate_slot)
-    gate_slot_layout.setContentsMargins(0, 0, 0, host._sz(5))
-    gate_slot_layout.setSpacing(0)
-    gate_slot_layout.addWidget(host.music_gate_row)
+    host.music_gate_slot = CollapsingRow(host.music_gate_row, host._sz(5))
     reaction_layout.addSpacing(host._sz(5))
     reaction_layout.addWidget(host.music_gate_slot)
 
