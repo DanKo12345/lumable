@@ -1317,7 +1317,14 @@ class BleController(QObject):
             raise RuntimeError("Device not found. Make sure it is powered on and nearby.")
 
         client = BleakClient(device, disconnected_callback=self._handle_unexpected_disconnect)
-        await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
+        except (Exception, asyncio.CancelledError):
+            try:
+                await asyncio.wait_for(client.disconnect(), timeout=CONNECT_TIMEOUT_SECONDS)
+            except Exception:
+                pass
+            raise
         services = client.services
         driver = detect_connected_driver(device.name or "", services, preferred_id=preferred_driver_id)
         if driver is None and force_driver_id:
@@ -1583,6 +1590,9 @@ class BleController(QObject):
         connection = await self._establish_connection(
             address, preferred_driver_id, force_driver_id=force_driver_id, offer_candidates=True
         )
+        if self._shutdown_started or self._manual_disconnect_requested:
+            await connection.client.disconnect()
+            raise asyncio.CancelledError
 
         self._client = connection.client
         self._device = connection.device
@@ -1724,7 +1734,7 @@ class BleController(QObject):
                 )
             )
             try:
-                await self._connect(address, from_reconnect=True)
+                await self._run_serialized(self._reconnect_once(address))
             except BLE_OPERATION_ERRORS as exc:
                 message = self._exception_message(exc)
                 self._set_last_ble_exception(exc)
@@ -1738,12 +1748,19 @@ class BleController(QObject):
                     )
                 )
                 continue
-            self.status_changed.emit(localization_manager.status_ble_event("reconnect_success", address=address))
-            self.reconnect_succeeded.emit(address)
-            await self._restore_state_after_reconnect()
             return
         self.status_changed.emit(localization_manager.status_ble_event("reconnect_give_up", address=address))
         self.reconnect_gave_up.emit(address)
+
+    async def _reconnect_once(self, address: str) -> None:
+        # Recheck after waiting for the command lock: the user may have stopped
+        # reconnecting while a previous write was finishing.
+        if self._shutdown_started or self._manual_disconnect_requested:
+            return
+        await self._connect(address, from_reconnect=True)
+        self.status_changed.emit(localization_manager.status_ble_event("reconnect_success", address=address))
+        self.reconnect_succeeded.emit(address)
+        await self._restore_state_after_reconnect()
 
     async def _restore_state_after_reconnect(self) -> None:
         """After re-pairing, put the strip back the way the user left it.
@@ -1775,6 +1792,7 @@ class BleController(QObject):
             self._start_reconnect_after_connection_loss()
             self._set_last_ble_error("BLE connection was lost. Reconnecting to the last controller...")
             raise ConnectionLostError("BLE connection was lost. Reconnecting to the last controller...")
+        client = self._client
 
         # Pace discrete commands so cheap controllers don't get them back-to-back
         # (they silently drop or garble those). ``stream`` — not ``quiet`` — is the
@@ -1795,7 +1813,11 @@ class BleController(QObject):
         last_error: Exception | None = None
 
         for characteristic in self._ordered_write_candidates():
+            if client is not self._client:
+                raise ConnectionLostError("BLE connection changed during a write.")
             error = await self._write_to_characteristic(characteristic, payload)
+            if isinstance(error, ConnectionLostError):
+                raise error
             if error is None:
                 written_to.append(str(characteristic.uuid))
             else:
@@ -1826,13 +1848,18 @@ class BleController(QObject):
         properties = {prop.lower() for prop in characteristic.properties}
         prefer_response = "write" in properties and "write-without-response" not in properties
         last_error: Exception | None = None
+        client = self._client
 
         for attempt in range(WRITE_RETRY_ATTEMPTS + 1):
-            error = await self._write_attempt(characteristic, payload, prefer_response)
+            if client is None or client is not self._client:
+                return ConnectionLostError("BLE connection changed during a write.")
+            error = await self._write_attempt(characteristic, payload, prefer_response, client=client)
             if error is None:
                 return None
             # Retry with flipped response mode before giving up on this attempt
-            error = await self._write_attempt(characteristic, payload, not prefer_response)
+            if client is not self._client:
+                return ConnectionLostError("BLE connection changed during a write.")
+            error = await self._write_attempt(characteristic, payload, not prefer_response, client=client)
             if error is None:
                 return None
             last_error = error
