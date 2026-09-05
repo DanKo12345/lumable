@@ -1,0 +1,53 @@
+import os
+from pathlib import Path
+
+import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QImage, QPainter
+from PySide6.QtWidgets import QApplication
+
+from app.widgets.liquid_button import LiquidButton
+
+
+def render_content(button, scale, dpr):
+    button.set_scale(scale)
+    image = QImage(round(button.width() * dpr), round(button.height() * dpr),
+                   QImage.Format_ARGB32_Premultiplied)
+    image.setDevicePixelRatio(dpr)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    try:
+        painter.setFont(button.font())
+        painter.setPen(QColor("white"))
+        button._draw_content(painter, button._animated_rect(), QColor("white"))
+    finally:
+        painter.end()
+    return image
+
+
+@pytest.mark.parametrize("icon", ["", "settings"])
+@pytest.mark.parametrize("height,dpr", [(32, 1.0), (33, 1.25), (42, 1.5), (43, 2.0)])
+def test_hover_keeps_the_rendered_label_in_place(icon, height, dpr):
+    app = QApplication.instance() or QApplication([])
+    font = QFont("Segoe UI", 10)
+    font_id = -1
+    if not QFontMetrics(font).inFont("S"):
+        font_path = Path(os.environ.get("SystemRoot", "C:/Windows")) / "Fonts/segoeui.ttf"
+        font_id = QFontDatabase.addApplicationFont(str(font_path))
+    assert QFontMetrics(font).inFont("S"), "The render must contain letters, not missing-glyph boxes"
+    button = LiquidButton("Settings")
+    button.setMinimumHeight(0)
+    button.resize(201, height)
+    button.setFont(font)
+    button.set_icon_kind(icon)
+    try:
+        resting = render_content(button, 1.0, dpr)
+        resting_rect = button._animated_rect()
+        for scale in (1.003, 1.012, 1.023, 1.034, 1.04):
+            assert render_content(button, scale, dpr) == resting, f"text moved at {scale}"
+        assert button._animated_rect().width() > resting_rect.width()
+    finally:
+        button.deleteLater()
+        app.processEvents()
+        if font_id >= 0:
+            QFontDatabase.removeApplicationFont(font_id)

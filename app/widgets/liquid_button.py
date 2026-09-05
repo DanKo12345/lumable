@@ -853,7 +853,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         painter.setFont(font)
         if role == "primary_warm" and enabled:
             painter.setPen(QColor(0, 0, 0, 52 if theme_manager.is_dark else 18))
-            painter.drawText(rect.adjusted(0.0, 1.0, 0.0, 1.0), Qt.AlignCenter, self.text())
+            painter.drawText(self._label_rect().adjusted(0.0, 1.0, 0.0, 1.0), Qt.AlignCenter, self.text())
         painter.setPen(text_color)
         self._draw_content(painter, rect, text_color)
 
@@ -909,7 +909,13 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         dark_contrast = (fill_lum + 0.05) / (self._relative_luminance(dark) + 0.05)
         return QColor("#ffffff") if white_contrast >= dark_contrast else dark
 
+    def _label_rect(self) -> QRectF:
+        # Hover changes the glass outline. Keep text layout on an exact, stable
+        # rectangle so fractional animation coordinates cannot re-round glyphs.
+        return QRectF(self.rect()).adjusted(4.0, 4.0, -4.0, -4.0)
+
     def _draw_content(self, painter: QPainter, rect: QRectF, text_color: QColor) -> None:
+        rect = self._label_rect()
         text = self.text()
         if self._embedded_action_text:
             content_rect = QRectF(rect).adjusted(0.0, 0.0, -20.0, 0.0)
