@@ -248,9 +248,10 @@ def test_starting_output_and_starting_listening_are_different_words(controller) 
     assert hasattr(controller, "start_listening")
 
 
-def test_a_capture_failure_stops_the_modulation_too(controller) -> None:
+def test_a_capture_failure_stops_the_modulation_too(controller, monkeypatch) -> None:
     """Stale numbers from a device that has gone wrong are worse than none:
     downstream they look exactly like a quiet passage."""
+    monkeypatch.setattr("app.music_controller.CAPTURE_RETRY_DELAYS", (0, 0, 0))
     seen: list = []
     failures: list[str] = []
     controller.modulation_sampled.connect(seen.append, Qt.DirectConnection)

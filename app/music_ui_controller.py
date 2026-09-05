@@ -68,6 +68,7 @@ class MusicUiController:
         self._band_picker = None
         self._music.color_sampled.connect(self._update_preview)
         self._music.failed.connect(self._on_failed)
+        self._music.recovery_changed.connect(self._on_recovery_changed)
         self._setup_preview_fade()
         self._setup_gate_reveal()
         self.sync_controls()
@@ -743,6 +744,16 @@ class MusicUiController:
         music["mic_device" if self._source == "mic" else "device"] = active_device
         host._settings["music"] = music
         save_settings(host._settings)
+
+    def _on_recovery_changed(self, token: int, recovering: bool) -> None:
+        if token != self._music.session_token() or not self._music.is_running():
+            return
+        if recovering:
+            self._host.music_status_label.setText(self._host._tr("music.recovering"))
+        elif self._shared_with_screen():
+            self.refresh_shared_state()
+        else:
+            self._host.music_status_label.setText(self._host._tr("music.listening"))
 
     def _on_failed(self, reason: str) -> None:
         host = self._host

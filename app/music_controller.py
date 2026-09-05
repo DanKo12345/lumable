@@ -16,6 +16,7 @@ from app.onset_detection import OnsetAgreement, SuperFluxOnset
 
 MIN_BEAT_RATIO = 1.08
 MAX_BEAT_RATIO = 1.48
+CAPTURE_RETRY_DELAYS = (1.0, 2.0, 4.0)
 
 
 def beat_ratio_for_sensitivity(value: float) -> float:
@@ -226,6 +227,7 @@ class MusicController(QObject):
     # time and the run cannot be separated from the measurement in transit.
     modulation_sampled = Signal(object)
     failed = Signal(str)
+    recovery_changed = Signal(int, bool)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -273,7 +275,7 @@ class MusicController(QObject):
         if "smoothing" in changes:
             self._engine.set_smoothing(self._options.smoothing)
 
-    def _reset_analysis(self) -> None:
+    def _reset_analysis(self, *, preserve_beat_id: bool = False) -> None:
         """Forget everything learned about the signal.
 
         Called on every start and on a capture failure, and by the UI when the
@@ -283,7 +285,7 @@ class MusicController(QObject):
         """
         self._band_peak = 1e-6
         self._ema = None
-        self._analyzer.reset()
+        self._analyzer.reset(preserve_beat_id=preserve_beat_id)
         self._onset.reset()
         self._onset_agreement.reset()
 
@@ -332,9 +334,10 @@ class MusicController(QObject):
         self._stopped_at = monotonic()
         self._stop.set()
         thread = self._thread
-        self._thread = None
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1.5)
+        if thread is not None and not thread.is_alive():
+            self._thread = None
         self._engine.stop()
 
     def music_report(self) -> MusicSyncReport:
@@ -481,6 +484,7 @@ class MusicController(QObject):
         rate_used = 0
         errors: list[str] = []
         for rate in dict.fromkeys(r for r in rates if r):
+            candidate = None
             try:
                 candidate = sd.InputStream(
                     device=device, channels=1, samplerate=int(rate),
@@ -489,6 +493,11 @@ class MusicController(QObject):
                 candidate.start()
             except Exception as exc:  # try the next samplerate
                 errors.append(f"{rate}:{type(exc).__name__}")
+                if candidate is not None:
+                    try:
+                        candidate.close()
+                    except Exception:
+                        pass
                 continue
             stream = candidate
             rate_used = int(rate)
@@ -503,9 +512,13 @@ class MusicController(QObject):
         def close() -> None:
             try:
                 stream.stop()
-                stream.close()
             except Exception:
                 pass
+            finally:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
 
         return read, close, rate_used
 
@@ -625,28 +638,50 @@ class MusicController(QObject):
         return max(0.0, min(0.95, options.noise_gate)) * 0.25
 
     def _run(self) -> None:
+        token = self._session_token
+        for attempt in range(len(CAPTURE_RETRY_DELAYS) + 1):
+            if self._stop.is_set():
+                return
+            try:
+                self._capture_once(token, recovering=attempt > 0)
+                return
+            except Exception as exc:
+                # Fusion keeps the same session during recovery, so beat IDs
+                # must keep increasing even though the signal profile resets.
+                self._reset_analysis(preserve_beat_id=True)
+                if self._stop.is_set():
+                    return
+                reason = self._capture_error_reason(exc)
+                permanent = reason.startswith(
+                    ("audio_capture_unavailable", "mic_backend_missing")
+                )
+                if permanent or attempt == len(CAPTURE_RETRY_DELAYS):
+                    self.failed.emit(reason)
+                    return
+                self.recovery_changed.emit(token, True)
+                if self._stop.wait(CAPTURE_RETRY_DELAYS[attempt]):
+                    return
+
+    def _capture_once(self, token: int, *, recovering: bool) -> None:
+        options = self._options
+        if options.source == "mic":
+            read, close, samplerate = self._open_mic_reader(options)
+        else:
+            read, close, samplerate = self._open_loopback_reader(options)
         try:
-            options = self._options
-            if options.source == "mic":
-                read, close, samplerate = self._open_mic_reader(options)
-            else:
-                read, close, samplerate = self._open_loopback_reader(options)
-        except Exception as exc:
-            # The device never opened, so whatever was learned came from a
-            # different one. Same reasoning as a failure mid-run.
-            self._reset_analysis()
-            self.failed.emit(self._capture_error_reason(exc))
-            return
-        try:
-            token = self._session_token
             while not self._stop.is_set():
                 options = self._options
                 block = read(options.blocksize)
+                if self._stop.is_set():
+                    return
                 # Stamped here, where the sound actually arrived. A receiver
                 # cannot recover this: a queued signal is timed from delivery,
                 # and a late block would look like a fresh one.
                 captured_at = monotonic()
                 result = self._process_block(block, samplerate, options)
+                if recovering:
+                    self.recovery_changed.emit(token, False)
+                    recovering = False
                 # The block's real length, not the one that was asked for: a
                 # device is free to hand back fewer frames, and downstream
                 # staleness is measured against this.
@@ -664,10 +699,5 @@ class MusicController(QObject):
                 if self._engine.is_running():
                     red, green, blue = result.rgb
                     self.color_sampled.emit(red, green, blue)
-        except Exception as exc:  # audio device/driver failure — report and stop cleanly.
-            # Whatever was learned came from a device that has just gone wrong;
-            # the next attempt starts from nothing rather than from that.
-            self._reset_analysis()
-            self.failed.emit(self._capture_error_reason(exc))
         finally:
             close()

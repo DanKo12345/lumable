@@ -810,6 +810,7 @@
         "music.speed": "Velocidad",
         "music.beat": "Ritmo",
         "music.sensitivity": "Sensibilidad de graves",
+        "music.recovering": "Reconectando el audio…",
         "music.gate": "Umbral de ruido",
         "music.source_default": "Predeterminado del sistema",
         "music.source_default_mic": "Micrófono predeterminado",

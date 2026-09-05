@@ -164,12 +164,13 @@ class MusicAnalyzer:
     def __init__(self) -> None:
         self.reset()
 
-    def reset(self) -> None:
+    def reset(self, *, preserve_beat_id: bool = False) -> None:
         self._floor = 0.0
         self._open = False
         self._share_avg = 0.0
         self._env = 0.0
-        self._beat_id = 0
+        if not preserve_beat_id:
+            self._beat_id = 0
         self._bass_baseline: float | None = None
         self._typical_attack = 0.0
         self._last_feed_ms: float | None = None
