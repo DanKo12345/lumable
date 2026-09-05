@@ -574,6 +574,25 @@ def test_a_power_rule_with_no_main_strip_is_unavailable() -> None:
     assert verdicts[0].code == CODE_UNAVAILABLE
 
 
+def test_power_off_stops_streams_before_submitting_the_command(monkeypatch):
+    ble = FakeBle(PRIMARY)
+    pc_mode = PcMode(allow=True)
+    executor = _executor(ble, pc_mode=pc_mode)
+    submit = ble.set_power_for_address_tracked
+
+    def checked_submit(enabled, address):
+        assert pc_mode.calls == [("off", None)]
+        return submit(enabled, address)
+
+    monkeypatch.setattr(ble, "set_power_for_address_tracked", checked_submit)
+    verdicts = []
+    executor.execute(_set_power(False), verdicts.append)
+    assert len(ble.submitted) == 1
+    assert ble.submitted[0].payload is False
+    ble.finish_all()
+    assert verdicts[0].ok
+
+
 def test_a_power_submit_that_raised_is_reported_not_dressed_up_as_a_refusal(faults) -> None:
     ble = FakeBle(PRIMARY)
     ble.raises = {"power"}

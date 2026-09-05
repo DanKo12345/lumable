@@ -211,6 +211,10 @@ class BleActionExecutor(QObject):
 
         group = SceneOperationGroup(done, cancel_operation=self._cancel_operation)
         try:
+            if not enabled and self._set_pc_mode is not None:
+                if self._set_pc_mode("off", None) is False:
+                    group.cancel(code=CODE_APPLY_FAILED)
+                    return _SceneHandle(group)
             operation_id = self._ble.set_power_for_address_tracked(enabled, address)
             adopted = self._adopt(operation_id, group)
         except Exception:

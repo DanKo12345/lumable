@@ -145,6 +145,59 @@ def _runtime(host: FakeHost, foreground: str = "") -> AutomationRuntime:
     return runtime
 
 
+@pytest.mark.parametrize("enabled, paused", [(True, False), (False, False), (True, True)])
+def test_sleep_rule_is_sent_before_the_notification_returns(enabled, paused):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    host = FakeHost({"automations": {"enabled": enabled, "rules": [{
+        "id": "sleep-off", "name": "Sleep off", "enabled": True,
+        "trigger": {"kind": "windows_sleep"},
+        "action": {"type": "set_power", "power": False, "target": "primary"},
+        "execution": "in_app",
+    }]}})
+    runtime = _runtime(host)
+    if paused:
+        runtime._dispatcher.pause(datetime.now())
+    QTimer.singleShot(0, host._ble.confirm_all)
+    runtime.note_windows_event("windows_sleep")
+    active = enabled and not paused
+    assert host._ble.writes == ([("power", False, PRIMARY)] if active else [])
+    assert host.power_calls == ([False] if active else [])
+    assert "windows_sleep" not in runtime._pending
+    assert runtime._dispatcher.in_flight() is None
+    app.processEvents()
+
+
+def test_unfinished_sleep_rule_is_cancelled_and_not_replayed_after_wake(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    import app.automation.runtime as module
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(module, "SUSPEND_BUDGET_MS", 20)
+    host = FakeHost({"automations": {"enabled": True, "rules": [{
+        "id": "sleep-off", "name": "Sleep off", "enabled": True,
+        "trigger": {"kind": "windows_sleep"},
+        "action": {"type": "set_power", "power": False, "target": "primary"},
+        "execution": "in_app",
+    }]}})
+    cancelled = []
+    monkeypatch.setattr(host._ble, "cancel_operation", lambda value: cancelled.append(value))
+    runtime = _runtime(host)
+    runtime.note_windows_event("windows_sleep")
+    assert cancelled == [1]
+    assert runtime._dispatcher.in_flight() is None
+    assert runtime._pending == []
+    host._ble.confirm_all()
+    runtime.note_windows_event("windows_wake")
+    runtime._tick()
+    assert host._ble.writes == [("power", False, PRIMARY)]
+    assert host.power_calls == []
+    app.processEvents()
+
+
 # ── the handover ──────────────────────────────────────────────────────
 def test_a_migrated_app_trigger_still_applies_its_scene(monkeypatch) -> None:
     """The migration stands the old watcher down, so this is the whole question:

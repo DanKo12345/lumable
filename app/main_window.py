@@ -1349,9 +1349,8 @@ class MainWindow(QMainWindow):
         self._ble.connected_changed.connect(
             lambda connected, _address: self._automations.note_connected(connected)
         )
-        # Locking, unlocking, sleeping and waking arrive on a native message and
-        # are queued for the engine's next tick — never acted on where they
-        # arrive, which would put BLE work inside a Windows message handler.
+        # Sleep gets a bounded dispatch before the native notification returns;
+        # other session events are queued for the engine's next tick.
         self._windows_session.session_event.connect(self._automations.note_windows_event)
         self._windows_session.start()
         schedule_first_sync(self._automations)

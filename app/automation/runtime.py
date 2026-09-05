@@ -39,7 +39,7 @@ from datetime import datetime
 from time import monotonic
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QEventLoop, QObject, QTimer, Signal
 
 from app import scene_store
 from app.automation.ble_executor import BleActionExecutor
@@ -126,6 +126,7 @@ STATIC_EFFECT_CODE = 0
 # path marks its own as background, and telling them apart is what makes "why did
 # this run twice" answerable.
 _IN_APP_CONTEXT = {"in_app": True}
+SUSPEND_BUDGET_MS = 1500
 
 
 @dataclass(frozen=True)
@@ -203,6 +204,7 @@ class AutomationRuntime(QObject):
         self._dispatcher = AutomationDispatcher(self._engine, self, self._journal)
         self._idle_provider = idle_provider or idle_seconds
         self._pending: list[str] = []
+        self._suspending = False
         self._held_wake_since: float | None = None
         # What the rules were last tick. The engine remembers which stateful rule is
         # in force, and that memory is about a rule as it was — see _note_rules.
@@ -263,16 +265,64 @@ class AutomationRuntime(QObject):
     def note_windows_event(self, event: str) -> bool:
         """The workstation locked, unlocked, slept or woke.
 
-        Queued like every other edge event rather than acted on where it
-        arrives: it comes in on a native message, and running a rule from there
-        would put BLE work inside a Windows message handler. Returns whether the
-        event was one we know — an unknown name is dropped rather than queued,
-        so a typo cannot sit in the queue forever.
+        Sleep must finish before returning from the native notification. Other
+        events can wait for the ordinary tick. BLE still runs on its own thread.
         """
         if event not in WINDOWS_EVENTS:
             return False
+        if event == EVENT_WINDOWS_SLEEP:
+            self._process_sleep()
+            return True
         self._pending.append(event)
         return True
+
+    def _process_sleep(self) -> None:
+        if self._suspending:
+            return
+        deadline = monotonic() + SUSPEND_BUDGET_MS / 1000.0
+        settings = self._settings()
+        automations = validate_automations(settings.get("automations", {}))
+        if not automations.get("enabled"):
+            return
+        rules = [
+            rule for rule in self._runtime_rules(automations)
+            if rule.trigger.kind == EVENT_WINDOWS_SLEEP
+        ]
+        if not rules:
+            return
+        self._suspending = True
+        try:
+            self._abandon_background(CODE_CANCELLED)
+            self._dispatcher.cancel_pending(datetime.now())
+            self._dispatcher.tick(
+                rules, self._snapshot(settings),
+                [Event(kind=EVENT_WINDOWS_SLEEP, occurred_at=datetime.now())],
+                monotonic_now=monotonic(),
+            )
+            remaining = int((deadline - monotonic()) * 1000)
+            if self._dispatcher.in_flight() is not None and remaining > 0:
+                # Deliver queued BLE acknowledgements while Windows waits for
+                # this notification; exclude input and suppress ordinary ticks.
+                loop = QEventLoop()
+                timeout = QTimer()
+                timeout.setSingleShot(True)
+                timeout.timeout.connect(loop.quit)
+                poll = QTimer()
+                poll.setInterval(10)
+                poll.timeout.connect(
+                    lambda: loop.quit() if self._dispatcher.in_flight() is None else None
+                )
+                timeout.start(remaining)
+                poll.start()
+                try:
+                    loop.exec(QEventLoop.ExcludeUserInputEvents)
+                finally:
+                    timeout.stop()
+                    poll.stop()
+            # An unfinished sleep action must not execute after waking up.
+            self._dispatcher.cancel_pending(datetime.now(), code=CODE_TIMEOUT)
+        finally:
+            self._suspending = False
 
     def pause(self, seconds: int = 3600) -> bool:
         """The user took over by hand; hold the automations off for a while.
@@ -361,6 +411,8 @@ class AutomationRuntime(QObject):
 
     # ── the tick ──────────────────────────────────────────────────────
     def _tick(self) -> None:
+        if self._suspending:
+            return
         settings = self._settings()
         automations = validate_automations(settings.get("automations", {}))
         if not automations.get("enabled"):

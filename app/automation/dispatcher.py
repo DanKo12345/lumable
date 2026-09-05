@@ -330,6 +330,10 @@ class AutomationDispatcher:
     def in_flight(self) -> Decision | None:
         return self._in_flight.decision if self._in_flight is not None else None
 
+    def cancel_pending(self, now: datetime, *, code: str = CODE_CANCELLED) -> None:
+        if self._in_flight is not None:
+            self._abandon(self._in_flight, code, now)
+
     # ── context for the journal ───────────────────────────────────────
     # Only the skip reasons are the dispatcher's own: they read the engine. How a
     # *run* is recorded lives at module level, shared with the headless path.
