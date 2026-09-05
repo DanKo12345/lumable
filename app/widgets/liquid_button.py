@@ -69,6 +69,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._icon_kind = ""
         self._icon_renderer: QSvgRenderer | None = None
         self._icon_pixmap_cache: dict[tuple, QPixmap] = {}
+        self._nav_text_cache: tuple[tuple, QPixmap] | None = None
         self._embedded_action_text = ""
         self._embedded_action_callback = None
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -367,8 +368,29 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             content.setLeft(icon_rect.right() + 10.0)
         painter.save()
         self._nav_spring_transform(painter, QPointF(content.left(), content.center().y()))
-        painter.drawText(self._centered_text_origin(content, QFontMetricsF(font), self.text()), self.text())
+        self._draw_nav_text(painter, content, font, text_color)
         painter.restore()
+
+    def _draw_nav_text(self, painter: QPainter, content: QRectF, font: QFont, color: QColor) -> None:
+        # Rasterize once, including at rest: changing font hinting during the
+        # spring makes individual letters jump at fractional scales.
+        ratio = painter.device().devicePixelRatioF() * 2.0
+        key = (self.text(), font.toString(), color.rgba(), self.width(), self.height(),
+               content.getRect(), ratio)
+        if self._nav_text_cache is None or self._nav_text_cache[0] != key:
+            layer = QImage(round(self.width() * ratio), round(self.height() * ratio),
+                           QImage.Format_ARGB32_Premultiplied)
+            layer.setDevicePixelRatio(ratio)
+            layer.fill(Qt.transparent)
+            raster = QPainter(layer)
+            raster.setRenderHint(QPainter.TextAntialiasing)
+            raster.setFont(font)
+            raster.setPen(color)
+            raster.drawText(self._centered_text_origin(content, QFontMetricsF(font), self.text()), self.text())
+            raster.end()
+            self._nav_text_cache = (key, QPixmap.fromImage(layer))
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        painter.drawPixmap(QPointF(0, 0), self._nav_text_cache[1])
 
     @staticmethod
     def _centered_text_origin(content: QRectF, metrics: QFontMetricsF, text: str) -> QPointF:
@@ -1012,13 +1034,18 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
 
         # The tinted icon only changes with its size and colour, so cache it as a
         # pixmap instead of allocating and compositing two QImages every paint.
-        pixel_ratio = self.devicePixelRatioF()
+        spring = self._role in {"nav", "nav_active"}
+        pixel_ratio = target_painter.device().devicePixelRatioF() * (2.0 if spring else 1.0)
         key = (self._icon_kind, width, height, pixel_ratio, icon_color.rgba())
         pixmap = self._icon_pixmap_cache.get(key)
         if pixmap is None:
             pixmap = self._build_tinted_icon(width, height, pixel_ratio, icon_color)
             self._icon_pixmap_cache[key] = pixmap
+        target_painter.save()
+        if spring:
+            target_painter.setRenderHint(QPainter.SmoothPixmapTransform)
         target_painter.drawPixmap(rect.topLeft(), pixmap)
+        target_painter.restore()
 
     def _build_tinted_icon(self, width: int, height: int, pixel_ratio: float, icon_color: QColor) -> QPixmap:
         glyph = QImage(

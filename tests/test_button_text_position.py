@@ -10,6 +10,55 @@ from app.theme import theme_manager
 from app.widgets.liquid_button import LiquidButton
 
 
+def render_nav(button, scale, dpr):
+    button.set_nav_content_scale(scale)
+    image = QImage(round(button.width() * dpr), round(button.height() * dpr),
+                   QImage.Format_ARGB32_Premultiplied)
+    image.setDevicePixelRatio(dpr)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    try:
+        button._paint_nav(painter, button._animated_rect(), button._nav_content_rect())
+    finally:
+        painter.end()
+    return image
+
+
+@pytest.mark.parametrize("dpr", [1.0, 1.25, 1.5, 2.0])
+def test_nav_spring_has_no_raster_jump_at_unit_scale(dpr):
+    app = QApplication.instance() or QApplication([])
+    font_path = Path(os.environ.get("SystemRoot", "C:/Windows")) / "Fonts/segoeui.ttf"
+    font_id = QFontDatabase.addApplicationFont(str(font_path))
+    button = LiquidButton("Settings", "nav_active")
+    button.resize(204, 44)
+    button.setFont(QFont("Segoe UI", 10))
+    button.set_icon_kind("settings")
+    try:
+        assert QFontMetrics(button.font()).inFont("S")
+        resting = render_nav(button, 1.0, dpr)
+        for scale in (0.99999, 1.00001):
+            frame = render_nav(button, scale, dpr)
+            # Check the icon and letters separately so a blank background
+            # cannot dilute the discontinuity at the end of the spring.
+            for left, right in ((20, 36), (46, 110)):
+                deltas = [abs(frame.pixelColor(x, y).alpha() - resting.pixelColor(x, y).alpha())
+                          for y in range(round(12*dpr), round(32*dpr))
+                          for x in range(round(left*dpr), round(right*dpr))]
+                assert sum(deltas) / len(deltas) < 1.0
+        original = button._nav_text_cache[1].cacheKey()
+        for scale in (0.98, 1.008, 1.0305, 1.0327, 1.0206, 1.0061, 1.0008, 1.0):
+            render_nav(button, scale, dpr)
+            assert button._nav_text_cache[1].cacheKey() == original
+        button.setText("Changed")
+        assert render_nav(button, 1.0, dpr) != resting
+        assert button._nav_text_cache[1].cacheKey() != original
+    finally:
+        button.deleteLater()
+        app.processEvents()
+        if font_id >= 0:
+            QFontDatabase.removeApplicationFont(font_id)
+
+
 def render_content(button, scale, dpr):
     button.set_scale(scale)
     image = QImage(round(button.width() * dpr), round(button.height() * dpr),
