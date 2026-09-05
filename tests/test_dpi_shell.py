@@ -109,6 +109,40 @@ def test_dense_page_scrolls_at_the_minimum_window_size() -> None:
         app.processEvents()
 
 
+def test_music_slider_labels_fit_all_translations() -> None:
+    from PySide6.QtGui import QFontDatabase, QFontMetrics
+
+    from app.localization import localization_manager
+
+    app = QApplication.instance() or QApplication([])
+    font_ids = [QFontDatabase.addApplicationFont(path) for path in (
+        "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/seguisb.ttf",
+    )]
+    window = MainWindow()
+    try:
+        window.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        select_section(window, "music")
+        app.processEvents()
+        widths = set()
+        for key, label in window._slider_labels.items():
+            if not key.startswith("music."):
+                continue
+            label.ensurePolished()
+            metrics = QFontMetrics(label.font())
+            assert metrics.inFont("S"), "The measurement requires real fonts"
+            widths.add(label.width())
+            for text in localization_manager.translation_variants(key):
+                assert metrics.horizontalAdvance(text) <= label.contentsRect().width(), (key, text)
+        assert len(widths) == 1
+    finally:
+        window._ble.shutdown()
+        window.close()
+        app.processEvents()
+        for font_id in font_ids:
+            if font_id >= 0:
+                QFontDatabase.removeApplicationFont(font_id)
+
+
 _AUTOMATION_RULES = [
     {
         "id": "evening",
