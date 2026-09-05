@@ -57,7 +57,7 @@ def test_navigation_hover_grows_the_material_without_dragging_its_content() -> N
         app.processEvents()
 
 
-def test_navigation_press_springs_the_icon_and_label_too() -> None:
+def test_navigation_press_keeps_the_content_layout_fixed() -> None:
     app = QApplication.instance() or QApplication([])
     button = LiquidButton("Settings", "nav")
     button.resize(204, 44)
@@ -69,7 +69,7 @@ def test_navigation_press_springs_the_icon_and_label_too() -> None:
         button.set_nav_content_scale(1.0)
         settled = button._nav_content_rect()
 
-        assert pressed.width() < settled.width() < released_overshoot.width()
+        assert pressed == settled == released_overshoot, "click must not animate the left padding"
     finally:
         button.deleteLater()
         app.processEvents()
@@ -104,7 +104,6 @@ def test_navigation_text_stays_vertically_centered_while_the_button_springs() ->
     released_origin = LiquidButton._centered_text_origin(released_overshoot, metrics, "Settings")
     glyphs = metrics.tightBoundingRect("Settings")
 
-    assert pressed_origin.x() != released_origin.x(), "text stopped following the click spring"
     assert pressed_origin.y() == released_origin.y(), "click changed the text baseline"
     assert pressed_origin.y() + glyphs.center().y() == pressed.center().y()
 def test_an_unknown_button_role_is_a_programming_error() -> None:

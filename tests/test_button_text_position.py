@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
+from app.theme import theme_manager
 from app.widgets.liquid_button import LiquidButton
 
 
@@ -49,5 +50,45 @@ def test_hover_keeps_the_rendered_label_in_place(icon, height, dpr):
     finally:
         button.deleteLater()
         app.processEvents()
+        if font_id >= 0:
+            QFontDatabase.removeApplicationFont(font_id)
+
+
+@pytest.mark.parametrize("dpr", [1.0, 1.5, 2.0])
+def test_navigation_click_scales_letters_without_sliding_the_label(dpr):
+    app = QApplication.instance() or QApplication([])
+    font_path = Path(os.environ.get("SystemRoot", "C:/Windows")) / "Fonts/segoeui.ttf"
+    font_id = QFontDatabase.addApplicationFont(str(font_path))
+    previous_dark = theme_manager.is_dark
+    theme_manager.set_dark(True)
+    button = LiquidButton("Settings", "nav_active")
+    button.setFont(QFont("Segoe UI", 10))
+    button.set_icon_kind("settings")
+    button.resize(204, 44)
+    bounds = []
+    try:
+        assert QFontMetrics(button.font()).inFont("S")
+        for scale in (1.0, 0.98, 1.04, 1.0):
+            button.set_nav_content_scale(scale)
+            image = QImage(round(204 * dpr), round(44 * dpr), QImage.Format_ARGB32_Premultiplied)
+            image.setDevicePixelRatio(dpr)
+            image.fill(Qt.transparent)
+            painter = QPainter(image)
+            try:
+                button._paint_nav(painter, button._animated_rect(), button._nav_content_rect())
+            finally:
+                painter.end()
+            pixels = [(x, y) for y in range(image.height()) for x in range(round(45*dpr), image.width())
+                      if (c := image.pixelColor(x, y)).alpha() > 200
+                      and min(c.red(), c.green(), c.blue()) > 240]
+            assert pixels, "The frame must contain visible letters"
+            bounds.append((min(x for x, y in pixels), max(x for x, y in pixels)))
+        assert max(left for left, right in bounds) - min(left for left, right in bounds) <= dpr
+        assert bounds[2][1] > bounds[1][1], "the letters must still spring"
+        assert bounds[0] == bounds[-1], "release must return to the original position"
+    finally:
+        button.deleteLater()
+        app.processEvents()
+        theme_manager.set_dark(previous_dark)
         if font_id >= 0:
             QFontDatabase.removeApplicationFont(font_id)

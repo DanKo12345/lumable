@@ -266,12 +266,12 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         return QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
 
     def _nav_content_rect(self) -> QRectF:
-        delta = self._nav_content_scale - 1.0
-        if delta >= 0.0:
-            inset = max(0.8, 4.0 - delta * 75.0)
-        else:
-            inset = 4.0 + abs(delta) * 75.0
-        return QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
+        return self._label_rect()
+
+    def _nav_spring_transform(self, painter: QPainter, anchor: QPointF) -> None:
+        painter.translate(anchor)
+        painter.scale(self._nav_content_scale, self._nav_content_scale)
+        painter.translate(-anchor)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -360,15 +360,20 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
                 icon_size,
                 icon_size,
             )
+            painter.save()
+            self._nav_spring_transform(painter, icon_rect.center())
             self._draw_svg_icon(painter, icon_rect, text_color)
+            painter.restore()
             content.setLeft(icon_rect.right() + 10.0)
+        painter.save()
+        self._nav_spring_transform(painter, QPointF(content.left(), content.center().y()))
         painter.drawText(self._centered_text_origin(content, QFontMetricsF(font), self.text()), self.text())
+        painter.restore()
 
     @staticmethod
     def _centered_text_origin(content: QRectF, metrics: QFontMetricsF, text: str) -> QPointF:
-        # AlignVCenter changes its pixel rounding as the spring changes the
-        # height of this floating-point rect. Anchor the actual glyph bounds to
-        # the centre instead, while their x position still follows the spring.
+        # Centre the visible glyph bounds on the fixed content line. The click
+        # spring scales the painter around that line without moving the layout.
         glyphs = metrics.tightBoundingRect(text)
         baseline = content.center().y() - glyphs.center().y()
         return QPointF(content.left(), baseline)
