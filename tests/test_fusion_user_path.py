@@ -818,7 +818,7 @@ def test_music_context_rows_open_and_close_without_a_cleanup_jump(
     assert gate_slot.maximumHeight() == controller._gate_height
 
     controller._animate_gate(opening=False)
-    QTest.qWait(80)
+    controller._gate_anim.setCurrentTime(160)
     assert 0 < gate_slot.maximumHeight() < controller._gate_height
     assert gate.isHidden() is True  # The slot paints its fading snapshot.
     assert gate_slot._snapshot is not None

@@ -4,7 +4,14 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 
 class CollapsingRow(QWidget):
-    """Fade a fixed-size row while releasing its space, without nested effects."""
+    """Reserve space before revealing content; fade before releasing space."""
+
+    _HEIGHT_PHASE = 0.65
+
+    @staticmethod
+    def _ease(value: float) -> float:
+        value = max(0.0, min(1.0, value))
+        return value * value * (3.0 - 2.0 * value)
 
     def __init__(self, content: QWidget, gap: int) -> None:
         super().__init__()
@@ -56,7 +63,8 @@ class CollapsingRow(QWidget):
 
     def set_progress(self, value: float) -> None:
         self._progress = max(0.0, min(1.0, value))
-        self.setFixedHeight(round((self._content_height + self._gap) * self._progress))
+        height_progress = self._ease(self._progress / self._HEIGHT_PHASE)
+        self.setFixedHeight(round((self._content_height + self._gap) * height_progress))
         if self._snapshot is None:
             self.content.setVisible(self._progress == 1.0)
         self.update()
@@ -74,6 +82,7 @@ class CollapsingRow(QWidget):
         if self._snapshot is None:
             return
         painter = QPainter(self)
-        painter.setOpacity(self._progress)
+        opacity = self._ease((self._progress - self._HEIGHT_PHASE) / (1.0 - self._HEIGHT_PHASE))
+        painter.setOpacity(opacity)
         painter.drawPixmap(QPointF(0, 0), self._snapshot)
         painter.end()

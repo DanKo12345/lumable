@@ -86,8 +86,9 @@ class MusicUiController:
         self._gate_height = max(row.sizeHint().height(), host._sz(40)) + host._sz(5)
         slot.set_content_height(self._gate_height - host._sz(5))
         self._gate_anim = QPropertyAnimation(slot, b"progress", host)
-        self._gate_anim.setDuration(240)
-        self._gate_anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self._gate_anim.setDuration(320)
+        # The slot eases its height and opacity phases independently.
+        self._gate_anim.setEasingCurve(QEasingCurve.Linear)
         self._gate_anim.finished.connect(slot.finish_transition)
 
     def _set_gate_visible_instant(self, visible: bool) -> None:

@@ -34,15 +34,22 @@ def test_row_fades_without_relayout_or_opaque_background(opening):
     geometry = row.geometry()
     levels = []
     try:
-        for progress in ((0.25, 0.5, 0.75) if opening else (0.75, 0.5, 0.25)):
+        for progress in ((0.7, 0.85, 0.95) if opening else (0.95, 0.85, 0.7)):
             slot.set_progress(progress)
             app.processEvents()
             frame = render(slot)
             assert row.geometry() == geometry
+            assert slot.height() == 53
             assert frame.pixelColor(100, 2).alpha() == 0
             levels.append(frame.pixelColor(15, 5).alpha())
         assert levels == sorted(levels, reverse=not opening)
         assert max(levels) - min(levels) > 100
+        # Even a mark near the TOP must be invisible before any clipping starts.
+        for progress in (0.65, 0.649, 0.5, 0.3, 0.1):
+            slot.set_progress(progress)
+            frame = render(slot)
+            assert not any(frame.pixelColor(x, y).alpha()
+                           for y in range(frame.height()) for x in range(frame.width()))
         slot.set_progress(1.0 if opening else 0.0)
         height = slot.height()
         slot.finish_transition()
@@ -55,7 +62,8 @@ def test_row_fades_without_relayout_or_opaque_background(opening):
         app.processEvents()
 
 
-def test_reversing_reuses_snapshot_and_finishes_with_live_content():
+@pytest.mark.parametrize("progress", [0.45, 0.65, 0.85])
+def test_reversing_reuses_snapshot_and_finishes_with_live_content(progress):
     app = QApplication.instance() or QApplication([])
     row = MarkedRow()
     slot = CollapsingRow(row, 5)
@@ -66,7 +74,7 @@ def test_reversing_reuses_snapshot_and_finishes_with_live_content():
     app.processEvents()
     try:
         slot.prepare_transition()
-        slot.set_progress(0.45)
+        slot.set_progress(progress)
         before = render(slot)
         key = slot._snapshot.cacheKey()
         slot.prepare_transition()
