@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QImage, QPainter
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QFontMetricsF, QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
 from app.theme import theme_manager
@@ -52,6 +52,53 @@ def test_nav_spring_has_no_raster_jump_at_unit_scale(dpr):
         button.setText("Changed")
         assert render_nav(button, 1.0, dpr) != resting
         assert button._nav_text_cache[1].cacheKey() != original
+    finally:
+        button.deleteLater()
+        app.processEvents()
+        if font_id >= 0:
+            QFontDatabase.removeApplicationFont(font_id)
+
+
+def channel_drift(left, right):
+    """Largest single-channel difference between two renders of the same label."""
+    worst = 0
+    for y in range(left.height()):
+        for x in range(left.width()):
+            a, b = left.pixelColor(x, y), right.pixelColor(x, y)
+            worst = max(worst, abs(a.red() - b.red()), abs(a.green() - b.green()),
+                        abs(a.blue() - b.blue()), abs(a.alpha() - b.alpha()))
+    return worst
+
+
+def draw_nav_text_directly(self, painter, content, font, color):
+    painter.setFont(font)
+    painter.setPen(color)
+    painter.drawText(self._centered_text_origin(content, QFontMetricsF(font), self.text()), self.text())
+
+
+@pytest.mark.parametrize("role", ["nav", "nav_active"])
+@pytest.mark.parametrize("dpr", [1.0, 1.25, 1.5, 2.0])
+def test_resting_navigation_text_is_as_sharp_as_plain_text(monkeypatch, role, dpr):
+    # The spring rasterizes the label so letters cannot re-hint mid-animation.
+    # At rest that layer must land on the device grid untouched: supersampling
+    # it and scaling back down costs ~18% of the edge contrast at DPR 1.0.
+    app = QApplication.instance() or QApplication([])
+    font_path = Path(os.environ.get("SystemRoot", "C:/Windows")) / "Fonts/segoeui.ttf"
+    font_id = QFontDatabase.addApplicationFont(str(font_path))
+    button = LiquidButton("Settings", role)
+    button.resize(204, 44)
+    button.setFont(QFont("Segoe UI", 10))
+    button.set_icon_kind("settings")
+    try:
+        assert QFontMetrics(button.font()).inFont("S"), "The render must contain letters, not boxes"
+        cached = render_nav(button, 1.0, dpr)
+        button._nav_text_cache = None
+        monkeypatch.setattr(LiquidButton, "_draw_nav_text", draw_nav_text_directly)
+        plain = render_nav(button, 1.0, dpr)
+        # Compositing the layer over the active background rounds one channel
+        # of one pixel; resampling a supersampled layer moves whole stems by up
+        # to 184 of 255, so a one-step tolerance still fails on the regression.
+        assert channel_drift(cached, plain) <= 1, "the resting label is resampled, not drawn on the grid"
     finally:
         button.deleteLater()
         app.processEvents()

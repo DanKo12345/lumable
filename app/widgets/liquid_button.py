@@ -373,8 +373,10 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
 
     def _draw_nav_text(self, painter: QPainter, content: QRectF, font: QFont, color: QColor) -> None:
         # Rasterize once, including at rest: changing font hinting during the
-        # spring makes individual letters jump at fractional scales.
-        ratio = painter.device().devicePixelRatioF() * 2.0
+        # spring makes individual letters jump at fractional scales. Keep the
+        # layer at exactly one device pixel per pixel — supersampling it and
+        # scaling back down softens every glyph while nothing is moving.
+        ratio = painter.device().devicePixelRatioF()
         key = (self.text(), font.toString(), color.rgba(), self.width(), self.height(),
                content.getRect(), ratio)
         if self._nav_text_cache is None or self._nav_text_cache[0] != key:
@@ -389,8 +391,10 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
             raster.drawText(self._centered_text_origin(content, QFontMetricsF(font), self.text()), self.text())
             raster.end()
             self._nav_text_cache = (key, QPixmap.fromImage(layer))
+        painter.save()
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.drawPixmap(QPointF(0, 0), self._nav_text_cache[1])
+        painter.restore()
 
     @staticmethod
     def _centered_text_origin(content: QRectF, metrics: QFontMetricsF, text: str) -> QPointF:
