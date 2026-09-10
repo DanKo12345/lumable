@@ -15,7 +15,25 @@ from app.widgets.segmented_control import SegmentedControl
 
 _BANDS = (("bass", "music.band_bass"), ("mid", "music.band_mid"), ("treble", "music.band_treble"))
 _MODE_TINT = "#ff8ca6"
+# The clear space left between a band's swatch and its meter, in pixels.
+_BAND_METER_MIN_GAP = 4
 _SOURCE_TINT = "#72d9b7"
+
+
+def _band_row_margins(sz) -> tuple[int, int, int]:
+    """Top and bottom margin of a band row, and the thickness of its meter.
+
+    The two margins add up to what they always did, so the row keeps its
+    height. The meter sits on the row's bottom edge with a clear gap above it,
+    and whatever is left over becomes the top margin: the swatch moves up
+    rather than the row growing. The gap never drops below four pixels, even on
+    the densest UI scale, where a scaled four would round down to three.
+    """
+    total = 2 * sz(4)
+    thickness = sz(2)
+    gap = max(_BAND_METER_MIN_GAP, sz(4))
+    top = max(0, total - gap - thickness)
+    return top, total - top, thickness
 
 
 def build_music_section(host: PanelHost) -> GlassCard:
@@ -215,12 +233,13 @@ def build_music_section(host: PanelHost) -> GlassCard:
     colors_row.setContentsMargins(0, 0, 0, 0)
     host.music_band_captions = {}
     host.music_band_meters = {}
+    band_top, band_bottom, meter_thickness = _band_row_margins(host._sz)
     for band, label_key in _BANDS:
-        item = _BandItem(host._sz(10), host._sz(3))
+        item = _BandItem(host._sz(10), meter_thickness)
         item.setObjectName("settingsRow")
         item.setAttribute(Qt.WA_StyledBackground, True)
         pair = QHBoxLayout(item)
-        pair.setContentsMargins(host._sz(10), host._sz(4), host._sz(10), host._sz(4))
+        pair.setContentsMargins(host._sz(10), band_top, host._sz(10), band_bottom)
         pair.setSpacing(host._sz(8))
         caption = QLabel(host._tr(label_key))
         caption.setObjectName("settingsRowTitle")
@@ -257,7 +276,8 @@ class _BandItem(QWidget):
     """One band's colour, with its live level drawn along the bottom edge.
 
     The meter is laid over the row rather than into its layout, so the row and
-    the card are exactly as tall as they were without it.
+    the card are exactly as tall as they were without it. It sits on the row's
+    bottom edge; the row's margins keep the swatch clear of it.
     """
 
     def __init__(self, inset: int, thickness: int) -> None:
@@ -270,7 +290,7 @@ class _BandItem(QWidget):
         super().resizeEvent(event)
         self.meter.setGeometry(
             self._inset,
-            self.height() - self._thickness - 1,
+            self.height() - self._thickness,
             max(0, self.width() - 2 * self._inset),
             self._thickness,
         )

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QGraphicsOpacityEffect
 
 from app.feature_gate import can_use
 from app.music_controller import (
+    MANUAL_GATE_RMS_CEILING,
     OWNER_FUSION,
     OWNER_OUTPUT,
     OWNER_PREVIEW,
@@ -38,6 +39,8 @@ _DEFAULT_BAND_RGB = {"bass": (255, 80, 70), "mid": (180, 90, 255), "treble": (60
 SOUND_CHECK_SECONDS = 30
 # One interface tick drives the meters and the check's countdown.
 METER_INTERVAL_MS = 50
+# The gate fraction the noise-gate slider reaches at 100%.
+GATE_FRACTION_AT_FULL = 0.5
 # A reading older than this means the device has stopped handing sound over.
 METER_STALE_S = 0.4
 # A status must hold this long before the next may replace it, so a signal on
@@ -76,6 +79,8 @@ class MusicUiController:
         self._meter_timer: QTimer | None = None
         self._meter_tick_at = 0.0
         self._flash = 0.0
+        # The room's level as shown on the noise-gate slider, in its units.
+        self._gate_level = 0.0
         self._last_beat_id = 0
         self._meter_status = ""
         self._meter_status_since = 0.0
@@ -741,7 +746,9 @@ class MusicUiController:
         )
         # Gate slider 0..100% -> noise-gate fraction 0..0.5 of full loudness.
         # Only applied for the microphone (system audio doesn't need it).
-        noise_gate = (host.music_gate_slider.value() / 100.0) * 0.5 if self._source == "mic" else 0.0
+        noise_gate = (
+            (host.music_gate_slider.value() / 100.0) * GATE_FRACTION_AT_FULL if self._source == "mic" else 0.0
+        )
         device_name = host.music_source_combo.currentData() or ""
         self._music.configure(
             saturation=saturation,
@@ -1030,6 +1037,7 @@ class MusicUiController:
             for meter in self._band_meters():
                 meter.set_state(False, 0.0)
             self._flash = 0.0
+            self._clear_gate_level()
 
     def _refresh_meters(self) -> None:
         now = monotonic()
@@ -1062,8 +1070,36 @@ class MusicUiController:
         for index, meter in enumerate(self._band_meters()):
             level = follow_level(meter.level(), targets[index], dt)
             meter.set_state(True, level, self._flash if index == 0 else 0.0)
+        self._refresh_gate_level(reading, fresh, dt)
         if self._check_deadline is not None:
             self._show_meter_status(self._meter_status_for(reading, fresh, now), now)
+
+    @staticmethod
+    def _gate_value_for_rms(rms: float) -> float:
+        """A block RMS in noise-gate slider units — the inverse of the gate.
+
+        Built from the same two numbers that turn the slider into the gate's
+        RMS, so the room's level and the handle can never drift apart.
+        """
+        return float(rms) / (GATE_FRACTION_AT_FULL * MANUAL_GATE_RMS_CEILING) * 100.0
+
+    def _refresh_gate_level(self, reading, fresh: bool, dt: float) -> None:
+        gate = getattr(self._host, "music_gate_slider", None)
+        if gate is None:
+            return
+        if self._source != "mic":
+            # System audio has no gate to set, and its row is folded away.
+            self._clear_gate_level()
+            return
+        target = min(100.0, self._gate_value_for_rms(reading.rms)) if fresh else 0.0
+        self._gate_level = follow_level(self._gate_level, target, dt)
+        gate.set_live_level(self._gate_level, passing=fresh and not reading.silent)
+
+    def _clear_gate_level(self) -> None:
+        self._gate_level = 0.0
+        gate = getattr(self._host, "music_gate_slider", None)
+        if gate is not None:
+            gate.set_live_level(None)
 
     def _meter_status_for(self, reading, fresh: bool, now: float) -> str:
         if not fresh:

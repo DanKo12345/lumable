@@ -20,6 +20,9 @@ ATTACK_S = 0.03
 RELEASE_S = 0.28
 # How long the bass line stays brightened after a beat.
 FLASH_S = 0.18
+# A meter is a reading, not a control: at rest it is drawn quieter than the
+# sliders around it, and only the moment a beat lands gets full strength.
+RESTING_OPACITY = 0.68
 
 
 def follow_level(shown: float, target: float, dt: float) -> float:
@@ -83,6 +86,7 @@ class BandMeter(QWidget):
             fill = QColor(self._color)
             if self._flash > 0.0:
                 fill = fill.lighter(100 + round(45 * self._flash))
+            fill.setAlphaF(RESTING_OPACITY + (1.0 - RESTING_OPACITY) * self._flash)
             painter.setBrush(fill)
             painter.drawRoundedRect(
                 QRectF(rect.left(), rect.top(), max(width, rect.height()), rect.height()), radius, radius

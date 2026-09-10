@@ -25,6 +25,11 @@ class LiquidSlider(QSlider):
         self._press = 0.0
         self._impact = 0.0
         self._display_value = float(self.value())
+        # A live measurement drawn on the track; None for every slider that is
+        # not asked to show one, which then paints exactly as it always has.
+        self._live_level: float | None = None
+        self._live_passing = False
+        self._live_painted: tuple | None = None
 
         self._hover_anim = QPropertyAnimation(self, b"hoverValue", self)
         self._hover_anim.setDuration(160)
@@ -121,6 +126,51 @@ class LiquidSlider(QSlider):
         self.blockSignals(False)
         self._display_value = float(self.value())
         self.update()
+
+    def set_live_level(self, value: float | None, *, passing: bool = False) -> None:
+        """Show a live measurement on the track, in the slider's own units.
+
+        Made for a threshold: the handle is where the threshold is and the band
+        is where the signal is right now, on the same scale, so the handle can be
+        set just past it. ``passing`` says whether the signal is getting through
+        at the moment, which is not always the same as being past the handle.
+        None takes the band away again.
+        """
+        if value is None:
+            if self._live_level is not None:
+                self._live_level = None
+                self._live_painted = None
+                self.update()
+            return
+        self._live_level = float(value)
+        self._live_passing = bool(passing)
+        # Repainted only when the band would move by a whole pixel.
+        painted = (round(self._ratio_from_value(self._live_level) * self.width()), self._live_passing)
+        if painted != self._live_painted:
+            self._live_painted = painted
+            self.update()
+
+    def live_level(self) -> float | None:
+        return self._live_level
+
+    def _paint_live_level(self, painter: QPainter, groove_rect: QRectF) -> None:
+        width = groove_rect.width() * self._ratio_from_value(self._live_level)
+        if width < 0.5:
+            return
+        height = groove_rect.height() * 0.44
+        band = QRectF(
+            groove_rect.left(),
+            groove_rect.center().y() - height / 2.0,
+            max(width, height),
+            height,
+        )
+        if theme_manager.is_dark:
+            color = QColor(255, 255, 255, 215 if self._live_passing else 95)
+        else:
+            color = QColor(20, 32, 60, 165 if self._live_passing else 70)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(color)
+        painter.drawRoundedRect(band, height / 2.0, height / 2.0)
 
     def _accent_color(self) -> QColor:
         palette = {
@@ -354,6 +404,11 @@ class LiquidSlider(QSlider):
                 fill.setColorAt(1.0, end)
                 painter.setBrush(fill)
                 painter.drawRoundedRect(fill_rect, groove_rect.height() / 2, groove_rect.height() / 2)
+
+        if self._live_level is not None:
+            # Over the fill and under the handle, so the handle stays readable
+            # as "the threshold" wherever the signal is.
+            self._paint_live_level(painter, groove_rect)
 
         handle_rect = QRectF(handle_x - handle_radius, handle_cy - handle_radius, handle_radius * 2, handle_radius * 2)
         painter.setBrush(handle_fill)

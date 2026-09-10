@@ -28,6 +28,9 @@ CAPTURE_OWNERS = frozenset({OWNER_PREVIEW, OWNER_FUSION, OWNER_OUTPUT})
 CLIP_LEVEL = 0.99
 # How long a stop waits for the capture thread to hand the device back.
 CAPTURE_STOP_TIMEOUT_S = 1.5
+# The block RMS the microphone gate reaches at a gate fraction of 1.0. Shared
+# with the noise-gate slider, which draws the room's level on the same scale.
+MANUAL_GATE_RMS_CEILING = 0.25
 
 
 def beat_ratio_for_sensitivity(value: float) -> float:
@@ -215,6 +218,8 @@ class BlockResult:
     bands: tuple[float, float, float] = (0.0, 0.0, 0.0)
     silent: bool = True
     clipped: bool = False
+    # The raw block RMS — the number the gate judged, before any smoothing.
+    rms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -239,6 +244,9 @@ class MeterReading:
     silent: bool = True
     clipped: bool = False
     beat_id: int = 0
+    # The raw block RMS the gate judged. Unlike ``level`` it is not zero in
+    # silence, which is exactly when the room's noise has to be seen.
+    rms: float = 0.0
 
 
 SHADOW_ONSET_ENV = "LUMABLE_ONSET_SHADOW"
@@ -768,6 +776,7 @@ class MusicController(QObject):
             bands=weights,
             silent=reading.silent,
             clipped=is_clipped(block),
+            rms=rms,
         )
 
     @staticmethod
@@ -789,7 +798,7 @@ class MusicController(QObject):
         Kept in the units the analyser thinks in, and scaled by the same ceiling
         the loudness curve uses, so a saved 40% still means what it meant.
         """
-        return max(0.0, min(0.95, options.noise_gate)) * 0.25
+        return max(0.0, min(0.95, options.noise_gate)) * MANUAL_GATE_RMS_CEILING
 
     def _run(self) -> None:
         token = self._session_token
@@ -847,6 +856,7 @@ class MusicController(QObject):
                     silent=result.silent,
                     clipped=result.clipped,
                     beat_id=result.beat_id,
+                    rms=result.rms,
                 )
                 if recovering:
                     self.recovery_changed.emit(token, False)

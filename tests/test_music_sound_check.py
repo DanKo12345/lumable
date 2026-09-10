@@ -200,11 +200,15 @@ def window():
     storage.PROFILES_PATH = data_dir / "profiles.json"
     real_reader = MusicController._open_loopback_reader
 
+    real_mic_reader = MusicController._open_mic_reader
+
     def counted(self, options):
         _WINDOW_OPENS.append(1)
         return _Device().reader(options)
 
+    # Both sources, so a test on the microphone never opens a real one.
     MusicController._open_loopback_reader = counted
+    MusicController._open_mic_reader = counted
     made = MainWindow()
     made.show()
     app.processEvents()
@@ -215,6 +219,7 @@ def window():
         made._ble.shutdown()
         made.close()
         MusicController._open_loopback_reader = real_reader
+        MusicController._open_mic_reader = real_mic_reader
         storage.DATA_DIR, storage.SETTINGS_PATH, storage.PROFILES_PATH = real_paths
         app.processEvents()
 
@@ -424,3 +429,98 @@ def test_a_locked_or_sleeping_machine_stops_the_meters_but_not_the_music(window,
     getattr(window._windows_session, back).emit()
     assert ui._meter_timer.isActive()
     ui._music.release(OWNER_OUTPUT)
+
+
+# ── the room's level on the noise gate ────────────────────────────────
+def test_the_meters_carry_the_rms_the_gate_judged(controller):
+    # Loud and then quiet: a smoothed value would still be on its way down,
+    # while the gate — and so the room level — judges the quiet block itself.
+    options = MusicOptions()
+    loud, quiet = [[0.4, 0.4]] * 512, [[0.01, 0.01]] * 512
+    controller._process_block(loud, 48000, options)
+    assert controller._process_block(quiet, 48000, options).rms == pytest.approx(
+        module.analyze_block(quiet, 48000)[3]
+    )
+    controller.acquire(OWNER_PREVIEW)
+    _until(lambda: controller.meter_reading().captured_at > 0)
+    assert controller.meter_reading().rms == pytest.approx(module.analyze_block([[0.2, 0.2]] * 256, 48000)[3])
+
+
+@pytest.mark.parametrize("value", [0, 16, 50, 100])
+def test_the_room_level_and_the_gate_handle_share_one_scale(window, monkeypatch, value):
+    monkeypatch.setattr(music_ui_module, "list_audio_inputs", lambda: [])
+    ui = window._music_ui
+    ui._on_source_type_changed("mic")
+    try:
+        window.music_gate_slider.setValue(value)
+        ui._apply_options()
+        threshold = MusicController._manual_gate(ui._music.options())
+        assert ui._gate_value_for_rms(threshold) == pytest.approx(value)
+    finally:
+        window.music_gate_slider.setValue(16)
+        ui._on_source_type_changed("system")
+
+
+def test_the_room_level_is_shown_on_the_gate_only_for_the_microphone(window, monkeypatch):
+    monkeypatch.setattr(music_ui_module, "list_audio_inputs", lambda: [])
+    ui = window._music_ui
+    gate = window.music_gate_slider
+    ui._on_source_type_changed("mic")
+    try:
+        _press_check(window)
+        _until(lambda: (gate.live_level() or 0.0) > 0.0)
+        ui._on_source_type_changed("system")
+        ui._refresh_meters()
+        assert gate.live_level() is None, "system audio showed a room level on a gate it does not have"
+        ui._on_source_type_changed("mic")
+        _until(lambda: (gate.live_level() or 0.0) > 0.0)
+        _press_check(window)
+        assert gate.live_level() is None, "the level stayed on the gate after listening stopped"
+    finally:
+        ui._on_source_type_changed("system")
+
+
+def test_a_slider_without_a_live_level_paints_exactly_as_before():
+    from PySide6.QtGui import QImage
+
+    from app.widgets.liquid_slider import LiquidSlider
+
+    QApplication.instance() or QApplication([])
+
+    def render(slider):
+        image = QImage(slider.size(), QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent)
+        slider.render(image)
+        return image
+
+    plain = LiquidSlider("green")
+    used = LiquidSlider("green")
+    for slider in (plain, used):
+        slider.resize(300, 56)
+        slider.jump_to(40)
+    used.set_live_level(20.0, passing=True)
+    assert render(used) != render(plain), "the live level was not drawn"
+    used.set_live_level(None)
+    assert render(used) == render(plain), "a slider without a live level no longer paints as before"
+
+
+# ── a swatch never touches its meter ──────────────────────────────────
+@pytest.mark.parametrize("scale", [0.78, 0.85, 0.9, 1.0, 1.1])  # the whole range resolve_ui_scale allows
+def test_a_band_meter_keeps_a_clear_gap_below_its_swatch_at_every_ui_scale(scale):
+    from app.panels.music_panel import _band_row_margins
+
+    def sz(value):
+        return max(1, round(value * scale))
+
+    top, bottom, thickness = _band_row_margins(sz)
+    assert top >= 0
+    assert top + bottom == 2 * sz(4), "the band row changed height"
+    assert bottom - thickness >= 4, "the swatch touches its meter"
+
+
+def test_the_swatches_clear_their_meters_in_the_window(window):
+    for band in ("bass", "mid", "treble"):
+        swatch = getattr(window, f"music_{band}_swatch")
+        meter = window.music_band_meters[band]
+        assert meter.geometry().top() - swatch.geometry().bottom() - 1 >= 4, f"the {band} swatch touches its meter"
+        assert swatch.parentWidget().height() == window._sz(32) + 2 * window._sz(4), "the band row changed height"
