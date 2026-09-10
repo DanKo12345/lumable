@@ -216,6 +216,10 @@ def select_section(host, key: str) -> None:
     if preview is not None:
         preview.set_compact(key not in _LIVE_LIGHT_SECTIONS)
     _reveal_nav_item(host, key)
+    # The music card listens and draws only while its page is the one shown.
+    music_ui = getattr(host, "_music_ui", None)
+    if music_ui is not None:
+        music_ui.note_section_changed(key)
 
 
 def _reveal_nav_item(host, key: str) -> None:

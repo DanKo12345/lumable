@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from math import ceil
+from time import monotonic
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt
+from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QGraphicsOpacityEffect
 
 from app.feature_gate import can_use
 from app.music_controller import (
+    OWNER_FUSION,
+    OWNER_OUTPUT,
+    OWNER_PREVIEW,
     MusicController,
     beat_ratio_for_sensitivity,
     list_audio_inputs,
@@ -15,7 +20,8 @@ from app.music_controller import (
 )
 from app.storage import save_settings
 from app.widgets import ColorPickerOverlay
-from app.widgets.animation_helpers import play_or_complete
+from app.widgets.animation_helpers import motion_reduced, play_or_complete
+from app.widgets.band_meter import FLASH_S, follow_level
 
 _DEFAULTS = {
     "saturation": 60,
@@ -27,6 +33,21 @@ _DEFAULTS = {
 }
 _BANDS = ("bass", "mid", "treble")
 _DEFAULT_BAND_RGB = {"bass": (255, 80, 70), "mid": (180, 90, 255), "treble": (60, 190, 255)}
+
+# The sound check listens for this long and then stops by itself.
+SOUND_CHECK_SECONDS = 30
+# One interface tick drives the meters and the check's countdown.
+METER_INTERVAL_MS = 50
+# A reading older than this means the device has stopped handing sound over.
+METER_STALE_S = 0.4
+# A status must hold this long before the next may replace it, so a signal on
+# the edge of the gate does not make the label flicker. Clipping is shown at
+# once and then held longer, so a single loud hit is still readable.
+METER_STATUS_DWELL_S = 0.4
+METER_CLIPPED_HOLD_S = 1.0
+# While the device is still opening there is no reading yet, which is not the
+# same thing as a device that has gone quiet.
+METER_STARTUP_GRACE_S = 1.0
 
 
 class MusicUiController:
@@ -42,6 +63,22 @@ class MusicUiController:
         self._music = MusicController(host)
         self._sink = None
         self._source = "system"
+        # The sound check: when it ends, or None while none is running.
+        self._check_deadline: float | None = None
+        self._check_started_at = 0.0
+        # The meters draw only while their page is the one on screen.
+        self._on_music_page = False
+        self._window_visible = True
+        # Two flags, not one: a machine that sleeps without locking wakes with
+        # no "unlocked" to follow, and one that locks on waking wakes locked.
+        self._session_locked = False
+        self._session_asleep = False
+        self._meter_timer: QTimer | None = None
+        self._meter_tick_at = 0.0
+        self._flash = 0.0
+        self._last_beat_id = 0
+        self._meter_status = ""
+        self._meter_status_since = 0.0
 
     def wire(self) -> None:
         host = self._host
@@ -69,14 +106,23 @@ class MusicUiController:
         self._music.color_sampled.connect(self._update_preview)
         self._music.failed.connect(self._on_failed)
         self._music.recovery_changed.connect(self._on_recovery_changed)
+        check = getattr(host, "music_check_button", None)
+        if check is not None:
+            check.clicked.connect(self.toggle_sound_check)
+        # The one timer behind the meters and the check's countdown. It runs
+        # only while the music page is on screen and something is listening.
+        self._meter_timer = QTimer(host)
+        self._meter_timer.setInterval(METER_INTERVAL_MS)
+        self._meter_timer.timeout.connect(self._refresh_meters)
         self._setup_preview_fade()
         self._setup_gate_reveal()
         self.sync_controls()
         self.refresh_lock()
+        self.refresh_check_button()
 
     # ── noise-gate reveal (mic only) ──────────────────────────────────
     # The slot fades cached pixels, avoiding a second QGraphicsEffect inside
-    # music_controls, which already has a dim-when-off effect.
+    # the reaction section, which already has a dim-when-off effect.
     def _setup_gate_reveal(self) -> None:
         host = self._host
         row = getattr(host, "music_gate_row", None)
@@ -201,20 +247,37 @@ class MusicUiController:
         self._apply_enabled_state()
 
     def _apply_enabled_state(self) -> None:
-        # The controls are live only when unlocked AND music is running, so the
-        # whole group reads as greyed-out/"off" until you turn music on (the same
-        # cue the Schedule card uses). The custom slider/swatch widgets don't dim
-        # themselves when disabled, so we also fade the container's opacity.
+        # The controls are live only when unlocked AND something is listening
+        # for them to act on — the reaction, or a sound check — so the group
+        # reads as greyed-out/"off" otherwise (the same cue the Schedule card
+        # uses). The custom slider/swatch widgets don't dim themselves when
+        # disabled, so each part also fades. "Check sound" in the colours
+        # heading stays outside the fade: it is how you start listening while
+        # everything else is off.
         host = self._host
-        active = can_use("music_sync") and self._music.is_running()
-        controls = getattr(host, "music_controls", None)
-        if controls is None:
+        checking = self.is_checking_sound()
+        active = self._feeding_a_light()
+        # A check is interactive for everyone, Pro or not: it is how the
+        # settings are tried out before any light is involved.
+        tuning = checking or (can_use("music_sync") and active)
+        showing_bands = checking or active
+        self._fade(getattr(host, "music_reaction_section", None), enabled=tuning, shown=tuning)
+        self._fade(getattr(host, "music_colors_label", None), enabled=True, shown=showing_bands)
+        self._fade(getattr(host, "music_bands_row", None), enabled=tuning, shown=showing_bands)
+
+    @staticmethod
+    def _fade(widget, *, enabled: bool, shown: bool) -> None:
+        if widget is None:
             return
-        controls.setEnabled(active)
-        if getattr(self, "_controls_effect", None) is None:
-            self._controls_effect = QGraphicsOpacityEffect(controls)
-            controls.setGraphicsEffect(self._controls_effect)
-        self._controls_effect.setOpacity(1.0 if active else 0.4)
+        widget.setEnabled(enabled)
+        effect = widget.graphicsEffect()
+        if not isinstance(effect, QGraphicsOpacityEffect):
+            effect = QGraphicsOpacityEffect(widget)
+            widget.setGraphicsEffect(effect)
+        effect.setOpacity(1.0 if shown else 0.4)
+        # At full strength the effect only costs: every repaint beneath it — the
+        # live meters twenty times a second — would first be drawn offscreen.
+        effect.setEnabled(not shown)
 
     def sync_controls(self) -> None:
         host = self._host
@@ -259,6 +322,7 @@ class MusicUiController:
                     int(saved_color.get("b", default_b)),
                 )
             )
+        self._refresh_band_meter_colors()
         self._refresh_value_labels()
 
     def _populate_sources(self) -> None:
@@ -309,17 +373,24 @@ class MusicUiController:
 
     def _restart_capture(self) -> None:
         host = self._host
-        if host._fusion_ui.is_running():
+        if host._fusion_ui.is_running() and OWNER_FUSION in self._music.owners():
             # Only the audio device is reopened. The screen keeps arriving and
             # the composed colour keeps going out, so changing the microphone
             # does not blink the light.
             host._fusion_ui.restart_audio()
+            # A restart that failed leaves the combined mode without its audio;
+            # both cards have to say so.
+            self.refresh_shared_state()
+            host._ambient_ui.refresh_status()
             return
-        if self._sink is None:
-            return
-        self._music.stop()
+        # One capture reopened for whoever holds it — the reaction, a sound
+        # check or both — while the stream to the strip keeps going.
         self._apply_options()
-        self._music.start_output(self._sink)
+        if not self._music.restart_capture():
+            # The old capture never let go of the device and has been dropped.
+            # Said out loud, rather than leaving a card that looks listening.
+            prefix = "mic_capture_failed" if self._source == "mic" else "audio_capture_unavailable"
+            self._on_failed(f"{prefix}: the device did not let go")
 
     def _colors_dict(self) -> dict:
         host = self._host
@@ -369,12 +440,26 @@ class MusicUiController:
         swatch = getattr(self._host, f"music_{band}_swatch", None)
         if swatch is not None:
             swatch.set_color(color)
+        self._refresh_band_meter_colors()
         self._persist()
         if self._music.is_running():
             self._apply_options()
 
     def _shared_with_screen(self) -> bool:
         return self._host._fusion_ui.mode() == "screen_music"
+
+    def _feeding_a_light(self) -> bool:
+        """Whether the capture is feeding a light: this card's reaction or Fusion."""
+        owners = self._music.owners()
+        return OWNER_OUTPUT in owners or OWNER_FUSION in owners
+
+    def _reacting(self) -> bool:
+        """Whether this card's own reaction is the one writing the strip.
+
+        Not the same as the capture running: a sound check or Fusion may be
+        listening while nothing of this card's reaches the strip.
+        """
+        return OWNER_OUTPUT in self._music.owners()
 
     def _audio_lost(self) -> bool:
         return self._host._fusion_ui.audio_lost()
@@ -386,7 +471,7 @@ class MusicUiController:
         "is music on" and includes the combined mode. The API and a saved scene
         need the narrower question, because "music" is a mode name there.
         """
-        return self._music.is_running() and not self._shared_with_screen()
+        return self._reacting() and not self._shared_with_screen()
 
     def is_running(self) -> bool:
         """Whether "music" is on, as a person means it.
@@ -397,11 +482,11 @@ class MusicUiController:
         """
         if self._shared_with_screen() and not self._audio_lost():
             return self._host._fusion_ui.is_running()
-        return self._music.is_running()
+        return self._reacting()
 
     def stats(self) -> dict:
         return {
-            "running": self._music.is_running(),
+            "running": self._reacting(),
             "errors": self._music.stream_error_count(),
             "last_error": self._music.last_stream_error(),
             # Survives the stop, so a report exported after switching music off
@@ -422,11 +507,35 @@ class MusicUiController:
         token every block of this run will carry.
         """
         self._apply_options()
-        return self._music.start_listening()
+        token = self._music.start_listening()
+        # Taken over, not reopened: Fusion already holds the capture, so the
+        # check lets go without the device closing in between.
+        self._end_sound_check()
+        self._apply_enabled_state()
+        self._update_meter_timer()
+        return token
+
+    def restart_listening(self) -> int:
+        """Reopen the device for Fusion: a new device, or the old one back.
+
+        Stopping and starting again would reopen nothing while a sound check
+        holds the capture, so this asks for a real restart when Fusion already
+        holds it and a fresh hold when it does not.
+        """
+        self._apply_options()
+        if OWNER_FUSION in self._music.owners():
+            token = self._music.restart_capture()
+        else:
+            token = self._music.acquire(OWNER_FUSION)
+            self._end_sound_check()
+        self._apply_enabled_state()
+        self._update_meter_timer()
+        return token
 
     def stop_listening(self) -> None:
-        if self._music.is_running():
-            self._music.stop()
+        self._music.release(OWNER_FUSION)
+        self._apply_enabled_state()
+        self._update_meter_timer()
 
     def refresh_shared_state(self) -> None:
         """Show whether music is currently working as part of the screen mode.
@@ -448,8 +557,10 @@ class MusicUiController:
         if status is not None and shared:
             status.setText(host._tr("fusion.audio_lost" if lost else "fusion.music_shared"))
             status.setVisible(True)
-        elif status is not None and not self._music.is_running():
+        elif status is not None and not self._reacting() and not self.is_checking_sound():
             status.setText(host._tr("music.status_off"))
+        self._apply_enabled_state()
+        self._update_meter_timer()
 
     def has_audio_source(self) -> bool:
         """Whether there is a device to listen to at all.
@@ -478,7 +589,7 @@ class MusicUiController:
         """
         if self._shared_with_screen() and self._host._fusion_ui.is_running():
             return
-        if self._music.is_running():
+        if self._reacting():
             self._stop()
 
     def activate(self) -> bool:
@@ -531,7 +642,9 @@ class MusicUiController:
         return self.activate()
 
     def shutdown(self) -> None:
+        self._end_sound_check()
         self._music.stop()
+        self._update_meter_timer()
 
     def _toggle(self) -> None:
         host = self._host
@@ -577,6 +690,9 @@ class MusicUiController:
 
         self._sink = sink
         self._music.start_output(sink)
+        # The reaction takes the capture over; the check lets go afterwards, so
+        # the device stays open and keeps the room it has learned.
+        self._end_sound_check()
         self._set_manual_controls_enabled(False)
         self._apply_enabled_state()
         self._show_preview()
@@ -585,12 +701,14 @@ class MusicUiController:
         if status is not None:
             status.setText(host._tr("music.listening"))
             status.setVisible(True)
+        self._meter_status = ""
         host._log(host._tr("music.started_log"))
+        self._update_meter_timer()
 
     def _stop(self) -> None:
         host = self._host
-        was_running = self._music.is_running()
-        self._music.stop()
+        was_running = self._reacting()
+        self._music.release(OWNER_OUTPUT)
         self._apply_enabled_state()
         self._hide_preview()
         self._set_manual_controls_enabled(True)
@@ -600,8 +718,11 @@ class MusicUiController:
         if status is not None:
             status.setText(host._tr("music.status_off"))
             status.setVisible(True)
+        # Written over by the next meter tick if a sound check is still going.
+        self._meter_status = ""
         if was_running:
             host._log(host._tr("music.stopped_log"))
+        self._update_meter_timer()
 
     def _apply_options(self) -> None:
         host = self._host
@@ -729,6 +850,9 @@ class MusicUiController:
     def _on_recovery_changed(self, token: int, recovering: bool) -> None:
         if token != self._music.session_token() or not self._music.is_running():
             return
+        if not self._reacting() and not self._shared_with_screen():
+            # A sound check on its own: its meters say what the device is doing.
+            return
         if recovering:
             self._host.music_status_label.setText(self._host._tr("music.recovering"))
         elif self._shared_with_screen():
@@ -738,6 +862,8 @@ class MusicUiController:
 
     def _on_failed(self, reason: str) -> None:
         host = self._host
+        # The controller has already let go of everyone; the check goes too.
+        self._end_sound_check()
         if host._fusion_ui.is_running():
             # The screen half is still working and should keep working. What
             # stops is the claim that music is part of it.
@@ -774,3 +900,194 @@ class MusicUiController:
             host.speed_slider,
         ):
             widget.setEnabled(enabled)
+
+    # ── sound check and band meters ───────────────────────────────────
+    def is_checking_sound(self) -> bool:
+        return self._check_deadline is not None and OWNER_PREVIEW in self._music.owners()
+
+    def toggle_sound_check(self) -> None:
+        """The heading's button: start a check, or end the running one at once."""
+        if self._check_deadline is not None:
+            self._end_sound_check()
+        else:
+            self._start_sound_check()
+
+    def stop_sound_check(self) -> None:
+        """End a running check: the page, the window or the session went away."""
+        self._end_sound_check()
+
+    def _start_sound_check(self) -> None:
+        # Listen only, and only because the button was pressed. Not behind Pro
+        # and not behind a connection: nothing is ever sent to the strip.
+        self._apply_options()
+        self._music.acquire(OWNER_PREVIEW)
+        now = monotonic()
+        self._check_started_at = now
+        self._check_deadline = now + SOUND_CHECK_SECONDS
+        self._meter_status = ""
+        self._show_meter_status("music.meter_listening", now)
+        self.refresh_check_button()
+        self._apply_enabled_state()
+        self._update_meter_timer()
+
+    def _end_sound_check(self) -> None:
+        if self._check_deadline is None:
+            return
+        self._check_deadline = None
+        self._music.release(OWNER_PREVIEW)
+        self._meter_status = ""
+        status = getattr(self._host, "music_status_label", None)
+        if status is not None and not self._reacting() and not self._shared_with_screen():
+            status.setText(self._host._tr("music.status_off"))
+        self.refresh_check_button()
+        self._apply_enabled_state()
+        self._update_meter_timer()
+
+    def note_section_changed(self, key: str) -> None:
+        """The page changed. A check stops; the reaction itself does not."""
+        self._on_music_page = key == "music"
+        if not self._on_music_page:
+            self._end_sound_check()
+        self._update_meter_timer()
+
+    def note_session(self, *, locked: bool | None = None, asleep: bool | None = None) -> None:
+        """Windows locked or unlocked the session, or slept or woke.
+
+        Nobody can see the card on a locked or sleeping machine: a check ends
+        and the meters stop drawing until the person is back. A reaction still
+        writing the strip keeps doing so; only its display pauses.
+        """
+        if locked is not None:
+            self._session_locked = bool(locked)
+        if asleep is not None:
+            self._session_asleep = bool(asleep)
+        if self._session_locked or self._session_asleep:
+            self._end_sound_check()
+        self._update_meter_timer()
+
+    def note_window_visible(self, visible: bool) -> None:
+        """The window was hidden, minimised or brought back."""
+        self._window_visible = bool(visible)
+        if not self._window_visible:
+            self._end_sound_check()
+        self._update_meter_timer()
+
+    def refresh_check_button(self) -> None:
+        host = self._host
+        button = getattr(host, "music_check_button", None)
+        if button is None:
+            return
+        checking = self._check_deadline is not None
+        if checking:
+            remaining = max(1, ceil(self._check_deadline - monotonic()))
+            button.setText(host._tr("music.check_sound_stop", seconds=remaining))
+        else:
+            button.setText(host._tr("music.check_sound"))
+        button.setToolTip(host._tr("music.check_sound_hint", seconds=SOUND_CHECK_SECONDS))
+        if bool(button.property("active")) != checking:
+            button.setProperty("active", checking)
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def retranslate(self) -> None:
+        """Language changed: the button and a check's status follow it."""
+        self.refresh_check_button()
+        key = self._meter_status
+        if self._check_deadline is not None and key:
+            self._meter_status = ""
+            self._show_meter_status(key, monotonic(), force=True)
+
+    def _band_meters(self) -> list:
+        meters = getattr(self._host, "music_band_meters", {})
+        return [meters[band] for band in _BANDS if band in meters]
+
+    def _refresh_band_meter_colors(self) -> None:
+        meters = getattr(self._host, "music_band_meters", {})
+        for band in _BANDS:
+            swatch = getattr(self._host, f"music_{band}_swatch", None)
+            meter = meters.get(band)
+            if swatch is not None and meter is not None:
+                meter.set_color(swatch.color())
+
+    def _update_meter_timer(self) -> None:
+        timer = self._meter_timer
+        if timer is None:
+            return
+        wanted = (
+            self._on_music_page
+            and self._window_visible
+            and not self._session_locked
+            and not self._session_asleep
+            and self._music.is_running()
+        )
+        if wanted and not timer.isActive():
+            self._meter_tick_at = monotonic()
+            # A beat heard before the meters were on screen is not news now.
+            self._last_beat_id = self._music.meter_reading().beat_id
+            timer.start()
+        elif not wanted and timer.isActive():
+            timer.stop()
+            for meter in self._band_meters():
+                meter.set_state(False, 0.0)
+            self._flash = 0.0
+
+    def _refresh_meters(self) -> None:
+        now = monotonic()
+        dt = min(0.2, max(0.0, now - self._meter_tick_at))
+        self._meter_tick_at = now
+        if self._check_deadline is not None:
+            if now >= self._check_deadline or OWNER_PREVIEW not in self._music.owners():
+                self._end_sound_check()
+                return
+            self.refresh_check_button()
+        if not self._music.is_running():
+            self._update_meter_timer()
+            return
+        reading = self._music.meter_reading()
+        fresh = (
+            reading.session_token == self._music.session_token()
+            and reading.captured_at > 0.0
+            and now - reading.captured_at <= METER_STALE_S
+        )
+        sounding = fresh and not reading.silent
+        # Silence shows as empty lines, whatever the weights say: with the
+        # strip at its floor brightness the balance between bands means nothing.
+        targets = (reading.bass, reading.mid, reading.treble) if sounding else (0.0, 0.0, 0.0)
+        new_beat = sounding and reading.beat_id and reading.beat_id != self._last_beat_id
+        if new_beat and not motion_reduced():
+            self._flash = 1.0
+        else:
+            self._flash = max(0.0, self._flash - dt / FLASH_S)
+        self._last_beat_id = reading.beat_id
+        for index, meter in enumerate(self._band_meters()):
+            level = follow_level(meter.level(), targets[index], dt)
+            meter.set_state(True, level, self._flash if index == 0 else 0.0)
+        if self._check_deadline is not None:
+            self._show_meter_status(self._meter_status_for(reading, fresh, now), now)
+
+    def _meter_status_for(self, reading, fresh: bool, now: float) -> str:
+        if not fresh:
+            if now - self._check_started_at < METER_STARTUP_GRACE_S:
+                return "music.meter_listening"
+            return "music.meter_no_signal"
+        if reading.clipped:
+            return "music.meter_clipped"
+        if reading.silent:
+            return "music.meter_silence"
+        return "music.meter_listening"
+
+    def _show_meter_status(self, key: str, now: float, *, force: bool = False) -> None:
+        if key == self._meter_status and not force:
+            return
+        if self._meter_status and not force and key != "music.meter_clipped":
+            hold = METER_CLIPPED_HOLD_S if self._meter_status == "music.meter_clipped" else METER_STATUS_DWELL_S
+            if now - self._meter_status_since < hold:
+                return
+        self._meter_status = key
+        self._meter_status_since = now
+        status = getattr(self._host, "music_status_label", None)
+        # The reaction and the combined mode keep their own words in the label;
+        # the check only speaks for itself.
+        if status is not None and not self._reacting() and not self._shared_with_screen():
+            status.setText(self._host._tr(key))
+            status.setVisible(True)

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from app.panels.card_header import add_pro_badge
 from app.panels.list_rows import Hairline, divider, list_container, list_row
 from app.panels.types import PanelHost
 from app.widgets import GlassCard, StaticPopupComboBox
 from app.widgets.ambient_preview import AmbientPreview
+from app.widgets.band_meter import BandMeter
 from app.widgets.collapsing_row import CollapsingRow
 from app.widgets.color_swatch import ColorSwatch
 from app.widgets.segmented_control import SegmentedControl
@@ -98,6 +99,7 @@ def build_music_section(host: PanelHost) -> GlassCard:
     reaction, reaction_layout, host.music_reaction_label = _section(
         host, host._tr("music.reaction_title")
     )
+    host.music_reaction_section = reaction
     reaction_layout.setSpacing(0)
 
     host.music_speed_slider = host._slider("red")
@@ -192,12 +194,29 @@ def build_music_section(host: PanelHost) -> GlassCard:
     colors, colors_layout, host.music_colors_label = _section(
         host, host._tr("music.colors_title")
     )
-    colors_row = QHBoxLayout()
+    # "Check sound" shares the heading's line. Ignored vertically by the layout,
+    # it takes the heading's height instead of giving the row its own.
+    heading_row = QHBoxLayout()
+    heading_row.setContentsMargins(0, 0, 0, 0)
+    heading_row.setSpacing(host._sz(8))
+    colors_layout.removeWidget(host.music_colors_label)
+    heading_row.addWidget(host.music_colors_label, 1)
+    host.music_check_button = QPushButton(host._tr("music.check_sound"))
+    host.music_check_button.setObjectName("musicCheckButton")
+    host.music_check_button.setCursor(Qt.PointingHandCursor)
+    host.music_check_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Ignored)
+    heading_row.addWidget(host.music_check_button)
+    colors_layout.insertLayout(0, heading_row)
+    # Its own widget so the swatches can be locked and faded apart from the
+    # heading, whose button must stay usable while everything else is off.
+    host.music_bands_row = QWidget()
+    colors_row = QHBoxLayout(host.music_bands_row)
     colors_row.setSpacing(host._sz(8))
     colors_row.setContentsMargins(0, 0, 0, 0)
     host.music_band_captions = {}
+    host.music_band_meters = {}
     for band, label_key in _BANDS:
-        item = QWidget()
+        item = _BandItem(host._sz(10), host._sz(3))
         item.setObjectName("settingsRow")
         item.setAttribute(Qt.WA_StyledBackground, True)
         pair = QHBoxLayout(item)
@@ -209,12 +228,13 @@ def build_music_section(host: PanelHost) -> GlassCard:
         swatch.setFixedSize(host._sz(32), host._sz(32))
         setattr(host, f"music_{band}_swatch", swatch)
         host.music_band_captions[band] = caption
+        host.music_band_meters[band] = item.meter
         pair.addStretch(1)
         pair.addWidget(caption, 0, Qt.AlignVCenter)
         pair.addWidget(swatch, 0, Qt.AlignVCenter)
         pair.addStretch(1)
         colors_row.addWidget(item, 1)
-    colors_layout.addLayout(colors_row)
+    colors_layout.addWidget(host.music_bands_row)
     controls.addWidget(colors)
 
     host.music_card.content_layout.addWidget(host.music_controls)
@@ -231,3 +251,27 @@ def _section(host: PanelHost, title: str) -> tuple[QWidget, QVBoxLayout, QLabel]
     heading.setObjectName("sceneFormHeading")
     layout.addWidget(heading)
     return section, layout, heading
+
+
+class _BandItem(QWidget):
+    """One band's colour, with its live level drawn along the bottom edge.
+
+    The meter is laid over the row rather than into its layout, so the row and
+    the card are exactly as tall as they were without it.
+    """
+
+    def __init__(self, inset: int, thickness: int) -> None:
+        super().__init__()
+        self._inset = inset
+        self._thickness = thickness
+        self.meter = BandMeter(self)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.meter.setGeometry(
+            self._inset,
+            self.height() - self._thickness - 1,
+            max(0, self.width() - 2 * self._inset),
+            self._thickness,
+        )
+        self.meter.raise_()

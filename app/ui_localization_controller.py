@@ -392,6 +392,7 @@ class UiLocalizationController:
             host.music_status_label.setText(
                 host._tr("music.listening" if running else "music.status_off")
             )
+        host._music_ui.retranslate()
         host.music_source_description.setText(
             host._tr("music.source_mic_desc" if is_mic else "music.source_system_desc")
         )

@@ -512,8 +512,9 @@ class FusionUiController:
         if not self.is_running() or self._mode != SCREEN_MUSIC:
             return
         host = self._host
-        host._music_ui.stop_listening()
-        token = host._music_ui.start_listening()
+        # A real reopen, even while a sound check holds the capture: stopping
+        # and starting again would only hand back the device already open.
+        token = host._music_ui.restart_listening()
         self._audio_lost = not bool(token)
         self._coordinator.expect_music(token)
 

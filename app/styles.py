@@ -164,6 +164,24 @@ def _base_styles(T: dict, is_dark: bool) -> str:
             font-size: 12px;
             font-weight: 700;
         }}
+        /* A text action sitting in a section heading. No padding and no
+           minimum height, so it can never make the heading row taller. */
+        QPushButton#musicCheckButton {{
+            background: transparent;
+            border: 0;
+            padding: 0;
+            margin: 0;
+            min-height: 0;
+            color: {T["text_soft"]};
+            font-size: 12px;
+            font-weight: 650;
+        }}
+        QPushButton#musicCheckButton:hover {{
+            color: {T["text"]};
+        }}
+        QPushButton#musicCheckButton[active="true"] {{
+            color: {T["accent_start"]};
+        }}
         #sceneDivider {{
             background: {T["chip_border"]};
             border: 0;

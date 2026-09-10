@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QCoreApplication,
+    QEvent,
     QSignalBlocker,
     Qt,
     QTimer,
@@ -543,10 +544,24 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         self._set_focus_follow(True)
+        self._note_window_visibility()
 
     def hideEvent(self, event):
         super().hideEvent(event)
         self._set_focus_follow(False)
+        self._note_window_visibility()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            # A minimised window is still "visible" as far as Qt is concerned,
+            # but nobody is looking at a sound check any more.
+            self._note_window_visibility()
+
+    def _note_window_visibility(self) -> None:
+        music_ui = getattr(self, "_music_ui", None)
+        if music_ui is not None:
+            music_ui.note_window_visible(self.isVisible() and not self.isMinimized())
 
     def _set_focus_follow(self, enabled: bool) -> None:
         """Subscribe to the app-wide focus signal only while this window is up.
@@ -575,6 +590,13 @@ class MainWindow(QMainWindow):
         self._wire_schedule_events()
         self._ambient_ui.wire()
         self._music_ui.wire()
+        # Nobody sees the card on a locked or sleeping machine: a sound check
+        # ends, and the meters stop drawing until the person is back.
+        session = self._windows_session
+        session.locked.connect(lambda: self._music_ui.note_session(locked=True))
+        session.unlocked.connect(lambda: self._music_ui.note_session(locked=False))
+        session.slept.connect(lambda: self._music_ui.note_session(asleep=True))
+        session.woke.connect(lambda: self._music_ui.note_session(asleep=False))
         self._fusion_ui.wire()
         self._ambient_ui.sync_mode_segment()
         self._software_fx_ui.wire()

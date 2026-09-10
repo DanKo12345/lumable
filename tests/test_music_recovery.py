@@ -28,8 +28,8 @@ def test_capture_reopens_after_failure_and_closes_each_reader(monkeypatch):
         return read, lambda: events.append("close"), 48000
 
     monkeypatch.setattr(controller, "_open_loopback_reader", open_reader)
-    monkeypatch.setattr(controller, "_process_block", lambda *args: SimpleNamespace(
-        level=0.2, beat_envelope=0.0, beat_id=0, rgb=(10, 10, 10)
+    monkeypatch.setattr(controller, "_process_block", lambda *args: module.BlockResult(
+        rgb=(10, 10, 10), level=0.2
     ))
     controller.modulation_sampled.connect(lambda sample: controller._stop.set())
     controller._run()

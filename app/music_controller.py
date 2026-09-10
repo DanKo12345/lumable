@@ -18,6 +18,17 @@ MIN_BEAT_RATIO = 1.08
 MAX_BEAT_RATIO = 1.48
 CAPTURE_RETRY_DELAYS = (1.0, 2.0, 4.0)
 
+# Who may hold the capture open. A set of names rather than a count, so the same
+# holder asking twice cannot keep a device open that nobody needs any more.
+OWNER_PREVIEW = "preview"
+OWNER_FUSION = "fusion"
+OWNER_OUTPUT = "output"
+CAPTURE_OWNERS = frozenset({OWNER_PREVIEW, OWNER_FUSION, OWNER_OUTPUT})
+# A sample this close to full scale means the source is clipping.
+CLIP_LEVEL = 0.99
+# How long a stop waits for the capture thread to hand the device back.
+CAPTURE_STOP_TIMEOUT_S = 1.5
+
 
 def beat_ratio_for_sensitivity(value: float) -> float:
     """Map an intuitive 0..100 sensitivity to the detector's onset ratio.
@@ -74,6 +85,23 @@ def analyze_block(samples, samplerate: int) -> tuple[float, float, float, float]
         float(spectrum[treble_mask].sum()),
         rms,
     )
+
+
+def is_clipped(samples) -> bool:
+    """Whether any channel of the raw block reached full scale.
+
+    Judged before the channels are mixed down: a left channel at +1 and a right
+    one at -1 average to silence, and the source is clipping all the same.
+    """
+    import numpy as np
+
+    try:
+        arr = np.asarray(samples, dtype=np.float32)
+    except (TypeError, ValueError):
+        return False
+    if arr.size == 0:
+        return False
+    return float(np.max(np.abs(arr))) >= CLIP_LEVEL
 
 
 def list_audio_outputs() -> list[str]:
@@ -181,6 +209,36 @@ class BlockResult:
     level: float = 0.0
     beat_envelope: float = 0.0
     beat_id: int = 0
+    # What the band meters show: the band weights exactly as bands_to_rgb got
+    # them, whether the gate called the block silence, and whether a channel
+    # reached full scale before the channels were mixed down.
+    bands: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    silent: bool = True
+    clipped: bool = False
+
+
+@dataclass(frozen=True)
+class MeterReading:
+    """One block as the band meters show it, published whole.
+
+    The capture thread replaces the reference and the interface reads the
+    latest when it draws. Nothing is queued, so a busy window skips blocks
+    instead of piling them up, and the capture never waits on the interface.
+
+    ``bass``/``mid``/``treble`` are what ``bands_to_rgb`` receives, after the
+    reaction smoothing and the shared band peak, so the meters show what the
+    colour is made of rather than raw spectrum sums.
+    """
+
+    session_token: int = 0
+    captured_at: float = 0.0
+    bass: float = 0.0
+    mid: float = 0.0
+    treble: float = 0.0
+    level: float = 0.0
+    silent: bool = True
+    clipped: bool = False
+    beat_id: int = 0
 
 
 SHADOW_ONSET_ENV = "LUMABLE_ONSET_SHADOW"
@@ -259,7 +317,14 @@ class MusicController(QObject):
         self._session_token = 0
         self._started_at: float | None = None
         self._stopped_at: float | None = None
+        # Who is holding the capture open; see acquire().
+        self._owners: set[str] = set()
+        self._meter = MeterReading()
+        # The session whose capture gave up for good, so the cleanup delivered
+        # afterwards on the GUI thread can tell it from a run started since.
+        self._failed_token = 0
         self.color_sampled.connect(self._engine.set_target)
+        self.failed.connect(self._on_capture_failed)
 
     def options(self) -> MusicOptions:
         return self._options
@@ -305,40 +370,125 @@ class MusicController(QObject):
 
         Returns the session token every sample of this run will carry.
         """
-        self._begin(sink)
-        return self._session_token
+        return self.acquire(OWNER_OUTPUT, sink)
 
     def start_listening(self) -> int:
-        """Listen only. Nothing is written to the strip by this controller."""
-        self._begin(None)
+        """Listen only, for Fusion to compose with. Nothing reaches the strip."""
+        return self.acquire(OWNER_FUSION)
+
+    def owners(self) -> frozenset[str]:
+        """Who is holding the capture open. Nobody, once its thread has ended."""
+        if not self.is_running():
+            return frozenset()
+        return frozenset(self._owners)
+
+    def acquire(self, owner: str, sink: Callable[[int, int, int], None] | None = None) -> int:
+        """Hold the capture open for ``owner``, opening the device if nobody has.
+
+        Asking again under the same name changes nothing. The output owner also
+        starts the stream to the strip, and only that when the device is already
+        open for someone else: turning the reaction on during a sound check
+        neither reopens the device nor forgets the room it has learned.
+
+        Returns the session token of the capture now running.
+        """
+        if owner not in CAPTURE_OWNERS:
+            raise ValueError(f"Unknown capture owner: {owner!r}")
+        if owner == OWNER_OUTPUT and sink is None:
+            raise ValueError("The output owner needs a sink to write the strip to")
+        if not self.is_running():
+            # Whatever the set still says, a thread that is not running holds
+            # nothing open: a final failure must not leave phantom owners.
+            self._owners.clear()
+            self._open_session()
+        self._owners.add(owner)
+        if owner == OWNER_OUTPUT and not self._engine.is_running():
+            self._engine.set_smoothing(self._options.smoothing)
+            self._engine.start(sink, initial=(0, 0, 0))
         return self._session_token
 
-    def _begin(self, sink: Callable[[int, int, int], None] | None) -> None:
+    def release(self, owner: str) -> None:
+        """Let go for ``owner``. The last one out closes the device.
+
+        The output owner leaving stops the stream to the strip and nothing else:
+        a sound check or Fusion still listening keeps the device open.
+        """
+        if owner not in self._owners:
+            return
+        self._owners.discard(owner)
+        if owner == OWNER_OUTPUT:
+            self._engine.stop()
+        if not self._owners:
+            self._close_session()
+
+    def restart_capture(self) -> int:
+        """Reopen the device for the owners it has: a new source or device.
+
+        One capture thread is replaced by one capture thread; who holds it and
+        whether the strip is being written stay as they were. It is a new
+        session, so it gets a new token.
+
+        Returns 0 when nothing was reopened: nobody held the capture, or the old
+        thread would not let go of the device in time — a read stuck in the
+        driver. Nothing is opened beside a stuck capture, and it counts as lost:
+        its owners are dropped and the strip stream stops, so no caller goes on
+        believing the sound came back.
+        """
+        owners = set(self.owners())
+        if not owners:
+            return 0
+        if not self._close_session():
+            self._owners.clear()
+            self._engine.stop()
+            return 0
+        self._owners = owners
+        self._open_session()
+        return self._session_token
+
+    def stop(self) -> None:
+        """Close the capture for everyone: shutting down, or the device is gone."""
+        self._owners.clear()
+        self._close_session()
+        self._engine.stop()
+
+    def meter_reading(self) -> MeterReading:
+        """The latest block as the band meters show it. Read, never waited on."""
+        return self._meter
+
+    def _open_session(self) -> None:
         if self.is_running():
+            # A thread that did not finish stopping in time still has the
+            # device. Opening beside it would be two captures of one device.
             return
         self._reset_analysis()
         self._session_token += 1
+        self._meter = MeterReading(session_token=self._session_token)
         self._started_at = monotonic()
         self._stopped_at = None
-        if sink is not None:
-            self._engine.set_smoothing(self._options.smoothing)
-            self._engine.start(sink, initial=(0, 0, 0))
         self._stop.clear()
         thread = threading.Thread(target=self._run, name="MusicCapture", daemon=True)
         self._thread = thread
         thread.start()
 
-    def stop(self) -> None:
+    def _close_session(self) -> bool:
+        """Stop the capture thread. Whether it actually let go of the device."""
         # Noted before the thread is asked to stop, so the reported length is
         # the run rather than however long the join took.
         self._stopped_at = monotonic()
         self._stop.set()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=1.5)
+            thread.join(timeout=CAPTURE_STOP_TIMEOUT_S)
         if thread is not None and not thread.is_alive():
             self._thread = None
-        self._engine.stop()
+        return self._thread is None
+
+    def _on_capture_failed(self, _reason: str) -> None:
+        # Delivered on the GUI thread once the capture has given up. Only the
+        # run that failed is cleaned up: a new one may have started since.
+        if self._failed_token == self._session_token:
+            self._owners.clear()
+            self._engine.stop()
 
     def music_report(self) -> MusicSyncReport:
         """Numbers for the diagnostics block. No audio, no device names.
@@ -604,8 +754,9 @@ class MusicController(QObject):
         current = max(bass, mid, treble, 1e-6)
         self._band_peak = max(current, self._band_peak * options.agc_decay)
         scale = 1.0 / self._band_peak
+        weights = (bass * scale, mid * scale, treble * scale)
         rgb = bands_to_rgb(
-            bass * scale, mid * scale, treble * scale, level,
+            *weights, level,
             colors=options.band_colors, saturation=options.saturation,
             floor_brightness=options.floor_brightness,
         )
@@ -614,6 +765,9 @@ class MusicController(QObject):
             level=plain_level,
             beat_envelope=reading.envelope,
             beat_id=reading.beat_id,
+            bands=weights,
+            silent=reading.silent,
+            clipped=is_clipped(block),
         )
 
     @staticmethod
@@ -656,6 +810,7 @@ class MusicController(QObject):
                     ("audio_capture_unavailable", "mic_backend_missing")
                 )
                 if permanent or attempt == len(CAPTURE_RETRY_DELAYS):
+                    self._failed_token = token
                     self.failed.emit(reason)
                     return
                 self.recovery_changed.emit(token, True)
@@ -679,6 +834,20 @@ class MusicController(QObject):
                 # and a late block would look like a fresh one.
                 captured_at = monotonic()
                 result = self._process_block(block, samplerate, options)
+                # Replaced whole, never edited: the interface may be reading the
+                # previous one at this moment, and it must see one block or the
+                # other rather than half of each.
+                self._meter = MeterReading(
+                    session_token=token,
+                    captured_at=captured_at,
+                    bass=result.bands[0],
+                    mid=result.bands[1],
+                    treble=result.bands[2],
+                    level=result.level,
+                    silent=result.silent,
+                    clipped=result.clipped,
+                    beat_id=result.beat_id,
+                )
                 if recovering:
                     self.recovery_changed.emit(token, False)
                     recovering = False
