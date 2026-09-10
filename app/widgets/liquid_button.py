@@ -45,6 +45,17 @@ BUTTON_ROLES = frozenset(
 )
 
 
+# How far a sidebar item grows while the pointer rests on it. The label is only
+# scaled to this size, never redrawn at it (see _draw_nav_text), so keep it small:
+# the held scale softens the glyphs slightly, and more starts to crowd the rail.
+NAV_HOVER_SCALE = 1.06
+# The click spring rides on top of NAV_HOVER_SCALE, so a release over a hovered
+# item peaks at the product of the two. These are kept smaller than the overshoot
+# other roles use to hold that product under a tenth.
+NAV_PRESS_SCALE = 0.975
+NAV_RELEASE_OVERSHOOT = 1.02
+
+
 def _checked_role(role: str) -> str:
     value = str(role)
     if value not in BUTTON_ROLES:
@@ -62,6 +73,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._ripple_opacity = 0.0
         self._impact = 0.0
         self._nav_content_scale = 1.0
+        self._nav_hover_scale = 1.0
         self._ripple_x = 0.0
         self._ripple_y = 0.0
         self._pointer_x = 0.5
@@ -83,6 +95,9 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._impact_anim = make_property_animation(self, b"impactValue", 260, QEasingCurve.OutCubic)
         self._nav_content_anim = make_property_animation(
             self, b"navContentScale", 260, QEasingCurve.OutCubic
+        )
+        self._nav_hover_anim = make_property_animation(
+            self, b"navHoverScale", 220, QEasingCurve.OutCubic
         )
 
         # Smoothly eased fill colour for the "led" role (the power button) so it
@@ -135,11 +150,13 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
 
     def enterEvent(self, event):
         restart_animation(self._anim, self._hover, 1.0)
+        self._animate_nav_hover(NAV_HOVER_SCALE, 220)
         self._handle_button_enter()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         restart_animation(self._anim, self._hover, 0.0)
+        self._animate_nav_hover(1.0, 160)
         self._pointer_x = 0.5
         self._pointer_y = 0.5
         self._handle_button_leave()
@@ -171,6 +188,21 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self.update()
 
     navContentScale = Property(float, get_nav_content_scale, set_nav_content_scale)
+
+    def get_nav_hover_scale(self):
+        return self._nav_hover_scale
+
+    def set_nav_hover_scale(self, value):
+        self._nav_hover_scale = float(value)
+        self.update()
+
+    navHoverScale = Property(float, get_nav_hover_scale, set_nav_hover_scale)
+
+    def _animate_nav_hover(self, target: float, duration: int) -> None:
+        if self._role not in {"nav", "nav_active"}:
+            return
+        self._nav_hover_anim.setDuration(duration)
+        restart_animation(self._nav_hover_anim, self._nav_hover_scale, target)
 
     def get_ripple(self):
         return self._ripple
@@ -228,7 +260,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._nav_content_anim.setDuration(100)
         self._nav_content_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._nav_content_anim.setKeyValues(
-            [(0.0, self._nav_content_scale), (1.0, 0.98)]
+            [(0.0, self._nav_content_scale), (1.0, NAV_PRESS_SCALE)]
         )
         play_or_complete(self._nav_content_anim)
 
@@ -243,7 +275,7 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         self._nav_content_anim.setDuration(260)
         self._nav_content_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._nav_content_anim.setKeyValues(
-            [(0.0, self._nav_content_scale), (0.58, 1.04), (1.0, 1.0)]
+            [(0.0, self._nav_content_scale), (0.58, NAV_RELEASE_OVERSHOOT), (1.0, 1.0)]
         )
         play_or_complete(self._nav_content_anim)
 
@@ -269,9 +301,20 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
     def _nav_content_rect(self) -> QRectF:
         return self._label_rect()
 
+    def _nav_accent_rect(self) -> QRectF:
+        # Measured from the resting highlight, not the animated one: the bar marks
+        # the current section, and riding the hover spring walked it three pixels
+        # left and back on every pass of the pointer.
+        rest = self._label_rect()
+        height = rest.height() * 0.5
+        return QRectF(rest.left() + 2.0, rest.center().y() - height / 2.0, 3.0, height)
+
     def _nav_spring_transform(self, painter: QPainter, anchor: QPointF) -> None:
+        # The click spring and the pointer growth ride the same transform, so a
+        # click while hovering scales from the hovered size instead of snapping.
+        scale = self._nav_content_scale * self._nav_hover_scale
         painter.translate(anchor)
-        painter.scale(self._nav_content_scale, self._nav_content_scale)
+        painter.scale(scale, scale)
         painter.translate(-anchor)
 
     def paintEvent(self, event):
@@ -337,10 +380,8 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
 
         if active:
             accent = qcolor_from_token(theme_manager.palette["accent_start"])
-            bar_height = rect.height() * 0.5
-            bar = QRectF(rect.left() + 2.0, rect.center().y() - bar_height / 2.0, 3.0, bar_height)
             bar_path = QPainterPath()
-            bar_path.addRoundedRect(bar, 1.5, 1.5)
+            bar_path.addRoundedRect(self._nav_accent_rect(), 1.5, 1.5)
             painter.fillPath(bar_path, accent)
 
         if active:
@@ -375,7 +416,9 @@ class LiquidButton(ButtonAnimationMixin, QPushButton):
         # Rasterize once, including at rest: changing font hinting during the
         # spring makes individual letters jump at fractional scales. Keep the
         # layer at exactly one device pixel per pixel — supersampling it and
-        # scaling back down softens every glyph while nothing is moving.
+        # scaling back down softens every glyph while nothing is moving. The
+        # hover growth only scales this raster as well: redrawing it at the grown
+        # size re-fits the glyphs to another pixel grid and slides the word.
         ratio = painter.device().devicePixelRatioF()
         key = (self.text(), font.toString(), color.rgba(), self.width(), self.height(),
                content.getRect(), ratio)

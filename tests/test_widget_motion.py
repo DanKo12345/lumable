@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from app.widgets.liquid_button import LiquidButton
+from app.widgets.liquid_button import NAV_PRESS_SCALE, NAV_RELEASE_OVERSHOOT, LiquidButton
 from app.widgets.value_chip import ValueChip
 
 
@@ -62,9 +62,9 @@ def test_navigation_press_keeps_the_content_layout_fixed() -> None:
     button = LiquidButton("Settings", "nav")
     button.resize(204, 44)
     try:
-        button.set_nav_content_scale(0.98)
+        button.set_nav_content_scale(NAV_PRESS_SCALE)
         pressed = button._nav_content_rect()
-        button.set_nav_content_scale(1.04)
+        button.set_nav_content_scale(NAV_RELEASE_OVERSHOOT)
         released_overshoot = button._nav_content_rect()
         button.set_nav_content_scale(1.0)
         settled = button._nav_content_rect()
@@ -82,10 +82,10 @@ def test_navigation_mouse_events_drive_the_content_spring() -> None:
     button.show()
     try:
         QTest.mousePress(button, Qt.LeftButton)
-        assert button._nav_content_anim.keyValueAt(1.0) == 0.98
+        assert button._nav_content_anim.keyValueAt(1.0) == NAV_PRESS_SCALE
 
         QTest.mouseRelease(button, Qt.LeftButton)
-        assert button._nav_content_anim.keyValueAt(0.58) == 1.04
+        assert button._nav_content_anim.keyValueAt(0.58) == NAV_RELEASE_OVERSHOOT
         assert button._nav_content_anim.keyValueAt(1.0) == 1.0
     finally:
         button.deleteLater()

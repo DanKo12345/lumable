@@ -2,12 +2,12 @@ import os
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QFontMetricsF, QImage, QPainter
+from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtGui import QColor, QEnterEvent, QFont, QFontDatabase, QFontMetrics, QFontMetricsF, QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
 from app.theme import theme_manager
-from app.widgets.liquid_button import LiquidButton
+from app.widgets.liquid_button import NAV_HOVER_SCALE, LiquidButton
 
 
 def render_nav(button, scale, dpr):
@@ -104,6 +104,133 @@ def test_resting_navigation_text_is_as_sharp_as_plain_text(monkeypatch, role, dp
         app.processEvents()
         if font_id >= 0:
             QFontDatabase.removeApplicationFont(font_id)
+
+
+def settle_hover(button, entering):
+    """Point at the item (or away) and let the growth animation land."""
+    if entering:
+        spot = QPointF(100, 22)
+        button.enterEvent(QEnterEvent(spot, spot, spot))
+    else:
+        button.leaveEvent(QEvent(QEvent.Leave))
+    button._nav_hover_anim.setCurrentTime(button._nav_hover_anim.duration())
+
+
+def label_bounds(image, dpr):
+    """Bounding box of the label, in device pixels, ignoring the icon column."""
+    left, top, right, bottom = round(44 * dpr), round(8 * dpr), round(150 * dpr), round(36 * dpr)
+    marks = [(x, y) for y in range(top, bottom) for x in range(left, right)
+             if image.pixelColor(x, y).alpha() > 60]
+    assert marks, "no label was rendered"
+    return (min(x for x, _ in marks), min(y for _, y in marks),
+            max(x for x, _ in marks), max(y for _, y in marks))
+
+
+def nav_button(text="Settings", role="nav_active"):
+    button = LiquidButton(text, role)
+    button.resize(204, 44)
+    button.setFont(QFont("Segoe UI", 10))
+    button.set_icon_kind("settings")
+    return button
+
+
+@pytest.mark.parametrize("dpr", [1.0, 1.5])
+def test_pointing_at_a_navigation_item_grows_its_label_from_a_fixed_left_edge(dpr):
+    app = QApplication.instance() or QApplication([])
+    font_path = Path(os.environ.get("SystemRoot", "C:/Windows")) / "Fonts/segoeui.ttf"
+    font_id = QFontDatabase.addApplicationFont(str(font_path))
+    button = nav_button()
+    try:
+        assert QFontMetrics(button.font()).inFont("S"), "The render must contain letters, not boxes"
+        resting = label_bounds(render_nav(button, 1.0, dpr), dpr)
+        settle_hover(button, True)
+        hovered = label_bounds(render_nav(button, 1.0, dpr), dpr)
+        # 6% of a short label is only a couple of pixels, so measure the widened
+        # run rather than expecting a dramatic jump.
+        assert hovered[2] - resting[2] >= 1, "the label did not grow under the pointer"
+        assert button._nav_hover_scale == pytest.approx(NAV_HOVER_SCALE)
+        # Scaling nudges the faintest edge column by up to one pixel; a label that
+        # slid would move its whole run, not its fringe.
+        assert abs(hovered[0] - resting[0]) <= 1, "the label slid instead of growing from its left edge"
+        settle_hover(button, False)
+        assert label_bounds(render_nav(button, 1.0, dpr), dpr) == resting
+    finally:
+        button.deleteLater()
+        app.processEvents()
+        if font_id >= 0:
+            QFontDatabase.removeApplicationFont(font_id)
+
+
+def test_releasing_a_click_over_a_hovered_item_stays_under_a_tenth(monkeypatch):
+    # The click spring and the pointer growth multiply. A release over a hovered
+    # item peaks at the product, and past ~1.09 the label starts crowding its
+    # neighbours, so the spring's overshoot is deliberately smaller here.
+    app = QApplication.instance() or QApplication([])
+    button = nav_button()
+    try:
+        settle_hover(button, True)
+        button._handle_button_press(50, 22)
+        spring = button._nav_content_anim
+        spring.setCurrentTime(spring.duration())
+        button._handle_button_release()
+        peak = 0.0
+        for step in range(spring.duration() + 1):
+            spring.setCurrentTime(step)
+            peak = max(peak, button._nav_content_scale * button._nav_hover_scale)
+        assert peak > NAV_HOVER_SCALE, "the release lost its overshoot"
+        assert peak <= 1.09, f"the combined overshoot reached {peak:.4f}"
+    finally:
+        button.deleteLater()
+        app.processEvents()
+
+
+def test_a_hovered_label_is_only_scaled_never_redrawn():
+    # Redrawing the label at the grown size re-fits its glyphs to another pixel
+    # grid, so the word crept sideways after it had stopped growing and crept
+    # back when the pointer left. One raster, only scaled, from rest to rest.
+    app = QApplication.instance() or QApplication([])
+    font_path = Path(os.environ.get("SystemRoot", "C:/Windows")) / "Fonts/segoeui.ttf"
+    font_id = QFontDatabase.addApplicationFont(str(font_path))
+    button = nav_button()
+    try:
+        assert QFontMetrics(button.font()).inFont("S"), "The render must contain letters, not boxes"
+        resting = render_nav(button, 1.0, 1.0)
+        raster = button._nav_text_cache[1].cacheKey()
+        settle_hover(button, True)
+        render_nav(button, 1.0, 1.0)
+        assert button._nav_text_cache[1].cacheKey() == raster, "the hovered label was redrawn"
+        settle_hover(button, False)
+        assert render_nav(button, 1.0, 1.0) == resting
+        assert button._nav_text_cache[1].cacheKey() == raster
+    finally:
+        button.deleteLater()
+        app.processEvents()
+        if font_id >= 0:
+            QFontDatabase.removeApplicationFont(font_id)
+
+
+def accent_columns(image):
+    """Leftmost and rightmost columns of the saturated accent bar."""
+    columns = [x for x in range(image.width()) for y in range(image.height())
+               if max(image.pixelColor(x, y).getRgb()[:3]) - min(image.pixelColor(x, y).getRgb()[:3]) > 60]
+    assert columns, "no accent bar was drawn"
+    return min(columns), max(columns)
+
+
+@pytest.mark.parametrize("scale", [1.04, 1.0439])  # the hover spring and its overshoot
+def test_the_current_sections_accent_bar_does_not_ride_the_hover_spring(scale):
+    # The highlight may grow under the pointer, but the bar marks the current
+    # section: drawn from the growing highlight it walked three pixels left.
+    app = QApplication.instance() or QApplication([])
+    button = LiquidButton("Settings", "nav_active")
+    button.resize(204, 44)
+    try:
+        resting = accent_columns(render_nav(button, 1.0, 1.0))
+        button.set_scale(scale)
+        assert accent_columns(render_nav(button, 1.0, 1.0)) == resting, f"the bar moved at {scale}"
+    finally:
+        button.deleteLater()
+        app.processEvents()
 
 
 def render_content(button, scale, dpr):
