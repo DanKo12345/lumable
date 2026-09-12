@@ -220,6 +220,9 @@ class BlockResult:
     clipped: bool = False
     # The raw block RMS — the number the gate judged, before any smoothing.
     rms: float = 0.0
+    # The level bands_to_rgb brightened the colour by: the loudness with the
+    # beat folded in. ``level`` above stays without it, for Fusion.
+    color_level: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -247,6 +250,10 @@ class MeterReading:
     # The raw block RMS the gate judged. Unlike ``level`` it is not zero in
     # silence, which is exactly when the room's noise has to be seen.
     rms: float = 0.0
+    # How bright the reaction made the colour this block: the loudness with
+    # the beat folded in, exactly as bands_to_rgb received it. ``level`` stays
+    # the loudness alone, which is what Fusion composes with.
+    color_level: float = 0.0
 
 
 SHADOW_ONSET_ENV = "LUMABLE_ONSET_SHADOW"
@@ -777,6 +784,7 @@ class MusicController(QObject):
             silent=reading.silent,
             clipped=is_clipped(block),
             rms=rms,
+            color_level=level,
         )
 
     @staticmethod
@@ -857,6 +865,7 @@ class MusicController(QObject):
                     clipped=result.clipped,
                     beat_id=result.beat_id,
                     rms=result.rms,
+                    color_level=result.color_level,
                 )
                 if recovering:
                     self.recovery_changed.emit(token, False)

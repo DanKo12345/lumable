@@ -1058,9 +1058,7 @@ class MusicUiController:
             and now - reading.captured_at <= METER_STALE_S
         )
         sounding = fresh and not reading.silent
-        # Silence shows as empty lines, whatever the weights say: with the
-        # strip at its floor brightness the balance between bands means nothing.
-        targets = (reading.bass, reading.mid, reading.treble) if sounding else (0.0, 0.0, 0.0)
+        targets = self._meter_targets(reading, sounding)
         new_beat = sounding and reading.beat_id and reading.beat_id != self._last_beat_id
         if new_beat and not motion_reduced():
             self._flash = 1.0
@@ -1073,6 +1071,21 @@ class MusicUiController:
         self._refresh_gate_level(reading, fresh, dt)
         if self._check_deadline is not None:
             self._show_meter_status(self._meter_status_for(reading, fresh, now), now)
+
+    @staticmethod
+    def _meter_targets(reading, sounding: bool) -> tuple[float, float, float]:
+        """How long each band's line should be: its share of the colour times
+        how bright the reaction made that colour.
+
+        The balance between the bands survives, quiet music draws short lines
+        and loud music long ones, and a beat visibly lifts them — which is what
+        the beat slider changes. Silence shows as empty lines whatever the
+        weights say: at the strip's floor brightness the balance means nothing.
+        """
+        if not sounding:
+            return (0.0, 0.0, 0.0)
+        brightness = max(0.0, min(1.0, reading.color_level))
+        return (reading.bass * brightness, reading.mid * brightness, reading.treble * brightness)
 
     @staticmethod
     def _gate_value_for_rms(rms: float) -> float:

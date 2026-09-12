@@ -524,3 +524,54 @@ def test_the_swatches_clear_their_meters_in_the_window(window):
         meter = window.music_band_meters[band]
         assert meter.geometry().top() - swatch.geometry().bottom() - 1 >= 4, f"the {band} swatch touches its meter"
         assert swatch.parentWidget().height() == window._sz(32) + 2 * window._sz(4), "the band row changed height"
+
+
+# ── lines as long as the band is bright ───────────────────────────────
+def test_the_meters_get_the_brightness_the_colour_was_made_with(monkeypatch):
+    import numpy as np
+
+    given = []
+    real = module.bands_to_rgb
+
+    def spy(bass, mid, treble, level, **kwargs):
+        given.append(level)
+        return real(bass, mid, treble, level, **kwargs)
+
+    monkeypatch.setattr(module, "bands_to_rgb", spy)
+    controller = MusicController()
+    options = MusicOptions(beat_strength=1.0)
+    t = np.arange(1024) / 48000
+    steady = (np.sin(2 * np.pi * 1000 * t) * 0.05).astype(np.float32)
+    hit = (steady + np.sin(2 * np.pi * 60 * t) * 0.08).astype(np.float32)
+    for _ in range(6):
+        controller._process_block(steady, 48000, options)
+    struck = controller._process_block(hit, 48000, options)
+    assert struck.beat_envelope > 0.0, "the test needs a beat to fold in"
+    assert struck.color_level == given[-1], "the meters were not given the colour's brightness"
+    assert struck.color_level > struck.level, "the beat was folded into level, which Fusion reads bare"
+
+
+def test_the_capture_hands_the_brightness_on_to_the_meters(controller, monkeypatch):
+    # Built in the block and read by the interface: the capture thread is what
+    # carries it across, and a reading without it would draw every line at zero.
+    given = []
+    real = module.bands_to_rgb
+
+    def spy(bass, mid, treble, level, **kwargs):
+        given.append(level)
+        return real(bass, mid, treble, level, **kwargs)
+
+    monkeypatch.setattr(module, "bands_to_rgb", spy)
+    controller.acquire(OWNER_PREVIEW)
+    _until(lambda: controller.meter_reading().captured_at > 0 and not controller.meter_reading().silent)
+    reading = controller.meter_reading()
+    assert reading.color_level > 0.0, "the meters were handed no brightness"
+    assert reading.color_level in given
+
+
+def test_a_meter_line_is_its_band_share_times_the_brightness():
+    from app.music_controller import MeterReading
+
+    reading = MeterReading(bass=1.0, mid=0.5, treble=0.25, color_level=0.4, silent=False)
+    assert music_ui_module.MusicUiController._meter_targets(reading, True) == pytest.approx((0.4, 0.2, 0.1))
+    assert music_ui_module.MusicUiController._meter_targets(reading, False) == (0.0, 0.0, 0.0)
