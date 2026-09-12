@@ -214,12 +214,13 @@ def test_a_restart_does_not_carry_the_old_room_over() -> None:
 def test_the_manual_microphone_gate_only_tightens_things() -> None:
     quiet_music = [(0.05, 0.05, 0.05, 0.03)] * 60
 
-    controller, options = _controller(noise_gate=0.0)
+    controller, options = _controller(noise_gate_rms=0.0)
     with _Player(controller, options) as player:
         player.play(_silence(60, level=0.0005))
         open_colours = player.play(quiet_music)
 
-    strict, strict_options = _controller(noise_gate=0.5)
+    # Half of the old fraction's range: 0.5 x 0.25 of full scale.
+    strict, strict_options = _controller(noise_gate_rms=0.125)
     with _Player(strict, strict_options) as player:
         player.play(_silence(60, level=0.0005))
         gated_colours = player.play(quiet_music)

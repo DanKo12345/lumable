@@ -10,7 +10,6 @@ from PySide6.QtWidgets import QGraphicsOpacityEffect
 
 from app.feature_gate import can_use
 from app.music_controller import (
-    MANUAL_GATE_RMS_CEILING,
     OWNER_FUSION,
     OWNER_OUTPUT,
     OWNER_PREVIEW,
@@ -18,6 +17,14 @@ from app.music_controller import (
     beat_ratio_for_sensitivity,
     list_audio_inputs,
     list_audio_outputs,
+)
+from app.music_gate import (
+    db_for_slider,
+    format_db,
+    gate_db_from_saved,
+    rms_for_slider,
+    slider_for_db,
+    slider_for_rms,
 )
 from app.storage import save_settings
 from app.widgets import ColorPickerOverlay
@@ -30,7 +37,6 @@ _DEFAULTS = {
     "speed": 30,
     "beat": 40,
     "sensitivity": 50,
-    "gate": 16,
 }
 _BANDS = ("bass", "mid", "treble")
 _DEFAULT_BAND_RGB = {"bass": (255, 80, 70), "mid": (180, 90, 255), "treble": (60, 190, 255)}
@@ -39,8 +45,6 @@ _DEFAULT_BAND_RGB = {"bass": (255, 80, 70), "mid": (180, 90, 255), "treble": (60
 SOUND_CHECK_SECONDS = 30
 # One interface tick drives the meters and the check's countdown.
 METER_INTERVAL_MS = 50
-# The gate fraction the noise-gate slider reaches at 100%.
-GATE_FRACTION_AT_FULL = 0.5
 # A reading older than this means the device has stopped handing sound over.
 METER_STALE_S = 0.4
 # A status must hold this long before the next may replace it, so a signal on
@@ -292,7 +296,8 @@ class MusicUiController:
         speed = int(saved.get("speed", _DEFAULTS["speed"]))
         beat = int(saved.get("beat", _DEFAULTS["beat"]))
         sensitivity = int(saved.get("sensitivity", _DEFAULTS["sensitivity"]))
-        gate = int(saved.get("gate", _DEFAULTS["gate"]))
+        # Either saved format; see gate_db_from_saved.
+        gate = round(slider_for_db(gate_db_from_saved(saved)))
         host.music_speed_slider.jump_to(speed)
         host.music_beat_slider.jump_to(beat)
         host.music_sensitivity_slider.jump_to(sensitivity)
@@ -744,11 +749,9 @@ class MusicUiController:
         beat_sensitivity = beat_ratio_for_sensitivity(
             host.music_sensitivity_slider.value()
         )
-        # Gate slider 0..100% -> noise-gate fraction 0..0.5 of full loudness.
-        # Only applied for the microphone (system audio doesn't need it).
-        noise_gate = (
-            (host.music_gate_slider.value() / 100.0) * GATE_FRACTION_AT_FULL if self._source == "mic" else 0.0
-        )
+        # The gate slider is in decibels and the engine takes the RMS it stands
+        # for. Only applied for the microphone (system audio doesn't need it).
+        noise_gate_rms = rms_for_slider(host.music_gate_slider.value()) if self._source == "mic" else 0.0
         device_name = host.music_source_combo.currentData() or ""
         self._music.configure(
             saturation=saturation,
@@ -756,7 +759,7 @@ class MusicUiController:
             reactivity=reactivity,
             beat_strength=beat_strength,
             beat_sensitivity=beat_sensitivity,
-            noise_gate=noise_gate,
+            noise_gate_rms=noise_gate_rms,
             source=self._source,
             device_name=device_name,
             band_colors=self._band_colors_tuple(),
@@ -827,7 +830,9 @@ class MusicUiController:
             f"{host.music_sensitivity_slider.value()}%"
         )
         self._refresh_shared_views()
-        host.music_gate_value.setText(f"{host.music_gate_slider.value()}%")
+        host.music_gate_value.setText(
+            host._tr("music.gate_value", value=format_db(db_for_slider(host.music_gate_slider.value())))
+        )
         host.music_saturation_value.setText(f"{host.music_saturation_slider.value()}%")
         host.music_smoothing_value.setText(f"{host.music_smoothing_slider.value()}%")
 
@@ -843,7 +848,7 @@ class MusicUiController:
             "speed": int(host.music_speed_slider.value()),
             "beat": int(host.music_beat_slider.value()),
             "sensitivity": int(host.music_sensitivity_slider.value()),
-            "gate": int(host.music_gate_slider.value()),
+            "gate_db": round(db_for_slider(host.music_gate_slider.value()), 1),
             "source": self._source,
             # Remember the chosen device per source so switching back restores it.
             "device": str(prev.get("device", "")),
@@ -997,8 +1002,9 @@ class MusicUiController:
             button.style().polish(button)
 
     def retranslate(self) -> None:
-        """Language changed: the button and a check's status follow it."""
+        """Language changed: the button, the gate's readout and a check's status follow it."""
         self.refresh_check_button()
+        self._refresh_value_labels()
         key = self._meter_status
         if self._check_deadline is not None and key:
             self._meter_status = ""
@@ -1091,10 +1097,10 @@ class MusicUiController:
     def _gate_value_for_rms(rms: float) -> float:
         """A block RMS in noise-gate slider units — the inverse of the gate.
 
-        Built from the same two numbers that turn the slider into the gate's
-        RMS, so the room's level and the handle can never drift apart.
+        The same decibel mapping that turns the slider into the gate's RMS, so
+        the room's level and the handle can never drift apart.
         """
-        return float(rms) / (GATE_FRACTION_AT_FULL * MANUAL_GATE_RMS_CEILING) * 100.0
+        return slider_for_rms(rms)
 
     def _refresh_gate_level(self, reading, fresh: bool, dt: float) -> None:
         gate = getattr(self._host, "music_gate_slider", None)

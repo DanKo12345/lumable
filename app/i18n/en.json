@@ -812,6 +812,7 @@
         "music.sensitivity": "Bass sensitivity",
         "music.recovering": "Reconnecting to audio…",
         "music.gate": "Noise gate",
+        "music.gate_value": "{value} dB",
         "music.source_default": "System default",
         "music.source_default_mic": "Default microphone",
         "music.source_system": "System",

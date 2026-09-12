@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, Signal
 from app.color_stream import ColorStreamEngine
 from app.music_analysis import MusicAnalyzer, MusicSyncReport
 from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb
+from app.music_gate import GATE_DB_MAX, rms_for_db
 from app.onset_detection import OnsetAgreement, SuperFluxOnset
 
 MIN_BEAT_RATIO = 1.08
@@ -28,9 +29,9 @@ CAPTURE_OWNERS = frozenset({OWNER_PREVIEW, OWNER_FUSION, OWNER_OUTPUT})
 CLIP_LEVEL = 0.99
 # How long a stop waits for the capture thread to hand the device back.
 CAPTURE_STOP_TIMEOUT_S = 1.5
-# The block RMS the microphone gate reaches at a gate fraction of 1.0. Shared
-# with the noise-gate slider, which draws the room's level on the same scale.
-MANUAL_GATE_RMS_CEILING = 0.25
+# The loudest manual gate the slider can ask for. The cap sits at the slider's
+# end rather than inside its range, so the handle and the gate never part.
+_MAX_MANUAL_GATE_RMS = rms_for_db(GATE_DB_MAX)
 
 
 def beat_ratio_for_sensitivity(value: float) -> float:
@@ -168,9 +169,11 @@ class MusicOptions:
     beat_strength: float = 0.4
     beat_sensitivity: float = 1.28
     beat_decay: float = 0.82
-    # Noise gate (0..1): loudness at/below this fraction is treated as silence so
-    # faint room noise / hiss doesn't make the strip react (useful for the mic).
-    noise_gate: float = 0.08
+    # Manual noise gate, as a block RMS: a block at or below it is silence, so
+    # faint room noise and hiss don't make the strip react (useful for the mic).
+    # The card always sets its own from the decibel slider; this default is the
+    # value the old default fraction stood for, so the engine behaves as before.
+    noise_gate_rms: float = 0.02
 
 
 @dataclass(frozen=True)
@@ -801,12 +804,12 @@ class MusicController(QObject):
 
     @staticmethod
     def _manual_gate(options: MusicOptions) -> float:
-        """The microphone slider as an RMS rather than a fraction.
+        """The microphone gate, in the RMS the analyser thinks in.
 
-        Kept in the units the analyser thinks in, and scaled by the same ceiling
-        the loudness curve uses, so a saved 40% still means what it meant.
+        Capped at the top of the decibel slider, so the threshold is always the
+        one the handle shows.
         """
-        return max(0.0, min(0.95, options.noise_gate)) * MANUAL_GATE_RMS_CEILING
+        return max(0.0, min(_MAX_MANUAL_GATE_RMS, options.noise_gate_rms))
 
     def _run(self) -> None:
         token = self._session_token

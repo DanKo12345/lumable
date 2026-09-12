@@ -163,7 +163,7 @@ def build_music_section(host: PanelHost) -> GlassCard:
     # lives in its own container the controller collapses/reveals with the source.
     host.music_gate_slider = host._slider("green")
     host.music_gate_slider.setRange(0, 100)
-    host.music_gate_value = host._pill("16%")
+    host.music_gate_value = host._pill("")
     host.music_gate_row = QWidget()
     gate_layout = QVBoxLayout(host.music_gate_row)
     gate_layout.setContentsMargins(0, 0, 0, 0)

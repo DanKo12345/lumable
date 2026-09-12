@@ -448,6 +448,8 @@ def test_the_meters_carry_the_rms_the_gate_judged(controller):
 
 @pytest.mark.parametrize("value", [0, 16, 50, 100])
 def test_the_room_level_and_the_gate_handle_share_one_scale(window, monkeypatch, value):
+    from app.music_gate import GATE_DB_DEFAULT, slider_for_db
+
     monkeypatch.setattr(music_ui_module, "list_audio_inputs", lambda: [])
     ui = window._music_ui
     ui._on_source_type_changed("mic")
@@ -457,7 +459,7 @@ def test_the_room_level_and_the_gate_handle_share_one_scale(window, monkeypatch,
         threshold = MusicController._manual_gate(ui._music.options())
         assert ui._gate_value_for_rms(threshold) == pytest.approx(value)
     finally:
-        window.music_gate_slider.setValue(16)
+        window.music_gate_slider.setValue(round(slider_for_db(GATE_DB_DEFAULT)))
         ui._on_source_type_changed("system")
 
 
@@ -575,3 +577,35 @@ def test_a_meter_line_is_its_band_share_times_the_brightness():
     reading = MeterReading(bass=1.0, mid=0.5, treble=0.25, color_level=0.4, silent=False)
     assert music_ui_module.MusicUiController._meter_targets(reading, True) == pytest.approx((0.4, 0.2, 0.1))
     assert music_ui_module.MusicUiController._meter_targets(reading, False) == (0.0, 0.0, 0.0)
+
+
+# ── the gate in decibels ──────────────────────────────────────────────
+def test_the_gate_reads_out_in_decibels_and_is_saved_as_decibels(window):
+    from app.music_gate import GATE_DB_DEFAULT, db_for_slider, format_db, slider_for_db
+
+    slider = window.music_gate_slider
+    try:
+        slider.setValue(23)
+        assert window.music_gate_value.text() == window._tr("music.gate_value", value=format_db(db_for_slider(23)))
+        saved = window._settings["music"]
+        assert saved["gate_db"] == pytest.approx(db_for_slider(23), abs=0.05)
+        assert "gate" not in saved, "the old percent was written beside the decibels"
+    finally:
+        slider.setValue(round(slider_for_db(GATE_DB_DEFAULT)))
+
+
+def test_an_old_settings_file_keeps_its_microphone_threshold(window, monkeypatch):
+    from app.storage import validate_music
+
+    monkeypatch.setattr(music_ui_module, "list_audio_inputs", lambda: [])
+    ui = window._music_ui
+    kept = window._settings.get("music")
+    try:
+        # What an older build saved: a linear 16 % on the microphone.
+        window._settings["music"] = validate_music({"gate": 16, "source": "mic"})
+        ui.sync_controls()
+        ui._apply_options()
+        assert MusicController._manual_gate(ui._music.options()) == pytest.approx(0.02, rel=0.01)
+    finally:
+        window._settings["music"] = kept
+        ui.sync_controls()

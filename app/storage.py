@@ -19,6 +19,7 @@ from app.hotkeys import DEFAULT_HOTKEYS, parse_hotkey
 from app.license import validate_license_state
 from app.local_api.config import validate_api_settings
 from app.motion_policy import DEFAULT_MOTION_MODE, normalize_motion_mode
+from app.music_gate import GATE_DB_DEFAULT, gate_db_from_saved
 from app.scene_store import normalize_group
 from app.scenes import is_future_scene_envelope, normalize_scene, unwrap_scene, wrap_scene
 from app.screen_profiles import normalize_profile_id
@@ -266,7 +267,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "speed": 30,
         "beat": 40,
         "sensitivity": 50,
-        "gate": 16,
+        # The microphone gate in dBFS. Files from before it carry a linear
+        # "gate" percent instead, which validate_music converts on load.
+        "gate_db": GATE_DB_DEFAULT,
         "source": "system",
         "device": "",
         "mic_device": "",
@@ -585,7 +588,7 @@ def validate_music(data: Any) -> dict[str, Any]:
         "sensitivity": _coerce_int(
             data.get("sensitivity"), int(defaults["sensitivity"]), 0, 100
         ),
-        "gate": _coerce_int(data.get("gate"), int(defaults["gate"]), 0, 100),
+        "gate_db": gate_db_from_saved(data),
         "source": "mic" if str(data.get("source", "system")) == "mic" else "system",
         "device": _coerce_str(data.get("device"), str(defaults["device"])),
         "mic_device": _coerce_str(data.get("mic_device"), str(defaults["mic_device"])),
