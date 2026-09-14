@@ -167,14 +167,32 @@ def build_music_section(host: PanelHost) -> GlassCard:
     host.music_gate_row = QWidget()
     gate_layout = QVBoxLayout(host.music_gate_row)
     gate_layout.setContentsMargins(0, 0, 0, 0)
-    gate_layout.addLayout(
-        host._slider_row(
-            host._tr("music.gate"),
-            host.music_gate_slider,
-            host.music_gate_value,
-            "music.gate",
-        )
+    gate_slider_row = host._slider_row(
+        host._tr("music.gate"),
+        host.music_gate_slider,
+        host.music_gate_value,
+        "music.gate",
     )
+    # Calibrate sits under the row's label, in the label column: the slider keeps
+    # the length of its neighbours and the readout stays in their column. Two
+    # short lines fit the row's height, so the row keeps the height it had.
+    gate_label = gate_slider_row.itemAt(0).widget()
+    gate_slider_row.removeWidget(gate_label)
+    host.music_gate_label_column = QWidget()
+    host.music_gate_label_column.setFixedWidth(gate_label.maximumWidth())
+    label_column = QVBoxLayout(host.music_gate_label_column)
+    label_column.setContentsMargins(0, 0, 0, 0)
+    label_column.setSpacing(host._sz(2))
+    label_column.addStretch(1)
+    label_column.addWidget(gate_label)
+    host.music_calibrate_button = QPushButton(host._tr("music.calibrate"))
+    host.music_calibrate_button.setObjectName("musicCalibrateButton")
+    host.music_calibrate_button.setCursor(Qt.PointingHandCursor)
+    host.music_calibrate_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+    label_column.addWidget(host.music_calibrate_button, 0, Qt.AlignLeft)
+    label_column.addStretch(1)
+    gate_slider_row.insertWidget(0, host.music_gate_label_column)
+    gate_layout.addLayout(gate_slider_row)
     host.music_gate_slot = CollapsingRow(host.music_gate_row, host._sz(5))
     reaction_layout.addSpacing(host._sz(5))
     reaction_layout.addWidget(host.music_gate_slot)

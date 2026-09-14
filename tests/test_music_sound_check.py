@@ -23,19 +23,28 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+import app.music_calibration as music_calibration_module
 import app.music_controller as module
 import app.music_ui_controller as music_ui_module
 from app.main_layout import select_section
-from app.music_controller import OWNER_FUSION, OWNER_OUTPUT, OWNER_PREVIEW, MusicController, MusicOptions
+from app.music_controller import (
+    OWNER_CALIBRATION,
+    OWNER_FUSION,
+    OWNER_OUTPUT,
+    OWNER_PREVIEW,
+    MusicController,
+    MusicOptions,
+)
 
 
 class _Device:
     """Counts opens and closes; each read waits for a block, as a device does."""
 
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, level: float = 0.2) -> None:
         self.opens = 0
         self.closes = 0
         self.fail = fail
+        self.level = level
 
     def reader(self, _options):
         self.opens += 1
@@ -44,7 +53,7 @@ class _Device:
 
         def read(_size):
             sleep(0.005)
-            return [[0.2, 0.2]] * 256
+            return [[self.level, self.level]] * 256
 
         def close():
             self.closes += 1
@@ -184,6 +193,8 @@ def test_clipping_is_judged_before_the_channels_are_mixed_down():
 # ── the check in the window ───────────────────────────────────────────
 # Every device the window's capture opened, across the whole file.
 _WINDOW_OPENS: list[int] = []
+# The level the window's device plays: a loud steady tone unless a test needs a room.
+_WINDOW_LEVEL = [0.2]
 
 
 @pytest.fixture(scope="module")
@@ -204,7 +215,7 @@ def window():
 
     def counted(self, options):
         _WINDOW_OPENS.append(1)
-        return _Device().reader(options)
+        return _Device(level=_WINDOW_LEVEL[0]).reader(options)
 
     # Both sources, so a test on the microphone never opens a real one.
     MusicController._open_loopback_reader = counted
@@ -235,6 +246,7 @@ def _on_the_music_page(request):
     select_section(window, "music")
     QApplication.instance().processEvents()
     yield
+    window._music_ui._cancel_calibration()
     window._music_ui.stop_sound_check()
     window._music_ui.stop_if_running()
     window._music_ui._music.stop()
@@ -320,8 +332,12 @@ def test_leaving_the_page_while_music_reacts_stops_only_the_meters(window):
     ui = window._music_ui
     ui._music.start_output(lambda *rgb: True)
     ui._update_meter_timer()
+    # One timer draws the meters. The only other one lets a calibration's result
+    # go once, and never repeats.
     timers = [value for value in vars(ui).values() if isinstance(value, QTimer)]
-    assert timers == [ui._meter_timer] and ui._meter_timer.interval() == 50
+    assert [timer for timer in timers if not timer.isSingleShot()] == [ui._meter_timer]
+    assert ui._meter_timer.interval() == 50
+    assert len(timers) == 2 and ui._hold_timer in timers
     assert ui._meter_timer.isActive()
     select_section(window, "color")
     assert not ui._meter_timer.isActive(), "the meters kept drawing a page nobody sees"
@@ -381,17 +397,17 @@ def test_the_combined_mode_leaves_the_music_controls_live(window, monkeypatch):
     ui = window._music_ui
     ui.start_listening()
     try:
-        assert window.music_reaction_section.isEnabled(), "Fusion's listening left the sliders locked"
+        assert window.music_speed_slider.isEnabled(), "Fusion's listening left the sliders locked"
         assert not window.music_bands_row.graphicsEffect().isEnabled(), "the bands stayed faded"
     finally:
         ui.stop_listening()
-    assert not window.music_reaction_section.isEnabled()
+    assert not window.music_speed_slider.isEnabled()
 
 
 def test_a_check_can_be_tuned_without_pro(window, monkeypatch):
     monkeypatch.setattr(music_ui_module, "can_use", lambda feature: False)
     _press_check(window)
-    assert window.music_reaction_section.isEnabled(), "the check could not try the sliders"
+    assert window.music_speed_slider.isEnabled(), "the check could not try the sliders"
     assert window.music_bands_row.isEnabled()
 
 
@@ -609,3 +625,326 @@ def test_an_old_settings_file_keeps_its_microphone_threshold(window, monkeypatch
     finally:
         window._settings["music"] = kept
         ui.sync_controls()
+
+
+# ── calibrating the microphone gate ───────────────────────────────────
+ROOM_RMS = 0.001  # a steady room at -60 dBFS
+
+
+@pytest.fixture()
+def quiet_mic(window, monkeypatch):
+    monkeypatch.setattr(music_ui_module, "list_audio_inputs", lambda: [])
+    monkeypatch.setattr(window, "_show_error", lambda *args, **kwargs: None)
+    # The window is shared: an earlier test may have left a result on show.
+    window._music_ui._restore_status()
+    _WINDOW_LEVEL[0] = ROOM_RMS
+    window._music_ui._on_source_type_changed("mic")
+    window._music_ui._set_gate_visible_instant(True)
+    yield window
+    window._music_ui._cancel_calibration()
+    window._music_ui._on_source_type_changed("system")
+    _WINDOW_LEVEL[0] = 0.2
+
+
+def _press_calibrate(window) -> None:
+    QTest.mouseClick(window.music_calibrate_button, Qt.LeftButton)
+
+
+def test_calibration_takes_over_the_check_without_reopening_the_device(quiet_mic):
+    window = quiet_mic
+    ui = window._music_ui
+    _press_check(window)
+    _until(lambda: ui._music.meter_reading().captured_at > 0)
+    opened = len(_WINDOW_OPENS)
+    _press_calibrate(window)
+    assert ui.is_calibrating() and not ui.is_checking_sound()
+    assert ui._music.owners() == {OWNER_CALIBRATION}
+    assert len(_WINDOW_OPENS) == opened, "the device was reopened"
+
+
+def test_a_quiet_room_sets_the_gate_just_above_it_and_saves_it(quiet_mic):
+    from math import ceil, log10
+
+    from app.music_gate import db_for_slider, format_db, slider_for_db
+
+    window = quiet_mic
+    ui = window._music_ui
+    _press_check(window)
+    _press_calibrate(window)
+    _until(lambda: ui._calibration is None, timeout=8.0)
+    expected = ceil(slider_for_db(20 * log10(ROOM_RMS) + 8.0) - 1e-9)
+    assert window.music_gate_slider.value() == expected
+    assert window._settings["music"]["gate_db"] == pytest.approx(db_for_slider(expected), abs=0.05)
+    assert window.music_status_label.text() == window._tr(
+        "music.calibration_done", value=format_db(db_for_slider(expected))
+    )
+    assert OWNER_CALIBRATION not in ui._music.owners()
+
+
+@pytest.mark.parametrize(
+    "interrupt",
+    [
+        _press_calibrate,  # the one that hands back to the check
+        lambda window: select_section(window, "color"),
+        lambda window: window.hide(),
+        lambda window: window.showMinimized(),
+        lambda window: window._windows_session.locked.emit(),
+        lambda window: window._windows_session.slept.emit(),
+        _device_error,
+        lambda window: window._music_ui._on_source_type_changed("system"),
+        lambda window: window._music_ui._on_source_changed(),
+    ],
+    ids=["cancel", "page", "hidden", "minimised", "locked", "asleep", "device error", "source", "device"],
+)
+def test_an_interrupted_calibration_leaves_the_gate_as_it_was(quiet_mic, interrupt):
+    window = quiet_mic
+    ui = window._music_ui
+    slider_before = window.music_gate_slider.value()
+    saved_before = window._settings["music"].get("gate_db")
+    _press_check(window)
+    _press_calibrate(window)
+    _until(lambda: ui._calibration is not None and ui._calibration.measured_seconds > 0.3)
+    interrupt(window)
+    QApplication.instance().processEvents()
+    assert ui._calibration is None and not ui.is_calibrating()
+    assert OWNER_CALIBRATION not in ui._music.owners()
+    assert window.music_gate_slider.value() == slider_before, "the gate moved"
+    assert window._settings["music"].get("gate_db") == saved_before, "a threshold was saved"
+    resumes = interrupt is _press_calibrate
+    assert ui.is_checking_sound() is resumes, "the check came back when it should not have, or not at all"
+
+
+def test_a_calibration_that_hears_nothing_gives_up_without_saving(quiet_mic, monkeypatch):
+    window = quiet_mic
+    ui = window._music_ui
+    monkeypatch.setattr(music_calibration_module, "TIMEOUT_S", 0.3)
+    # A sample from another session: the capture never feeds it a block.
+    monkeypatch.setattr(ui._music, "begin_noise_sample", lambda: music_calibration_module.NoiseSample(-1))
+    slider_before = window.music_gate_slider.value()
+    _press_check(window)
+    _press_calibrate(window)
+    _until(lambda: ui._calibration is None, timeout=3.0)
+    assert window.music_gate_slider.value() == slider_before
+    assert window.music_status_label.text() == window._tr("music.calibration_no_audio")
+    assert not ui.is_checking_sound(), "a device that sent nothing handed back to a check"
+
+
+def test_the_calibrate_button_keeps_one_width_in_every_language_at_the_largest_scale(monkeypatch):
+    import app.main_window as main_window_module
+    from app.constants import WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH
+    from app.localization import localization_manager
+    from app.ui_scale import MAX_SCALE
+
+    monkeypatch.setattr(main_window_module, "resolve_ui_scale", lambda screen: MAX_SCALE)
+    monkeypatch.setattr(music_ui_module, "list_audio_inputs", lambda: [])
+    app = QApplication.instance() or QApplication([])
+    made = main_window_module.MainWindow()
+    language = localization_manager.language
+    try:
+        assert made._ui_scale == MAX_SCALE
+        made.resize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        made.show()
+        select_section(made, "music")
+        made._music_ui._on_source_type_changed("mic")
+        made._music_ui._set_gate_visible_instant(True)
+        app.processEvents()
+        button, row = made.music_calibrate_button, made.music_gate_row
+        widths = set()
+        for code in localization_manager.available_languages():
+            localization_manager.set_language(code)
+            made._ui_localization.apply_texts()
+            app.processEvents()
+            widths.add(button.width())
+            for key in ("music.calibrate", "music.calibrate_cancel"):
+                assert button.fontMetrics().horizontalAdvance(made._tr(key)) <= button.width(), f"{code}: {key} is cut"
+            card = made.music_card
+            assert made.music_gate_slider.width() == made.music_speed_slider.width(), (
+                f"{code}: the gate slider is shorter than its neighbours"
+            )
+            assert made.music_gate_value.mapTo(card, made.music_gate_value.rect().topLeft()).x() == (
+                made.music_speed_value.mapTo(card, made.music_speed_value.rect().topLeft()).x()
+            ), f"{code}: the gate readout left the column of readouts"
+            column = made.music_gate_label_column
+            assert button.geometry().right() < column.width(), f"{code}: Calibrate spills out of the label column"
+            assert row.height() <= made.music_speed_slider.height() + 2, f"{code}: the gate row grew taller"
+        assert len(widths) == 1, f"the button changed width between languages: {widths}"
+    finally:
+        localization_manager.set_language(language)
+        made._music_ui.shutdown()
+        made._ble.shutdown()
+        made.close()
+        app.processEvents()
+
+
+def test_calibration_starts_directly_with_the_reaction_off_and_no_pro(quiet_mic, monkeypatch):
+    window = quiet_mic
+    ui = window._music_ui
+    monkeypatch.setattr(music_ui_module, "can_use", lambda feature: False)
+    ui._apply_enabled_state()
+    assert not ui.is_checking_sound() and not ui._reacting()
+    assert window.music_calibrate_button.isEnabled(), "Calibrate needs nothing but a microphone"
+    assert not window.music_gate_slider.isEnabled(), "the other controls came alive with it"
+    opened = len(_WINDOW_OPENS)
+    _press_calibrate(window)
+    assert ui.is_calibrating()
+    assert not window.music_check_button.isEnabled(), "a check could start over the calibration"
+    _until(lambda: ui._calibration is None, timeout=8.0)
+    assert len(_WINDOW_OPENS) == opened + 1, "the hand-over to the check reopened the device"
+    assert ui._music.owners() == {OWNER_PREVIEW}
+    left = ui._check_deadline - monotonic()
+    assert 8.5 <= left <= music_ui_module.CHECK_AFTER_CALIBRATION_S, "no short look at the new gate"
+    assert window.music_check_button.isEnabled()
+
+
+def test_a_calibration_during_a_check_hands_back_the_time_that_was_left(quiet_mic):
+    window = quiet_mic
+    ui = window._music_ui
+    _press_check(window)
+    _until(lambda: ui._music.meter_reading().captured_at > 0)
+    opened = len(_WINDOW_OPENS)
+    left_before = ui._check_deadline - monotonic()
+    _press_calibrate(window)
+    _until(lambda: ui._calibration is None, timeout=8.0)
+    assert ui.is_checking_sound() and ui._music.owners() == {OWNER_PREVIEW}
+    assert len(_WINDOW_OPENS) == opened, "the device was reopened"
+    assert ui._check_deadline - monotonic() == pytest.approx(left_before, abs=0.6)
+
+
+def test_a_room_too_noisy_to_calibrate_still_hands_back_to_the_check(quiet_mic):
+    window = quiet_mic
+    ui = window._music_ui
+    _WINDOW_LEVEL[0] = 0.2  # a loud steady tone: far above -30 dBFS
+    slider_before = window.music_gate_slider.value()
+    _press_check(window)
+    _press_calibrate(window)
+    _until(lambda: ui._calibration is None, timeout=8.0)
+    assert window.music_status_label.text() == window._tr("music.calibration_too_noisy")
+    assert window.music_gate_slider.value() == slider_before
+    assert ui.is_checking_sound()
+
+
+def test_a_calibration_owns_the_status_while_music_reacts_and_gives_it_back(quiet_mic, monkeypatch):
+    window = quiet_mic
+    ui = window._music_ui
+    monkeypatch.setattr(music_ui_module, "CALIBRATION_RESULT_HOLD_S", 0.3)
+    monkeypatch.setattr(window._ble, "set_color_stream", lambda *rgb: True)
+    powered = window.power_button.isChecked()
+    try:
+        window.power_button.setChecked(True)
+        ui._start()
+        listening = window._tr("music.listening")
+        assert window.music_status_label.text() == listening
+        _press_calibrate(window)
+        assert window.music_status_label.text() == window._tr("music.calibration_hold", seconds=3)
+        _until(lambda: ui._calibration is None, timeout=8.0)
+        assert window.music_status_label.text() != listening, "the result was never shown"
+        _until(lambda: window.music_status_label.text() == listening, timeout=3.0)
+        assert not ui.is_checking_sound(), "a check was started beside a running reaction"
+    finally:
+        ui.stop_if_running()
+        window.power_button.setChecked(powered)
+
+
+def test_the_calibration_is_fed_only_the_frames_that_arrived(monkeypatch):
+    # A device may hand back an empty block. The rest of the pipeline treats it
+    # as a whole one; a calibration must not count it as time in the room.
+    from itertools import cycle
+
+    import numpy as np
+
+    fed = []
+
+    class Recorded(music_calibration_module.NoiseSample):
+        def add(self, seconds, rms, clipped):
+            fed.append(seconds)
+            super().add(seconds, rms, clipped)
+
+    sizes = cycle([0, 128, 0, 0, 128])
+
+    def reader(self, options):
+        def read(_size):
+            sleep(0.002)
+            return np.full((next(sizes), 1), 0.001, np.float32)
+
+        return read, (lambda: None), 48000
+
+    monkeypatch.setattr(MusicController, "_open_mic_reader", reader)
+    monkeypatch.setattr(module, "NoiseSample", Recorded)
+    made = MusicController()
+    made.configure(source="mic")
+    try:
+        made.acquire(OWNER_CALIBRATION)
+        made.begin_noise_sample()
+        _until(lambda: len(fed) >= 20)
+    finally:
+        made.stop()
+    assert set(fed) == {128 / 48000}, "an empty block went in, or was counted as the size asked for"
+
+
+def test_a_microphone_sending_a_broken_signal_is_not_calibrated_on(quiet_mic):
+    window = quiet_mic
+    ui = window._music_ui
+    _WINDOW_LEVEL[0] = float("nan")
+    slider_before = window.music_gate_slider.value()
+    saved_before = window._settings["music"].get("gate_db")
+    _press_calibrate(window)
+    _until(lambda: ui._calibration is None, timeout=3.0)
+    assert window.music_gate_slider.value() == slider_before, "the gate moved"
+    assert window._settings["music"].get("gate_db") == saved_before, "a threshold was saved"
+    assert window.music_status_label.text() == window._tr("music.calibration_no_audio")
+    assert not ui.is_checking_sound(), "a broken signal handed back to a check"
+
+
+def _result_on_show_then_nothing_listening(window, outcome):
+    """Calibrate straight from a card that is off and end in ``outcome``."""
+    ui = window._music_ui
+    _press_calibrate(window)
+    if outcome == "cancelled":
+        _press_calibrate(window)
+    else:
+        _until(lambda: ui._calibration is None, timeout=8.0)
+    assert not ui._music.owners(), "the test needs nobody left listening"
+    _until(lambda: not ui._meter_timer.isActive(), timeout=1.0)
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [music_calibration_module.UNSTABLE, music_calibration_module.TOO_NOISY, music_calibration_module.CLIPPED,
+     "cancelled"],
+)
+def test_a_direct_result_goes_away_by_itself_with_nothing_listening(quiet_mic, monkeypatch, outcome):
+    window = quiet_mic
+    label = window.music_status_label
+    monkeypatch.setattr(music_ui_module, "CALIBRATION_RESULT_HOLD_S", 0.3)
+    monkeypatch.setattr(music_calibration_module, "judge",
+                        lambda *args: music_calibration_module.Calibration(outcome))
+    before = label.text()
+    _result_on_show_then_nothing_listening(window, outcome)
+    assert label.text() != before, "the result was never shown"
+    _until(lambda: label.text() == before, timeout=2.0)
+
+
+def test_leaving_the_page_while_a_result_is_on_show_still_ends_it(quiet_mic, monkeypatch):
+    window = quiet_mic
+    label = window.music_status_label
+    monkeypatch.setattr(music_ui_module, "CALIBRATION_RESULT_HOLD_S", 0.3)
+    monkeypatch.setattr(music_calibration_module, "judge",
+                        lambda *args: music_calibration_module.Calibration(music_calibration_module.UNSTABLE))
+    before = label.text()
+    _result_on_show_then_nothing_listening(window, music_calibration_module.UNSTABLE)
+    select_section(window, "color")
+    _until(lambda: label.text() == before, timeout=2.0)
+
+
+def test_calibrating_again_over_a_result_on_show_gives_back_the_words_from_before(quiet_mic, monkeypatch):
+    window = quiet_mic
+    label = window.music_status_label
+    before = label.text()
+    monkeypatch.setattr(music_ui_module, "CALIBRATION_RESULT_HOLD_S", 30.0)
+    _press_calibrate(window)
+    _press_calibrate(window)
+    assert label.text() == window._tr("music.calibration_cancelled")
+    monkeypatch.setattr(music_ui_module, "CALIBRATION_RESULT_HOLD_S", 0.3)
+    _press_calibrate(window)  # again, while the first result is on show
+    _press_calibrate(window)
+    _until(lambda: label.text() == before, timeout=2.0)

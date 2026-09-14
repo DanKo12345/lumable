@@ -166,7 +166,7 @@ def _base_styles(T: dict, is_dark: bool) -> str:
         }}
         /* A text action sitting in a section heading. No padding and no
            minimum height, so it can never make the heading row taller. */
-        QPushButton#musicCheckButton {{
+        QPushButton#musicCheckButton, QPushButton#musicCalibrateButton {{
             background: transparent;
             border: 0;
             padding: 0;
@@ -176,11 +176,16 @@ def _base_styles(T: dict, is_dark: bool) -> str:
             font-size: 12px;
             font-weight: 650;
         }}
-        QPushButton#musicCheckButton:hover {{
+        QPushButton#musicCheckButton:hover, QPushButton#musicCalibrateButton:hover {{
             color: {T["text"]};
         }}
-        QPushButton#musicCheckButton[active="true"] {{
+        QPushButton#musicCheckButton[active="true"], QPushButton#musicCalibrateButton[active="true"] {{
             color: {T["accent_start"]};
+        }}
+        /* Calibrate is as wide as its longest translation; its text starts where
+           the label above it starts rather than floating in the middle. */
+        QPushButton#musicCalibrateButton {{
+            text-align: left;
         }}
         #sceneDivider {{
             background: {T["chip_border"]};

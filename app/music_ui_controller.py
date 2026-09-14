@@ -6,10 +6,13 @@ from typing import Any
 
 from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QGraphicsOpacityEffect
+from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel, QWidget
 
+from app import music_calibration
 from app.feature_gate import can_use
+from app.localization import localization_manager
 from app.music_controller import (
+    OWNER_CALIBRATION,
     OWNER_FUSION,
     OWNER_OUTPUT,
     OWNER_PREVIEW,
@@ -27,9 +30,10 @@ from app.music_gate import (
     slider_for_rms,
 )
 from app.storage import save_settings
-from app.widgets import ColorPickerOverlay
+from app.widgets import ColorPickerOverlay, ValueChip
 from app.widgets.animation_helpers import motion_reduced, play_or_complete
 from app.widgets.band_meter import FLASH_S, follow_level
+from app.widgets.liquid_slider import LiquidSlider
 
 _DEFAULTS = {
     "saturation": 60,
@@ -55,6 +59,12 @@ METER_CLIPPED_HOLD_S = 1.0
 # While the device is still opening there is no reading yet, which is not the
 # same thing as a device that has gone quiet.
 METER_STARTUP_GRACE_S = 1.0
+# A calibration's result stays in the status this long before what was there
+# before comes back.
+CALIBRATION_RESULT_HOLD_S = 3.0
+# A calibration started without a check ends with a short one, so the new gate
+# can be seen against the room's own level.
+CHECK_AFTER_CALIBRATION_S = 10.0
 
 
 class MusicUiController:
@@ -80,6 +90,19 @@ class MusicUiController:
         # no "unlocked" to follow, and one that locks on waking wakes locked.
         self._session_locked = False
         self._session_asleep = False
+        # A calibration in progress: the sample being measured, or None.
+        self._calibration: music_calibration.NoiseSample | None = None
+        self._calibration_started_at = 0.0
+        self._calibration_shown: tuple | None = None
+        # The check to hand back to afterwards: seconds left, or None.
+        self._resume_check_s: float | None = None
+        # The status label belongs to a calibration while it runs and while its
+        # result is shown; what the others said meanwhile waits here.
+        self._status_to_restore: str | None = None
+        # A result on show ends by this timer, not the meters': with nobody left
+        # listening those stop, and the result would stay for good.
+        self._hold_timer: QTimer | None = None
+        self._tuning_widget_cache: list | None = None
         self._meter_timer: QTimer | None = None
         self._meter_tick_at = 0.0
         self._flash = 0.0
@@ -118,16 +141,23 @@ class MusicUiController:
         check = getattr(host, "music_check_button", None)
         if check is not None:
             check.clicked.connect(self.toggle_sound_check)
+        calibrate = getattr(host, "music_calibrate_button", None)
+        if calibrate is not None:
+            calibrate.clicked.connect(self.toggle_calibration)
         # The one timer behind the meters and the check's countdown. It runs
         # only while the music page is on screen and something is listening.
         self._meter_timer = QTimer(host)
         self._meter_timer.setInterval(METER_INTERVAL_MS)
         self._meter_timer.timeout.connect(self._refresh_meters)
+        self._hold_timer = QTimer(host)
+        self._hold_timer.setSingleShot(True)
+        self._hold_timer.timeout.connect(self._restore_status)
         self._setup_preview_fade()
         self._setup_gate_reveal()
         self.sync_controls()
         self.refresh_lock()
         self.refresh_check_button()
+        self.refresh_calibrate_button()
 
     # ── noise-gate reveal (mic only) ──────────────────────────────────
     # The slot fades cached pixels, avoiding a second QGraphicsEffect inside
@@ -264,15 +294,44 @@ class MusicUiController:
         # heading stays outside the fade: it is how you start listening while
         # everything else is off.
         host = self._host
-        checking = self.is_checking_sound()
+        # A check or a calibration is listening for the controls, and both are
+        # interactive for everyone, Pro or not: they are how the settings are
+        # tried out before any light is involved.
+        checking = self.is_checking_sound() or self.is_calibrating()
         active = self._feeding_a_light()
-        # A check is interactive for everyone, Pro or not: it is how the
-        # settings are tried out before any light is involved.
         tuning = checking or (can_use("music_sync") and active)
         showing_bands = checking or active
-        self._fade(getattr(host, "music_reaction_section", None), enabled=tuning, shown=tuning)
+        for widget in self._tuning_widgets():
+            self._fade(widget, enabled=tuning, shown=tuning)
         self._fade(getattr(host, "music_colors_label", None), enabled=True, shown=showing_bands)
         self._fade(getattr(host, "music_bands_row", None), enabled=tuning, shown=showing_bands)
+        calibrate = getattr(host, "music_calibrate_button", None)
+        if calibrate is not None:
+            # Its own rule, apart from the tuning controls: a microphone to
+            # measure. Not Pro, not the reaction and not a check.
+            calibrate.setEnabled(self._source == "mic")
+        check = getattr(host, "music_check_button", None)
+        if check is not None:
+            # One scenario at a time: a check does not start over a calibration.
+            check.setEnabled(self._calibration is None)
+
+    def _tuning_widgets(self) -> list:
+        """The reaction section's own labels, sliders and readouts, one by one.
+
+        Faded and locked individually rather than through the section, so the
+        calibrate button inside it keeps a rule of its own. Leaves only: an
+        effect on a container as well would nest one effect inside another.
+        """
+        if self._tuning_widget_cache is None:
+            section = getattr(self._host, "music_reaction_section", None)
+            if section is None:
+                return []
+            calibrate = getattr(self._host, "music_calibrate_button", None)
+            self._tuning_widget_cache = [
+                widget for widget in section.findChildren(QWidget)
+                if isinstance(widget, (QLabel, LiquidSlider, ValueChip)) and widget is not calibrate
+            ]
+        return self._tuning_widget_cache
 
     @staticmethod
     def _fade(widget, *, enabled: bool, shown: bool) -> None:
@@ -350,10 +409,13 @@ class MusicUiController:
         combo.blockSignals(False)
 
     def _on_source_type_changed(self, key: str) -> None:
+        # A measurement of one room says nothing about another input.
+        self._cancel_calibration()
         self._source = "mic" if key == "mic" else "system"
         self._refresh_shared_views()
         self._refresh_source_description()
         self._animate_gate(opening=self._source == "mic")
+        self._apply_enabled_state()
         self._populate_sources()
         # Re-select the device previously chosen for this source, if any.
         host = self._host
@@ -375,6 +437,8 @@ class MusicUiController:
             label.setText(self._host._tr(key))
 
     def _on_source_changed(self) -> None:
+        # Nor of another microphone.
+        self._cancel_calibration()
         self._persist()
         # Switching device means re-opening the recorder, so restart the capture
         # in place if music is currently running.
@@ -565,10 +629,9 @@ class MusicUiController:
             # explanation that is no longer true.
             button.setEnabled(not shared or lost)
         if status is not None and shared:
-            status.setText(host._tr("fusion.audio_lost" if lost else "fusion.music_shared"))
-            status.setVisible(True)
+            self._write_status(host._tr("fusion.audio_lost" if lost else "fusion.music_shared"))
         elif status is not None and not self._reacting() and not self.is_checking_sound():
-            status.setText(host._tr("music.status_off"))
+            self._write_status(host._tr("music.status_off"))
         self._apply_enabled_state()
         self._update_meter_timer()
 
@@ -652,6 +715,9 @@ class MusicUiController:
         return self.activate()
 
     def shutdown(self) -> None:
+        if self._hold_timer is not None:
+            self._hold_timer.stop()
+        self._cancel_calibration()
         self._end_sound_check()
         self._music.stop()
         self._update_meter_timer()
@@ -707,10 +773,7 @@ class MusicUiController:
         self._apply_enabled_state()
         self._show_preview()
         host.music_toggle_button.setText(host._tr("music.toggle_on"))
-        status = getattr(host, "music_status_label", None)
-        if status is not None:
-            status.setText(host._tr("music.listening"))
-            status.setVisible(True)
+        self._write_status(host._tr("music.listening"))
         self._meter_status = ""
         host._log(host._tr("music.started_log"))
         self._update_meter_timer()
@@ -724,10 +787,7 @@ class MusicUiController:
         self._set_manual_controls_enabled(True)
         host.music_toggle_button.setChecked(False)
         host.music_toggle_button.setText(host._tr("music.toggle_off"))
-        status = getattr(host, "music_status_label", None)
-        if status is not None:
-            status.setText(host._tr("music.status_off"))
-            status.setVisible(True)
+        self._write_status(host._tr("music.status_off"))
         # Written over by the next meter tick if a sound check is still going.
         self._meter_status = ""
         if was_running:
@@ -866,15 +926,17 @@ class MusicUiController:
             # A sound check on its own: its meters say what the device is doing.
             return
         if recovering:
-            self._host.music_status_label.setText(self._host._tr("music.recovering"))
+            self._write_status(self._host._tr("music.recovering"))
         elif self._shared_with_screen():
             self.refresh_shared_state()
         else:
-            self._host.music_status_label.setText(self._host._tr("music.listening"))
+            self._write_status(self._host._tr("music.listening"))
 
     def _on_failed(self, reason: str) -> None:
         host = self._host
-        # The controller has already let go of everyone; the check goes too.
+        # The controller has already let go of everyone; the check and any
+        # calibration go too, and a calibration leaves the gate as it was.
+        self._cancel_calibration()
         self._end_sound_check()
         if host._fusion_ui.is_running():
             # The screen half is still working and should keep working. What
@@ -948,9 +1010,8 @@ class MusicUiController:
         self._check_deadline = None
         self._music.release(OWNER_PREVIEW)
         self._meter_status = ""
-        status = getattr(self._host, "music_status_label", None)
-        if status is not None and not self._reacting() and not self._shared_with_screen():
-            status.setText(self._host._tr("music.status_off"))
+        if not self._reacting() and not self._shared_with_screen():
+            self._write_status(self._host._tr("music.status_off"))
         self.refresh_check_button()
         self._apply_enabled_state()
         self._update_meter_timer()
@@ -959,6 +1020,7 @@ class MusicUiController:
         """The page changed. A check stops; the reaction itself does not."""
         self._on_music_page = key == "music"
         if not self._on_music_page:
+            self._cancel_calibration()
             self._end_sound_check()
         self._update_meter_timer()
 
@@ -974,6 +1036,7 @@ class MusicUiController:
         if asleep is not None:
             self._session_asleep = bool(asleep)
         if self._session_locked or self._session_asleep:
+            self._cancel_calibration()
             self._end_sound_check()
         self._update_meter_timer()
 
@@ -981,6 +1044,7 @@ class MusicUiController:
         """The window was hidden, minimised or brought back."""
         self._window_visible = bool(visible)
         if not self._window_visible:
+            self._cancel_calibration()
             self._end_sound_check()
         self._update_meter_timer()
 
@@ -1004,6 +1068,8 @@ class MusicUiController:
     def retranslate(self) -> None:
         """Language changed: the button, the gate's readout and a check's status follow it."""
         self.refresh_check_button()
+        self.refresh_calibrate_button()
+        self._calibration_shown = None
         self._refresh_value_labels()
         key = self._meter_status
         if self._check_deadline is not None and key:
@@ -1049,6 +1115,8 @@ class MusicUiController:
         now = monotonic()
         dt = min(0.2, max(0.0, now - self._meter_tick_at))
         self._meter_tick_at = now
+        if self._calibration is not None:
+            self._tick_calibration(now)
         if self._check_deadline is not None:
             if now >= self._check_deadline or OWNER_PREVIEW not in self._music.owners():
                 self._end_sound_check()
@@ -1132,6 +1200,8 @@ class MusicUiController:
         return "music.meter_listening"
 
     def _show_meter_status(self, key: str, now: float, *, force: bool = False) -> None:
+        if self._holding_result():
+            return  # a calibration's result is still on show
         if key == self._meter_status and not force:
             return
         if self._meter_status and not force and key != "music.meter_clipped":
@@ -1140,9 +1210,192 @@ class MusicUiController:
                 return
         self._meter_status = key
         self._meter_status_since = now
-        status = getattr(self._host, "music_status_label", None)
         # The reaction and the combined mode keep their own words in the label;
         # the check only speaks for itself.
-        if status is not None and not self._reacting() and not self._shared_with_screen():
-            status.setText(self._host._tr(key))
+        if not self._reacting() and not self._shared_with_screen():
+            self._write_status(self._host._tr(key))
+
+    # ── calibration ────────────────────────────────────────────────────
+    def is_calibrating(self) -> bool:
+        return self._calibration is not None and OWNER_CALIBRATION in self._music.owners()
+
+    def toggle_calibration(self) -> None:
+        """The gate row's button: calibrate, or cancel the calibration running."""
+        if self._calibration is not None:
+            self._cancel_calibration(announce=True, resume=True)
+        else:
+            self._start_calibration()
+
+    def _start_calibration(self) -> None:
+        if self._source != "mic":
+            return
+        now = monotonic()
+        # A check running now comes back afterwards with the time it had left.
+        self._resume_check_s = max(0.0, self._check_deadline - now) if self._check_deadline is not None else None
+        if self._holding_result():
+            # The label shows the last result; the words it covers are already
+            # waiting, and they are what goes back afterwards.
+            self._hold_timer.stop()
+        else:
+            status = getattr(self._host, "music_status_label", None)
+            self._status_to_restore = status.text() if status is not None else None
+        self._apply_options()
+        # The calibration takes the capture first and the check lets go after,
+        # so the device stays open and the two never speak at once.
+        self._music.acquire(OWNER_CALIBRATION)
+        self._calibration = self._music.begin_noise_sample()
+        self._calibration_started_at = now
+        self._calibration_shown = None
+        self._end_sound_check()
+        self._show_calibration_progress()
+        self.refresh_calibrate_button()
+        self._apply_enabled_state()
+        self._update_meter_timer()
+
+    def _cancel_calibration(self, *, announce: bool = False, resume: bool = False) -> None:
+        """Stop without touching the gate: the slider and the saved value stay.
+
+        Only the person pressing Cancel resumes an interrupted check; the page,
+        the window, the session or the device going away does not.
+        """
+        if self._calibration is None:
+            return
+        self._finish_calibration(None, "music.calibration_cancelled" if announce else None, resume=resume)
+
+    def _tick_calibration(self, now: float) -> None:
+        sample = self._calibration
+        if sample is None:
+            return
+        if sample.complete:
+            result = music_calibration.judge(*sample.snapshot())
+            # Everything but silence from the device ends back in the check:
+            # a result worth a second try is best judged against the room.
+            resume = result.outcome != music_calibration.NO_AUDIO
+            self._finish_calibration(result, self._calibration_message(result), resume=resume)
+        elif now - self._calibration_started_at > music_calibration.TIMEOUT_S:
+            result = music_calibration.Calibration(music_calibration.NO_AUDIO)
+            self._finish_calibration(result, self._calibration_message(result), resume=False)
+        else:
+            self._show_calibration_progress()
+
+    def _finish_calibration(self, result, message_key: str | None, *, resume: bool) -> None:
+        if self._calibration is None:
+            return
+        succeeded = result is not None and result.outcome == music_calibration.OK
+        seconds = self._resume_check_s
+        if succeeded and seconds is None and not self._feeding_a_light():
+            # Started on its own: a short check, to see the new gate against the room.
+            seconds = CHECK_AFTER_CALIBRATION_S
+        if resume and seconds:
+            # The check takes the capture first and the calibration lets go
+            # after, so the device stays open across the hand-over.
+            now = monotonic()
+            self._music.acquire(OWNER_PREVIEW)
+            self._check_deadline = now + seconds
+            self._check_started_at = now - METER_STARTUP_GRACE_S
+            self._meter_status = ""
+        self._calibration = None
+        self._resume_check_s = None
+        self._music.end_noise_sample()
+        self._music.release(OWNER_CALIBRATION)
+        if succeeded:
+            # The only moment the gate changes: the slider saves it the way a
+            # hand on the slider would.
+            self._host.music_gate_slider.setValue(int(result.position))
+        if message_key is None:
+            # Stopped from outside: nothing to report, the label gets its words back.
+            self._restore_status()
+        else:
+            text = (self._host._tr(message_key, value=format_db(result.gate_db)) if succeeded
+                    else self._host._tr(message_key))
+            self._write_calibration_status(text)
+            if self._hold_timer is not None:
+                self._hold_timer.start(round(CALIBRATION_RESULT_HOLD_S * 1000))
+        self.refresh_calibrate_button()
+        self.refresh_check_button()
+        self._apply_enabled_state()
+        self._update_meter_timer()
+
+    @staticmethod
+    def _calibration_message(result) -> str:
+        return {
+            music_calibration.OK: "music.calibration_done",
+            music_calibration.CLIPPED: "music.calibration_clipped",
+            music_calibration.UNSTABLE: "music.calibration_unstable",
+            music_calibration.TOO_NOISY: "music.calibration_too_noisy",
+            music_calibration.NO_AUDIO: "music.calibration_no_audio",
+        }[result.outcome]
+
+    def _show_calibration_progress(self) -> None:
+        sample = self._calibration
+        measured = sample.measured_seconds if sample is not None else 0.0
+        remaining = max(1, ceil(music_calibration.MEASURE_S - measured))
+        if self._calibration_shown == ("hold", remaining):
+            return
+        self._calibration_shown = ("hold", remaining)
+        self._write_calibration_status(self._host._tr("music.calibration_hold", seconds=remaining))
+
+    # ── who speaks in the status label ─────────────────────────────────
+    def _holding_result(self) -> bool:
+        """A calibration's result is on show until its timer lets the label go."""
+        return self._hold_timer is not None and self._hold_timer.isActive()
+
+    def _write_calibration_status(self, text: str) -> None:
+        """A calibration's words. Its own, whatever mode is running."""
+        status = getattr(self._host, "music_status_label", None)
+        if status is not None:
+            status.setText(text)
             status.setVisible(True)
+
+    def _write_status(self, text: str) -> None:
+        """Everyone but a calibration writes the status through here.
+
+        While a calibration runs, or its result is still on show, the label is
+        the calibration's: what the others would have said is kept and comes
+        back afterwards.
+        """
+        status = getattr(self._host, "music_status_label", None)
+        if status is None:
+            return
+        if self._calibration is not None or self._holding_result():
+            self._status_to_restore = text
+            return
+        status.setText(text)
+        status.setVisible(True)
+
+    def _restore_status(self) -> None:
+        text = self._status_to_restore
+        self._status_to_restore = None
+        if self._hold_timer is not None:
+            self._hold_timer.stop()
+        if self.is_checking_sound():
+            # A resumed check speaks for itself on its next tick.
+            self._meter_status = ""
+            return
+        status = getattr(self._host, "music_status_label", None)
+        if status is not None and text is not None:
+            status.setText(text)
+            status.setVisible(True)
+
+    def refresh_calibrate_button(self) -> None:
+        host = self._host
+        button = getattr(host, "music_calibrate_button", None)
+        if button is None:
+            return
+        calibrating = self._calibration is not None
+        button.setText(host._tr("music.calibrate_cancel" if calibrating else "music.calibrate"))
+        button.setToolTip(host._tr("music.calibrate_hint", seconds=round(music_calibration.MEASURE_S)))
+        # One width for every language and both states, so the row never moves
+        # when the language changes or the button turns into Cancel.
+        button.ensurePolished()
+        metrics = button.fontMetrics()
+        widest = max(
+            metrics.horizontalAdvance(text)
+            for key in ("music.calibrate", "music.calibrate_cancel")
+            for text in localization_manager.translation_variants(key) or [host._tr(key)]
+        )
+        button.setFixedWidth(widest + host._sz(6))
+        if bool(button.property("active")) != calibrating:
+            button.setProperty("active", calibrating)
+            button.style().unpolish(button)
+            button.style().polish(button)

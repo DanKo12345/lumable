@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Signal
 
 from app.color_stream import ColorStreamEngine
 from app.music_analysis import MusicAnalyzer, MusicSyncReport
+from app.music_calibration import NoiseSample
 from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb
 from app.music_gate import GATE_DB_MAX, rms_for_db
 from app.onset_detection import OnsetAgreement, SuperFluxOnset
@@ -24,7 +25,10 @@ CAPTURE_RETRY_DELAYS = (1.0, 2.0, 4.0)
 OWNER_PREVIEW = "preview"
 OWNER_FUSION = "fusion"
 OWNER_OUTPUT = "output"
-CAPTURE_OWNERS = frozenset({OWNER_PREVIEW, OWNER_FUSION, OWNER_OUTPUT})
+# Measuring the room for the microphone gate. Its own name, so ending a sound
+# check can never release a calibration's hold on the capture, or the reverse.
+OWNER_CALIBRATION = "calibration"
+CAPTURE_OWNERS = frozenset({OWNER_PREVIEW, OWNER_FUSION, OWNER_OUTPUT, OWNER_CALIBRATION})
 # A sample this close to full scale means the source is clipping.
 CLIP_LEVEL = 0.99
 # How long a stop waits for the capture thread to hand the device back.
@@ -341,6 +345,8 @@ class MusicController(QObject):
         # The session whose capture gave up for good, so the cleanup delivered
         # afterwards on the GUI thread can tell it from a run started since.
         self._failed_token = 0
+        # A measurement of the room, fed every block while it lasts.
+        self._noise_sample: NoiseSample | None = None
         self.color_sampled.connect(self._engine.set_target)
         self.failed.connect(self._on_capture_failed)
 
@@ -472,6 +478,20 @@ class MusicController(QObject):
     def meter_reading(self) -> MeterReading:
         """The latest block as the band meters show it. Read, never waited on."""
         return self._meter
+
+    def begin_noise_sample(self) -> NoiseSample:
+        """Start measuring the room on the capture now running.
+
+        Every block of this session goes in, not the one the interface happens
+        to see on its tick, and a restarted capture — a new session — feeds a
+        new sample rather than this one.
+        """
+        sample = NoiseSample(self._session_token)
+        self._noise_sample = sample
+        return sample
+
+    def end_noise_sample(self) -> None:
+        self._noise_sample = None
 
     def _open_session(self) -> None:
         if self.is_running():
@@ -876,7 +896,13 @@ class MusicController(QObject):
                 # The block's real length, not the one that was asked for: a
                 # device is free to hand back fewer frames, and downstream
                 # staleness is measured against this.
-                frames = self._frame_count(block) or options.blocksize
+                received = self._frame_count(block)
+                frames = received or options.blocksize
+                sample = self._noise_sample
+                if received and sample is not None and sample.session_token == token:
+                    # Only what arrived: an empty block is no time in the room,
+                    # whatever the rest of the pipeline assumes it held.
+                    sample.add(received / max(1, samplerate), result.rms, result.clipped)
                 self.modulation_sampled.emit(
                     MusicModulationSample(
                         session_token=token,
