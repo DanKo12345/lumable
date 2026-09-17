@@ -164,8 +164,13 @@ class MusicAnalyzer:
     def __init__(self) -> None:
         self.reset()
 
-    def reset(self, *, preserve_beat_id: bool = False) -> None:
-        self._floor = 0.0
+    def reset(self, *, preserve_beat_id: bool = False, digital: bool = False) -> None:
+        # A loopback's quiet is digital zero, so its floor starts at the lowest
+        # believable one. Taken from the first block instead, it would be the
+        # music already playing when the capture opened, and music quieter than
+        # the gate that floor sets would stay silence until the track paused.
+        # A microphone has no such line to trust: its room is measured.
+        self._floor = _MIN_FLOOR if digital else 0.0
         self._open = False
         self._share_avg = 0.0
         self._env = 0.0

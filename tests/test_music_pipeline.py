@@ -52,8 +52,10 @@ class _Player:
         return results
 
 
-def _controller(**options) -> tuple[MusicController, MusicOptions]:
-    return MusicController(), MusicOptions(source="system", **options)
+def _controller(source: str = "system", **options) -> tuple[MusicController, MusicOptions]:
+    controller = MusicController()
+    controller.configure(source=source)
+    return controller, MusicOptions(source=source, **options)
 
 
 def _brightness(colour) -> int:
@@ -197,8 +199,9 @@ def test_the_pulse_does_not_go_on_beating_after_the_music_stops() -> None:
 # ── starting over ─────────────────────────────────────────────────────
 def test_a_restart_does_not_carry_the_old_room_over() -> None:
     """A microphone's floor describes a room and a loopback's a silent digital
-    line. Carrying one into the other leaves the strip deaf or twitching."""
-    controller, options = _controller()
+    line. Carrying one into the other leaves the strip deaf or twitching.
+    A room is what a microphone hears, so this is measured on one."""
+    controller, options = _controller(source="mic")
     with _Player(controller, options) as player:
         player.play(_silence(200, level=0.02))
     loud_room = controller._analyzer.stats.noise_floor
@@ -330,13 +333,13 @@ def test_the_floor_stops_learning_while_sound_is_coming_through() -> None:
 def test_changing_the_source_forgets_the_old_one() -> None:
     """A microphone's floor describes a room and a loopback's a silent digital
     line, so switching has to start again."""
-    controller, options = _controller()
+    controller, options = _controller(source="mic")
     with _Player(controller, options) as player:
         player.play(_silence(150, level=0.006))
     learned = controller._analyzer.stats.noise_floor
     assert learned > 0.002
 
-    controller.configure(source="mic")
+    controller.configure(source="system")
 
     assert controller._analyzer.stats.blocks == 0
     assert controller._analyzer.stats.noise_floor == 0.0
@@ -829,3 +832,17 @@ def test_the_shadow_detector_still_runs_when_it_is_asked_for(monkeypatch) -> Non
     _run_blocks(controller, options)
 
     assert controller.music_report().onset_blocks > 0, "the experiment could not be turned on"
+
+
+def test_quiet_music_already_playing_on_system_audio_lights_the_strip() -> None:
+    """The reaction switched on in the middle of a quiet track. Taken for the
+    floor, that track stayed silence and the strip sat at its glow until the
+    music paused — measured on a real strip for eleven seconds."""
+    # System audio gets no manual gate from the card, as in the window.
+    controller, options = _controller(noise_gate_rms=0.0)
+    quiet = 10 ** (-44 / 20)
+    with _Player(controller, options) as player:
+        colours = player.play([(quiet, quiet, quiet * 0.5, quiet)] * 200)
+
+    glow = round(255 * options.floor_brightness)
+    assert min(_brightness(colour) for colour in colours[-50:]) > 2 * glow, "the music was taken for silence"

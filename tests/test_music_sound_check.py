@@ -948,3 +948,38 @@ def test_calibrating_again_over_a_result_on_show_gives_back_the_words_from_befor
     _press_calibrate(window)  # again, while the first result is on show
     _press_calibrate(window)
     _until(lambda: label.text() == before, timeout=2.0)
+
+
+@pytest.mark.parametrize("source, heard", [("system", True), ("mic", False)])
+def test_opening_the_capture_starts_the_analyser_for_its_source(monkeypatch, source, heard):
+    # Through the real path: acquire opens the session, the session resets the
+    # analyser, and the capture thread feeds it quiet music from its first block.
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+    quiet = 10 ** (-44 / 20)
+
+    def reader(self, options):
+        def read(size):
+            sleep(0.002)
+            block = rng.standard_normal((size, 1)).astype(np.float32)
+            return block * np.float32(quiet / float(np.sqrt(np.mean(block ** 2))))
+
+        return read, (lambda: None), 48000
+
+    monkeypatch.setattr(MusicController, "_open_loopback_reader", reader)
+    monkeypatch.setattr(MusicController, "_open_mic_reader", reader)
+    made = MusicController()
+    # No manual gate, as the window configures it for system audio.
+    made.configure(source=source, blocksize=256, noise_gate_rms=0.0)
+    try:
+        made.acquire(OWNER_PREVIEW)
+        _until(lambda: made._analyzer.stats.blocks >= 60)
+        stats = made._analyzer.stats
+        silent, blocks = stats.silent_blocks, stats.blocks
+    finally:
+        made.stop()
+    if heard:
+        assert silent == 0, f"system audio took quiet music for silence: {silent} of {blocks} blocks"
+    else:
+        assert silent == blocks, "the microphone stopped learning its room from the first block"

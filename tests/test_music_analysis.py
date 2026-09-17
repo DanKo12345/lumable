@@ -308,3 +308,53 @@ def test_the_counters_are_numbers_and_nothing_else() -> None:
     assert stats.silent_blocks >= 1
     assert isinstance(stats.noise_floor, float)
     assert 0.0 <= stats.peak_level <= 1.0
+
+
+# ── where the floor starts ────────────────────────────────────────────
+_QUIET_MUSIC = 10 ** (-44 / 20)
+
+
+def _steady_music(analyzer: MusicAnalyzer, seconds: float = 120.0) -> list:
+    """Quiet music from the very first block, never pausing: -44 dBFS, give or
+    take the two decibels a real track moves."""
+    import random
+
+    rng = random.Random(7)
+    readings = []
+    for index in range(int(seconds * 1000 / 20)):
+        rms = _QUIET_MUSIC * 10 ** (rng.uniform(-2.0, 2.5) / 20)
+        readings.append(_block(analyzer, bass=rms, mid=rms, treble=rms * 0.5, rms=rms, now=index * 20.0))
+    return readings
+
+
+def test_music_already_playing_on_a_digital_line_is_heard_from_the_first_block() -> None:
+    analyzer = MusicAnalyzer()
+    analyzer.reset(digital=True)
+
+    readings = _steady_music(analyzer)
+
+    heard = sum(not reading.silent for reading in readings)
+    assert heard == len(readings), f"{len(readings) - heard} of {len(readings)} blocks taken for silence"
+
+
+def test_digital_zero_stays_silence_on_a_digital_line() -> None:
+    analyzer = MusicAnalyzer()
+    analyzer.reset(digital=True)
+    now = _quiet(analyzer, 0.0, blocks=200)
+
+    reading = _block(analyzer, bass=0.0, mid=0.0, treble=0.0, rms=0.0, now=now)
+
+    assert reading.silent
+    assert reading.level == 0.0
+
+
+def test_a_microphone_still_learns_its_room_from_the_first_block() -> None:
+    """Unchanged for the microphone: what it hears first is the room, and a room
+    that steady is not sound."""
+    analyzer = MusicAnalyzer()
+    analyzer.reset()
+
+    readings = _steady_music(analyzer, seconds=10.0)
+
+    assert all(reading.silent for reading in readings), "a steady room was taken for sound"
+    assert readings[-1].noise_floor > 2 * _QUIET_MUSIC / 3, "the floor was not learned from the room"

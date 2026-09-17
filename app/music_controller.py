@@ -334,6 +334,8 @@ class MusicController(QObject):
         self._shadow_onset_enabled = shadow_onset_enabled()
         self._onset = SuperFluxOnset()
         self._onset_agreement = OnsetAgreement()
+        # Started in the mode of the source it is about to listen to.
+        self._reset_analysis()
         # Bumped by every start, so a block emitted just before a stop can be
         # recognised as belonging to the previous run and dropped.
         self._session_token = 0
@@ -374,7 +376,7 @@ class MusicController(QObject):
         """
         self._band_peak = 1e-6
         self._ema = None
-        self._analyzer.reset(preserve_beat_id=preserve_beat_id)
+        self._analyzer.reset(preserve_beat_id=preserve_beat_id, digital=self._options.source != "mic")
         self._onset.reset()
         self._onset_agreement.reset()
 
