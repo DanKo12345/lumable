@@ -2,6 +2,31 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.4.4] - 2026-09-18
+
+Music reacts more clearly at everyday listening levels, and the microphone is easier to tune
+without guessing where the room noise ends.
+
+### Added
+- Live bass, mid and treble meters on the Music card, with a short sound check for system audio
+  or a microphone and a live level beside the noise threshold.
+- Microphone noise-gate calibration from a brief quiet sample, with clear feedback when the sample
+  is too loud or unstable.
+
+### Changed
+- The microphone threshold uses a decibel scale. Existing settings are migrated without changing
+  the effective threshold.
+- Quiet system music lifts the reaction colour while keeping the strip's hardware brightness and
+  Fusion's unmodified audio level. Louder music keeps its previous appearance.
+- Navigation items grow gently on hover; their labels remain sharp and stable at rest.
+
+### Fixed
+- System audio no longer spends several seconds learning an already-playing quiet track as noise.
+- Live microphone level stays readable over the threshold slider's fill in both themes, and music
+  controls keep their full labels through row transitions.
+- Audio capture recovers after transient device failures. BLE recovery keeps writes on their own
+  connection, and sleep automations run before Windows suspends the app.
+
 ## [0.4.3] - 2026-09-04
 
 Light & Polish: a calmer light appearance, clearer Pro guidance and a simple way to carry your

@@ -1,0 +1,98 @@
+name: Windows release check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller==6.20.0
+          if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue)) {
+            choco install innosetup --no-progress -y
+          }
+      - name: Build Windows packages
+        shell: pwsh
+        env:
+          LUMABLE_DATA_DIR: ${{ runner.temp }}\lumable-smoke-data
+          LUMABLE_NO_STARTUP_SERVICES: '1'
+          LUMABLE_SKIP_SMOKE: '1'
+        run: |
+          ./build_exe.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build_installer.ps1 -SkipBuild
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            (Resolve-Path 'dist/LumaBLE').Path,
+            (Join-Path (Resolve-Path 'dist/installer').Path 'LumaBLE-0.4.4-beta-windows.zip')
+          )
+      - name: Check packages and installed app
+        shell: pwsh
+        env:
+          LUMABLE_NO_STARTUP_SERVICES: '1'
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '0.4.4'
+          $testRoot = Join-Path $env:RUNNER_TEMP 'lumable-release-check'
+          $installDir = Join-Path $testRoot 'installed'
+          $env:LUMABLE_DATA_DIR = Join-Path $testRoot 'app-data'
+          New-Item -ItemType Directory -Force -Path $testRoot, $env:LUMABLE_DATA_DIR | Out-Null
+          $oldInstaller = Join-Path $testRoot 'LumaBLE-Setup-0.4.3.exe'
+          Invoke-WebRequest 'https://github.com/DanKo12345/lumable/releases/download/v0.4.3-beta/LumaBLE-Setup-0.4.3.exe' -OutFile $oldInstaller
+          $newInstaller = (Resolve-Path 'dist/installer/LumaBLE-Setup-0.4.4.exe').Path
+          $portable = (Resolve-Path 'dist/LumaBLE/LumaBLE.exe').Path
+          if ((Get-Item $portable).VersionInfo.FileVersion -ne $version) { throw 'Portable version mismatch' }
+
+          & $oldInstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/DIR=$installDir" "/LOG=$testRoot/old-install.log"
+          if ($LASTEXITCODE -ne 0) { throw "0.4.3 install failed: $LASTEXITCODE" }
+          $oldRuntime = Join-Path $installDir '_internal'
+          if (-not (Test-Path (Join-Path $installDir 'LumaBLE.exe'))) { throw '0.4.3 install missing EXE' }
+          New-Item -ItemType File -Path (Join-Path $oldRuntime 'obsolete-043.txt') | Out-Null
+          $savedData = Join-Path $env:LUMABLE_DATA_DIR 'preserve.txt'
+          Set-Content -LiteralPath $savedData -Value 'keep'
+
+          & $newInstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/DIR=$installDir" "/LOG=$testRoot/upgrade.log"
+          if ($LASTEXITCODE -ne 0) { throw "0.4.4 upgrade failed: $LASTEXITCODE" }
+          $installedExe = Join-Path $installDir 'LumaBLE.exe'
+          if ((Get-Item $installedExe).VersionInfo.FileVersion -ne $version) { throw 'Upgrade version mismatch' }
+          if (Test-Path (Join-Path $oldRuntime 'obsolete-043.txt')) { throw 'Obsolete runtime survived upgrade' }
+          if ((Get-Content -LiteralPath $savedData) -ne 'keep') { throw 'Saved data changed during upgrade' }
+
+          $process = Start-Process -FilePath $installedExe -WorkingDirectory $installDir -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 6
+          $process.Refresh()
+          if ($process.HasExited) { throw "Installed app exited during smoke check: $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
+
+          $uninstaller = Join-Path $installDir 'unins000.exe'
+          & $uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          if ($LASTEXITCODE -ne 0) { throw "Uninstall failed: $LASTEXITCODE" }
+          if ((Get-Content -LiteralPath $savedData) -ne 'keep') { throw 'Saved data changed during uninstall' }
+
+          & $newInstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/DIR=$installDir" "/LOG=$testRoot/clean-install.log"
+          if ($LASTEXITCODE -ne 0) { throw "Clean install failed: $LASTEXITCODE" }
+          if ((Get-Item $installedExe).VersionInfo.FileVersion -ne $version) { throw 'Clean install version mismatch' }
+
+          $unwanted = Get-ChildItem 'dist/LumaBLE' -Recurse -File | Where-Object {
+            $_.FullName -match '(__pycache__|__pyinstaller|\\tests\\|\.log$|\.pyc$)'
+          }
+          if ($unwanted) { throw "Unwanted package files: $($unwanted.FullName -join ', ')" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumable-0.4.4-windows
+          path: |
+            dist/installer/LumaBLE-Setup-0.4.4.exe
+            dist/installer/LumaBLE-0.4.4-beta-windows.zip
+          if-no-files-found: error

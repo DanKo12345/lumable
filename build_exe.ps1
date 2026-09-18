@@ -110,6 +110,21 @@ foreach ($relativePath in $unusedQtFiles) {
     }
 }
 
+$bundleRoot = (Resolve-Path -LiteralPath (Join-Path $root "dist\LumaBLE")).Path
+foreach ($relativePath in @(
+    "dist\LumaBLE\_internal\app\i18n\__pycache__",
+    "dist\LumaBLE\_internal\soundcard\__pyinstaller"
+)) {
+    $path = Join-Path $root $relativePath
+    if (Test-Path -LiteralPath $path) {
+        $resolved = (Resolve-Path -LiteralPath $path).Path
+        if (-not $resolved.StartsWith("$bundleRoot\", [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unexpected bundle cleanup path: $resolved"
+        }
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+}
+
 $translationsDir = Join-Path $root "dist\LumaBLE\_internal\PySide6\translations"
 if (Test-Path -LiteralPath $translationsDir) {
     Get-ChildItem -LiteralPath $translationsDir -Filter "*.qm" | ForEach-Object {

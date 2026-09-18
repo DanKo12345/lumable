@@ -1,6 +1,6 @@
 #define MyAppName "LumaBLE"
 #ifndef MyAppVersion
-#define MyAppVersion "0.4.3"
+#define MyAppVersion "0.4.4"
 #endif
 #ifndef MyAppId
 #define MyAppId "{{9F04E5C5-2B4B-43E4-A0E8-2CB916B0E8E8}"
