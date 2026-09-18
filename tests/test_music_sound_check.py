@@ -1060,3 +1060,77 @@ def test_the_lift_stays_under_the_strips_own_brightness(window, monkeypatch):
     for rgb in sent:
         payload = driver.color_payloads(*rgb)[0]
         assert payload[0] == 0x56 and max(payload[1:4]) <= round(255 * 0.03), f"{rgb} went past the strip's 3%"
+
+
+def _contrast(first, second) -> float:
+    def luminance(colour):
+        def linear(value):
+            value /= 255.0
+            return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+        return 0.2126 * linear(colour.red()) + 0.7152 * linear(colour.green()) + 0.0722 * linear(colour.blue())
+
+    high, low = sorted((luminance(first), luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def _gate_slider_image(dark: bool, live: float | None, passing: bool):
+    """The gate slider with its handle at 40, painted on its card, and where to look."""
+    from PySide6.QtGui import QColor, QImage
+
+    from app.theme import theme_manager
+    from app.widgets.liquid_slider import LiquidSlider
+
+    QApplication.instance() or QApplication([])
+    was_dark = theme_manager.is_dark
+    theme_manager.set_dark(dark)
+    try:
+        slider = LiquidSlider("green")
+        slider.setRange(0, 100)
+        slider.resize(400, 56)
+        slider.jump_to(40)
+        slider.set_live_level(live, passing=passing)
+        image = QImage(slider.size(), QImage.Format_ARGB32_Premultiplied)
+        # The card the gate sits on, opaque: the groove itself is translucent.
+        image.fill(QColor(28, 29, 32) if dark else QColor(248, 248, 250))
+        slider.render(image)
+    finally:
+        theme_manager.set_dark(was_dark)
+    scale = slider._scale
+    left, width = 14.0 * scale, slider.width() - 28.0 * scale
+
+    def x_at(value):
+        return left + width * value / 100.0
+
+    return image, x_at, slider.height() / 2 + 3.0 * scale, 7.2 * scale
+
+
+@pytest.mark.parametrize("passing", [False, True], ids=["below the gate", "getting through"])
+@pytest.mark.parametrize("dark", [True, False], ids=["dark theme", "light theme"])
+def test_the_live_level_reads_against_the_fill_and_the_empty_track(dark, passing):
+    # The line runs from the start of the track: over the fill up to the handle,
+    # then over the empty groove. Both parts have to be seen, in both themes, and
+    # most of all while the room is still below the gate.
+    image, x_at, cy, groove = _gate_slider_image(dark, 70.0, passing)
+    beside = groove * 0.42  # inside the groove, just outside the line
+
+    def against_its_surroundings(x):
+        return _contrast(image.pixelColor(round(x), round(cy)), image.pixelColor(round(x), round(cy - beside)))
+
+    over_fill, over_groove = against_its_surroundings(x_at(20)), against_its_surroundings(x_at(58))
+    assert over_fill >= 3.0, f"the line is lost in the fill: {over_fill:.2f}:1"
+    assert over_groove >= 2.0, f"the line is lost on the empty track: {over_groove:.2f}:1"
+
+
+@pytest.mark.parametrize("dark", [True, False], ids=["dark theme", "light theme"])
+def test_the_handle_stays_on_top_of_the_live_level(dark):
+    with_line, x_at, cy, _ = _gate_slider_image(dark, 70.0, True)
+    without, _, _, _ = _gate_slider_image(dark, None, False)
+    centre = round(x_at(40))
+    # The handle is 245/255 opaque by design, so whatever lies under it shows by
+    # at most 10 levels. A line painted over it would differ by a hundred or more.
+    for dx in range(-3, 4):
+        for dy in range(-3, 4):
+            a = with_line.pixelColor(centre + dx, round(cy) + dy)
+            b = without.pixelColor(centre + dx, round(cy) + dy)
+            worst = max(abs(a.red() - b.red()), abs(a.green() - b.green()), abs(a.blue() - b.blue()))
+            assert worst <= 255 - 245, f"the line shows through the handle at {dx},{dy}: {a.name()} vs {b.name()}"

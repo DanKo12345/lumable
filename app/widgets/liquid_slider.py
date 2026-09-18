@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, QSequentialAnimationGroup, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen, QRadialGradient
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QSlider
 
 from app.motion_policy import motion_policy
@@ -153,7 +153,7 @@ class LiquidSlider(QSlider):
     def live_level(self) -> float | None:
         return self._live_level
 
-    def _paint_live_level(self, painter: QPainter, groove_rect: QRectF) -> None:
+    def _paint_live_level(self, painter: QPainter, groove_rect: QRectF, fill_right: float) -> None:
         width = groove_rect.width() * self._ratio_from_value(self._live_level)
         if width < 0.5:
             return
@@ -164,13 +164,26 @@ class LiquidSlider(QSlider):
             max(width, height),
             height,
         )
+        passing = self._live_passing
+        # Over the accent fill the line is dark in both themes. A bright accent
+        # leaves no room above it for a white line: measured at 1.2:1 in the dark
+        # theme while the signal was below the gate, the very moment the line is
+        # there to show. Over the empty groove it keeps the theme's own ink.
+        on_fill = QColor(12, 22, 40, 200 if passing else 140)
         if theme_manager.is_dark:
-            color = QColor(255, 255, 255, 215 if self._live_passing else 95)
+            on_groove = QColor(255, 255, 255, 215 if passing else 130)
         else:
-            color = QColor(20, 32, 60, 165 if self._live_passing else 70)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(color)
-        painter.drawRoundedRect(band, height / 2.0, height / 2.0)
+            on_groove = QColor(20, 32, 60, 165 if passing else 110)
+        shape = QPainterPath()
+        shape.addRoundedRect(band, height / 2.0, height / 2.0)
+        # The two inks meet at the end of the fill, which is under the handle.
+        split = max(band.left(), min(band.right(), fill_right))
+        painter.save()
+        painter.setClipRect(QRectF(band.left(), band.top(), split - band.left(), band.height()))
+        painter.fillPath(shape, on_fill)
+        painter.setClipRect(QRectF(split, band.top(), band.right() - split, band.height()))
+        painter.fillPath(shape, on_groove)
+        painter.restore()
 
     def _accent_color(self) -> QColor:
         palette = {
@@ -408,7 +421,8 @@ class LiquidSlider(QSlider):
         if self._live_level is not None:
             # Over the fill and under the handle, so the handle stays readable
             # as "the threshold" wherever the signal is.
-            self._paint_live_level(painter, groove_rect)
+            fill_right = fill_rect.right() if self._track_gradient is None else groove_rect.left()
+            self._paint_live_level(painter, groove_rect, fill_right)
 
         handle_rect = QRectF(handle_x - handle_radius, handle_cy - handle_radius, handle_radius * 2, handle_radius * 2)
         painter.setBrush(handle_fill)
