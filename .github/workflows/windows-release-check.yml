@@ -56,16 +56,22 @@ jobs:
           $portable = (Resolve-Path 'dist/LumaBLE/LumaBLE.exe').Path
           if ((Get-Item $portable).VersionInfo.FileVersion -ne $version) { throw 'Portable version mismatch' }
 
-          & $oldInstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/DIR=$installDir" "/LOG=$testRoot/old-install.log"
-          if ($LASTEXITCODE -ne 0) { throw "0.4.3 install failed: $LASTEXITCODE" }
+          function Invoke-Setup($file, $log, $arguments) {
+            $process = Start-Process -FilePath $file -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
+            if ($process.ExitCode -ne 0) {
+              if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 60 }
+              throw "Setup failed with exit code $($process.ExitCode): $file"
+            }
+          }
+
+          Invoke-Setup $oldInstaller (Join-Path $testRoot 'old-install.log') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$installDir", "/LOG=$testRoot/old-install.log")
           $oldRuntime = Join-Path $installDir '_internal'
           if (-not (Test-Path (Join-Path $installDir 'LumaBLE.exe'))) { throw '0.4.3 install missing EXE' }
           New-Item -ItemType File -Path (Join-Path $oldRuntime 'obsolete-043.txt') | Out-Null
           $savedData = Join-Path $env:LUMABLE_DATA_DIR 'preserve.txt'
           Set-Content -LiteralPath $savedData -Value 'keep'
 
-          & $newInstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/DIR=$installDir" "/LOG=$testRoot/upgrade.log"
-          if ($LASTEXITCODE -ne 0) { throw "0.4.4 upgrade failed: $LASTEXITCODE" }
+          Invoke-Setup $newInstaller (Join-Path $testRoot 'upgrade.log') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$installDir", "/LOG=$testRoot/upgrade.log")
           $installedExe = Join-Path $installDir 'LumaBLE.exe'
           if ((Get-Item $installedExe).VersionInfo.FileVersion -ne $version) { throw 'Upgrade version mismatch' }
           if (Test-Path (Join-Path $oldRuntime 'obsolete-043.txt')) { throw 'Obsolete runtime survived upgrade' }
@@ -78,12 +84,10 @@ jobs:
           Stop-Process -Id $process.Id -Force
 
           $uninstaller = Join-Path $installDir 'unins000.exe'
-          & $uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-          if ($LASTEXITCODE -ne 0) { throw "Uninstall failed: $LASTEXITCODE" }
+          Invoke-Setup $uninstaller (Join-Path $testRoot 'uninstall.log') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$testRoot/uninstall.log")
           if ((Get-Content -LiteralPath $savedData) -ne 'keep') { throw 'Saved data changed during uninstall' }
 
-          & $newInstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/DIR=$installDir" "/LOG=$testRoot/clean-install.log"
-          if ($LASTEXITCODE -ne 0) { throw "Clean install failed: $LASTEXITCODE" }
+          Invoke-Setup $newInstaller (Join-Path $testRoot 'clean-install.log') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$installDir", "/LOG=$testRoot/clean-install.log")
           if ((Get-Item $installedExe).VersionInfo.FileVersion -ne $version) { throw 'Clean install version mismatch' }
 
           $unwanted = Get-ChildItem 'dist/LumaBLE' -Recurse -File | Where-Object {
