@@ -983,3 +983,80 @@ def test_opening_the_capture_starts_the_analyser_for_its_source(monkeypatch, sou
         assert silent == 0, f"system audio took quiet music for silence: {silent} of {blocks} blocks"
     else:
         assert silent == blocks, "the microphone stopped learning its room from the first block"
+
+
+def test_a_new_capture_forgets_the_lift(monkeypatch):
+    import numpy as np
+
+    from app.music_analysis import LEVEL_CEILING
+
+    release = threading.Event()
+
+    def reader(self, options):
+        def read(size):
+            release.wait(2.0)
+            return np.zeros((size, 1), np.float32)
+
+        return read, (lambda: None), 48000
+
+    monkeypatch.setattr(MusicController, "_open_loopback_reader", reader)
+    made = MusicController()
+    made.configure(source="system", noise_gate_rms=0.0)
+    quiet = 10 ** (-44 / 20)
+    tone = (np.sin(2 * np.pi * 180 * np.arange(1024) / 48000) * quiet * np.sqrt(2)).astype(np.float32).reshape(-1, 1)
+    for _ in range(60):
+        made._process_block(tone, 48000, made.options())
+    span = LEVEL_CEILING - made._analyzer.gate_for(0.0)
+    assert made._loudness.gain_db(span) > 0.0, "the test needs a lift to forget"
+    try:
+        made.acquire(OWNER_PREVIEW)
+        assert made._loudness.gain_db(span) == 0.0, "a new capture kept the last one's lift"
+    finally:
+        release.set()
+        made.stop()
+
+
+def test_the_lift_stays_under_the_strips_own_brightness(window, monkeypatch):
+    # The reaction lifts quiet music in the colour it streams. The strip's own
+    # brightness is the person's limit: never written by the reaction, and on a
+    # driver that scales the colour itself, the stream at 3% stays under 3%.
+    import numpy as np
+
+    from app.ble_drivers.triones import TrionesDriver
+
+    rate, rms, frames = 48000, 10 ** (-44 / 20), [0]
+
+    def reader(self, options):
+        def read(size):
+            sleep(0.004)
+            t = (frames[0] + np.arange(size)) / rate
+            frames[0] += size
+            mono = np.sin(2 * np.pi * 180 * t) * rms * np.sqrt(2)
+            return np.stack([mono, mono], axis=1).astype(np.float32)
+
+        return read, (lambda: None), rate
+
+    monkeypatch.setattr(MusicController, "_open_loopback_reader", reader)
+    # No strip is connected: an error dialog would wait for a click nobody makes.
+    monkeypatch.setattr(window, "_show_error", lambda *args, **kwargs: None)
+    sent, brightness_written = [], []
+    monkeypatch.setattr(window._ble, "set_color_stream", lambda *rgb: sent.append(rgb) or True)
+    monkeypatch.setattr(window._ble, "set_brightness", lambda value: brightness_written.append(value))
+    ui = window._music_ui
+    ui._on_source_type_changed("system")
+    powered = window.power_button.isChecked()
+    try:
+        window.power_button.setChecked(True)
+        ui._start()
+        # Unlifted, -44 dBFS reaches about a fifth of the scale: under 60 of 255.
+        _until(lambda: bool(sent) and max(sent[-1]) > 100, timeout=6.0)
+    finally:
+        ui.stop_if_running()
+        window.power_button.setChecked(powered)
+
+    assert brightness_written == [], "the reaction wrote the strip's brightness"
+    driver = TrionesDriver()
+    driver.remember_brightness(3)
+    for rgb in sent:
+        payload = driver.color_payloads(*rgb)[0]
+        assert payload[0] == 0x56 and max(payload[1:4]) <= round(255 * 0.03), f"{rgb} went past the strip's 3%"

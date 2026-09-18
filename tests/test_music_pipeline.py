@@ -17,6 +17,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+import app.music_analysis as analysis
 import app.music_controller as module
 from app.music_controller import MusicController, MusicOptions
 
@@ -846,3 +847,69 @@ def test_quiet_music_already_playing_on_system_audio_lights_the_strip() -> None:
 
     glow = round(255 * options.floor_brightness)
     assert min(_brightness(colour) for colour in colours[-50:]) > 2 * glow, "the music was taken for silence"
+
+
+# ── lifting quiet system music ────────────────────────────────────────
+def _quiet_track(count: int, *, kick_every: int = 8):
+    quiet = 10 ** (-44 / 20)
+    blocks = []
+    for index in range(count):
+        kick = index % kick_every == 0
+        swing = 1.0 + 0.2 * math.sin(index / 5)
+        blocks.append((quiet * (3.0 if kick else 1.0), quiet * swing, quiet * 0.5, quiet * swing * (1.6 if kick else 1.0)))
+    return blocks
+
+
+def _play_track(blocks, *, source="system", beat_strength=0.0):
+    controller, options = _controller(source=source, noise_gate_rms=0.0, beat_strength=beat_strength)
+    with _Player(controller, options) as player:
+        if source == "mic":
+            player.play(_silence(60, level=0.0005))
+        return player.play_results(blocks)
+
+
+def test_quiet_system_music_lifts_the_colour_and_leaves_fusions_level_alone(monkeypatch) -> None:
+    blocks = _quiet_track(300)
+    lifted = _play_track(blocks)
+    with monkeypatch.context() as unlifted:
+        unlifted.setattr(analysis, "ADAPTIVE_MAX_GAIN_DB", 0.0)
+        plain = _play_track(blocks)
+
+    assert [result.level for result in lifted] == [result.level for result in plain], "Fusion's level changed"
+    lifted_colour = sum(result.color_level for result in lifted[100:]) / 200
+    plain_colour = sum(result.color_level for result in plain[100:]) / 200
+    assert lifted_colour > plain_colour + 0.2, f"the colour was not lifted: {plain_colour:.2f} -> {lifted_colour:.2f}"
+
+
+def test_the_beat_is_added_after_the_lift() -> None:
+    blocks = _quiet_track(300)
+    bare = _play_track(blocks, beat_strength=0.0)
+    struck = _play_track(blocks, beat_strength=1.0)
+
+    assert any(result.beat_envelope > 0.0 for result in struck), "the test needs a beat"
+    for without, with_beat in zip(bare, struck, strict=True):
+        expected = min(1.0, without.color_level + with_beat.beat_envelope) if without.color_level > 0.0 else 0.0
+        assert with_beat.color_level == pytest.approx(expected, abs=1e-12)
+
+
+def test_the_microphone_colour_is_not_lifted(monkeypatch) -> None:
+    blocks = _quiet_track(300)
+    heard = _play_track(blocks, source="mic")
+    with monkeypatch.context() as unlifted:
+        unlifted.setattr(analysis, "ADAPTIVE_MAX_GAIN_DB", 0.0)
+        plain = _play_track(blocks, source="mic")
+
+    assert any(result.color_level > 0.0 for result in heard), "the test needs the microphone to hear something"
+    assert [result.color_level for result in heard] == [result.color_level for result in plain]
+
+
+def test_changing_the_source_forgets_the_lift() -> None:
+    controller, options = _controller(noise_gate_rms=0.0)
+    with _Player(controller, options) as player:
+        player.play(_quiet_track(100))
+    span = analysis.LEVEL_CEILING - controller._analyzer.gate_for(0.0)
+    assert controller._loudness.gain_db(span) > 0.0
+
+    controller.configure(source="mic")
+
+    assert controller._loudness.gain_db(span) == 0.0

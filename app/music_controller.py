@@ -10,7 +10,7 @@ from time import monotonic
 from PySide6.QtCore import QObject, Signal
 
 from app.color_stream import ColorStreamEngine
-from app.music_analysis import MusicAnalyzer, MusicSyncReport
+from app.music_analysis import LEVEL_CEILING, LoudnessReference, MusicAnalyzer, MusicSyncReport
 from app.music_calibration import NoiseSample
 from app.music_color import DEFAULT_BAND_COLORS, bands_to_rgb
 from app.music_gate import GATE_DB_MAX, rms_for_db
@@ -322,6 +322,8 @@ class MusicController(QObject):
         # One source's idea of silence and of a beat. Reset whenever the source
         # changes or capture restarts — see _reset_analysis.
         self._analyzer = MusicAnalyzer()
+        # How far quiet system music is lifted. Reset with the analyser.
+        self._loudness = LoudnessReference()
         # Runs beside the working detector and drives nothing. Counted so a run
         # on real music can be compared with what the strip actually did, before
         # anything is swapped over.
@@ -377,6 +379,7 @@ class MusicController(QObject):
         self._band_peak = 1e-6
         self._ema = None
         self._analyzer.reset(preserve_beat_id=preserve_beat_id, digital=self._options.source != "mic")
+        self._loudness.reset()
         self._onset.reset()
         self._onset_agreement.reset()
 
@@ -761,6 +764,7 @@ class MusicController(QObject):
 
     def _process_block(self, block, samplerate: int, options: MusicOptions) -> BlockResult:
         bass, mid, treble, rms = analyze_block(block, samplerate)
+        now_ms = monotonic() * 1000.0
         # Silence and onsets are judged on the raw block: a transient does not
         # survive smoothing, and a floor learned from smoothed values would
         # chase the music instead of the room.
@@ -769,11 +773,11 @@ class MusicController(QObject):
             mid=mid,
             treble=treble,
             rms=rms,
-            now_ms=monotonic() * 1000.0,
+            now_ms=now_ms,
             manual_gate=self._manual_gate(options),
             beat_ratio=options.beat_sensitivity,
         )
-        self._shadow_onset(block, samplerate, monotonic() * 1000.0, reading.beat)
+        self._shadow_onset(block, samplerate, now_ms, reading.beat)
         # Ease the raw energies toward each reading (EMA) so the colour glides;
         # the factor is the user's "speed": low = calm, high = snappy.
         factor = options.reactivity
@@ -783,10 +787,18 @@ class MusicController(QObject):
             for i, value in enumerate((bass, mid, treble, rms)):
                 self._ema[i] += (value - self._ema[i]) * factor
         bass, mid, treble, smooth_rms = self._ema
-        level = self._analyzer.level_for(smooth_rms, self._manual_gate(options))
-        # Kept before the beat is folded in: this is the loudness on its own,
+        manual_gate = self._manual_gate(options)
+        level = self._analyzer.level_for(smooth_rms, manual_gate)
+        # Kept before the lift and the beat: this is the loudness on its own,
         # and it is what a composer wants alongside the bare onset.
         plain_level = level
+        if options.source != "mic":
+            # Quiet system music is lifted for the colour only. The lift comes
+            # before the beat, so a beat keeps its size, and the meters are
+            # handed the same number the strip was.
+            gate = self._analyzer.gate_for(manual_gate)
+            self._loudness.update(smooth_rms - gate, silent=reading.silent, now_ms=now_ms)
+            level = self._analyzer.level_for(smooth_rms, manual_gate, gain=self._loudness.gain(LEVEL_CEILING - gate))
         if options.beat_strength > 0.0 and level > 0.0:
             level = min(1.0, level + reading.envelope * options.beat_strength)
         # Auto-gain the bands against a slowly decaying running peak so the hue

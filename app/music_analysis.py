@@ -139,16 +139,51 @@ class AnalysisStats:
     peak_level: float = 0.0
 
 
-def normalize_above(rms: float, floor: float, ceiling: float = 0.25) -> float:
+# ── how bright quiet music may get ────────────────────────────────────
+# Brightness follows how far the music sits above the gate, on a scale whose top
+# is a loud modern master. A track played quietly sat at a fifth of it: on one
+# machine and one strip, the loopback measured -44 dBFS, level 0.17. On that
+# machine a louder Windows volume did not change what the loopback captured —
+# -43.7 dBFS at the usual setting and at a louder one — so the Windows volume
+# could not be relied on to brighten it.
+#
+# System music is lifted so that its average sits at a chosen level. It is only
+# ever lifted: music that already fills the scale looks exactly as before.
+LEVEL_CEILING = 0.25
+# Where the average of the music is aimed. Beats and loud bars rise above it.
+ADAPTIVE_TARGET_LEVEL = 0.65
+# The most a quiet track is lifted. The target is a direction, not a promise: a
+# very quiet track stops short of it rather than being raised without end.
+ADAPTIVE_MAX_GAIN_DB = 24.0
+# The average is of energy over about a second, not of peaks. A reference that
+# chased peaks moved on every kick and on every loud block, and the lift moved
+# against the music — 2.3 to 3.9 dB within half a second, measured where the
+# limit could not hide it. Averaged, it stays under a decibel.
+ADAPTIVE_AVERAGE_S = 1.0
+# How fast the lift follows that average, in time rather than blocks. Up quickly,
+# so a louder track is over-lit for about a second; down slowly, so a quiet bar is
+# not taken for a quieter track. A quiet track after a loud one is lifted again
+# within about seven seconds.
+ADAPTIVE_RISE_DB_PER_S = 20.0
+ADAPTIVE_FALL_DB_PER_S = 3.0
+# The first seconds of a run have no history to protect: both ways are quick.
+ADAPTIVE_SETTLE_S = 2.0
+# The longest a single block may count for. A gap between blocks is not time the
+# music was heard.
+_ADAPTIVE_MAX_STEP_S = 0.1
+
+
+def normalize_above(rms: float, floor: float, ceiling: float = LEVEL_CEILING, gain: float = 1.0) -> float:
     """Map an RMS above a floor onto 0..1, with the same curve as before.
 
     The square root keeps quiet passages visible without loud ones flattening
     everything — that part of the old behaviour is deliberately unchanged.
+    ``gain`` lifts only the part above the floor; the floor itself stays put.
     """
     if rms <= floor:
         return 0.0
     span = max(1e-6, ceiling - floor)
-    return min(1.0, (rms - floor) / span) ** 0.5
+    return min(1.0, (rms - floor) * gain / span) ** 0.5
 
 
 class MusicAnalyzer:
@@ -370,7 +405,12 @@ class MusicAnalyzer:
         )
 
 
-    def level_for(self, rms: float, manual_gate: float = 0.0) -> float:
+    def gate_for(self, manual_gate: float = 0.0) -> float:
+        """The RMS brightness is measured from: where sound closes, or the
+        microphone's own gate if that is stricter."""
+        return max(self._floor * _CLOSE_RATIO, manual_gate)
+
+    def level_for(self, rms: float, manual_gate: float = 0.0, gain: float = 1.0) -> float:
         """Loudness of an already-smoothed RMS against the floor just measured.
 
         The gate and the onset are judged on the raw block — a transient does
@@ -380,7 +420,65 @@ class MusicAnalyzer:
         """
         if not self._open:
             return 0.0
-        return normalize_above(rms, max(self._floor * _CLOSE_RATIO, manual_gate))
+        return normalize_above(rms, self.gate_for(manual_gate), gain=gain)
+
+
+class LoudnessReference:
+    """How loud the music is on average, and how far quiet music is lifted.
+
+    Measured on the smoothed RMS above the gate: its energy averaged over time,
+    in decibels, against a clock rather than a count of blocks. Held still while
+    the gate is shut: a pause is not a quieter track, and the same music coming
+    back must not flare. The pause is not counted as time either, so the first
+    block after it moves nothing and the rest move at the usual speed.
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self._energy: float | None = None
+        self._reference_db: float | None = None
+        self._heard_s = 0.0
+        self._last_ms: float | None = None
+
+    def update(self, excess: float, *, silent: bool, now_ms: float) -> None:
+        if silent:
+            self._last_ms = None
+            return
+        if self._last_ms is None:
+            step_s = 0.0
+        else:
+            step_s = min(_ADAPTIVE_MAX_STEP_S, max(0.0, (now_ms - self._last_ms) / 1000.0))
+        self._last_ms = now_ms
+        if excess <= 0.0:
+            return
+        self._heard_s += step_s
+        energy = excess * excess
+        if self._energy is None:
+            self._energy = energy
+        else:
+            self._energy += (energy - self._energy) * (1.0 - math.exp(-step_s / ADAPTIVE_AVERAGE_S))
+        value_db = 10.0 * math.log10(self._energy)
+        if self._reference_db is None:
+            self._reference_db = value_db
+            return
+        if value_db > self._reference_db:
+            self._reference_db = min(value_db, self._reference_db + ADAPTIVE_RISE_DB_PER_S * step_s)
+        else:
+            fall = ADAPTIVE_RISE_DB_PER_S if self._heard_s < ADAPTIVE_SETTLE_S else ADAPTIVE_FALL_DB_PER_S
+            self._reference_db = max(value_db, self._reference_db - fall * step_s)
+
+    def gain_db(self, span: float) -> float:
+        """The lift for a scale ``span`` wide above the gate: never below none,
+        never above the limit."""
+        if self._reference_db is None or span <= 0.0:
+            return 0.0
+        target_db = 20.0 * math.log10(ADAPTIVE_TARGET_LEVEL ** 2 * span)
+        return min(ADAPTIVE_MAX_GAIN_DB, max(0.0, target_db - self._reference_db))
+
+    def gain(self, span: float) -> float:
+        return 10.0 ** (self.gain_db(span) / 20.0)
 
 
 @dataclass(frozen=True)

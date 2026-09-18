@@ -7,7 +7,18 @@ blocks rather than in time — which meant it changed with the sound card.
 
 from __future__ import annotations
 
-from app.music_analysis import MIN_BEAT_GAP_MS, MusicAnalyzer
+import random
+
+import pytest
+
+from app.music_analysis import (
+    ADAPTIVE_MAX_GAIN_DB,
+    ADAPTIVE_RISE_DB_PER_S,
+    LEVEL_CEILING,
+    MIN_BEAT_GAP_MS,
+    LoudnessReference,
+    MusicAnalyzer,
+)
 
 
 def _quiet(analyzer: MusicAnalyzer, rms: float, blocks: int = 60, start: float = 0.0) -> float:
@@ -358,3 +369,181 @@ def test_a_microphone_still_learns_its_room_from_the_first_block() -> None:
 
     assert all(reading.silent for reading in readings), "a steady room was taken for sound"
     assert readings[-1].noise_floor > 2 * _QUIET_MUSIC / 3, "the floor was not learned from the room"
+
+
+# ── lifting quiet system music ────────────────────────────────────────
+_SPAN = LEVEL_CEILING - 0.0006 * 1.7  # a digital line's scale above its gate
+_BLOCK_MS = 1024 / 48000 * 1000
+
+
+def _tune(seconds, level_db, *, start_ms=0.0, step_ms=_BLOCK_MS, spread_db=2.5, kicks=True, beat_s=0.5, seed=1):
+    """RMS of a track, block by block: a kick every ``beat_s`` seconds, lasting 60 ms."""
+    rng = random.Random(seed)
+    blocks = []
+    for index in range(int(seconds * 1000 / step_ms)):
+        now = start_ms + index * step_ms
+        kick = kicks and beat_s and now % (beat_s * 1000.0) < 60.0
+        value = level_db + rng.uniform(-spread_db, spread_db) + (6.0 if kick else 0.0)
+        blocks.append((now, 10 ** (value / 20), False))
+    return blocks
+
+
+def _pause(seconds, *, start_ms, step_ms=_BLOCK_MS):
+    return [(start_ms + index * step_ms, 0.0, True) for index in range(int(seconds * 1000 / step_ms))]
+
+
+def _lift(blocks, reference=None):
+    reference = reference or LoudnessReference()
+    gains = []
+    for now, excess, silent in blocks:
+        reference.update(excess, silent=silent, now_ms=now)
+        gains.append((now, reference.gain_db(_SPAN)))
+    return reference, gains
+
+
+def test_quiet_system_music_is_lifted_at_once() -> None:
+    blocks = _tune(0.5, -44.0, spread_db=0.0, kicks=False)
+    _, gains = _lift(blocks)
+
+    excess = blocks[-1][1]
+    before = (excess / _SPAN) ** 0.5
+    after = min(1.0, excess * 10 ** (gains[-1][1] / 20) / _SPAN) ** 0.5
+    assert gains[0][1] == ADAPTIVE_MAX_GAIN_DB, "the first block heard did not set the lift"
+    assert after >= 0.6 and after > 3 * before, f"quiet music stayed dim: {before:.2f} -> {after:.2f}"
+
+
+@pytest.mark.parametrize("level_db", [-12.0, -9.0])
+def test_music_that_already_fills_the_scale_is_never_turned_down(level_db) -> None:
+    _, gains = _lift(_tune(30, level_db))
+
+    assert max(gain for _, gain in gains) == 0.0
+
+
+def test_the_lift_stops_at_its_limit_however_quiet_the_music() -> None:
+    _, gains = _lift(_tune(10, -70.0))
+
+    assert all(0.0 <= gain <= ADAPTIVE_MAX_GAIN_DB for _, gain in gains)
+    assert gains[-1][1] == ADAPTIVE_MAX_GAIN_DB
+
+
+def test_digital_zero_lifts_nothing() -> None:
+    _, gains = _lift(_pause(5, start_ms=0.0))
+
+    assert all(gain == 0.0 for _, gain in gains)
+
+
+def test_a_pause_keeps_the_lift_and_is_not_counted_as_time_heard() -> None:
+    reference, before = _lift(_tune(10, -30.0, seed=2))
+    kept = before[-1][1]
+    assert kept > 3.0, "the test needs a lift worth keeping"
+
+    _, during = _lift(_pause(10, start_ms=10_000.0), reference)
+    assert all(gain == kept for _, gain in during), "the lift moved in silence"
+
+    # The music comes back far louder. Ten seconds of pause are not ten seconds
+    # of hearing it: the first block moves nothing, the next ones move at the
+    # rising speed and no faster.
+    _, after = _lift(_tune(1, -12.0, start_ms=20_000.0, seed=3, spread_db=0.0, kicks=False), reference)
+    assert after[0][1] == kept, "the pause was counted as time the music was heard"
+    assert kept - after[4][1] <= ADAPTIVE_RISE_DB_PER_S * 4 * _BLOCK_MS / 1000 + 1e-9
+
+
+def test_a_louder_track_is_over_lit_for_under_a_second() -> None:
+    reference, _ = _lift(_tune(20, -40.0, seed=4))
+    _, gains = _lift(_tune(20, -12.0, start_ms=20_000.0, seed=5), reference)
+
+    still_lifted = [now for now, gain in gains if gain > 1.0]
+    assert not still_lifted or max(still_lifted) - 20_000.0 <= 1000.0
+
+
+def test_a_quieter_track_is_lifted_again_within_eight_seconds() -> None:
+    reference, _ = _lift(_tune(20, -14.0, seed=6))
+    _, gains = _lift(_tune(60, -36.0, start_ms=20_000.0, seed=7), reference)
+
+    final = gains[-1][1]
+    assert 0.0 < final < ADAPTIVE_MAX_GAIN_DB, "the test needs a lift away from both limits"
+    reached = next(now for now, gain in gains if gain >= 0.9 * final)
+    assert reached - 20_000.0 <= 8_000.0, f"took {(reached - 20_000.0) / 1000:.1f} s"
+
+
+_GATE = 0.0006 * 1.7
+
+
+def _smoothed(blocks, reactivity=0.35):
+    """What the controller hands the reference: the RMS eased at the default
+    speed, measured above the gate."""
+    eased, out = None, []
+    for now, rms, silent in blocks:
+        eased = rms if eased is None else eased + (rms - eased) * reactivity
+        out.append((now, max(0.0, eased - _GATE), silent))
+    return out
+
+
+def _rooms(level_db, beat_s):
+    return _smoothed(_tune(40, level_db, beat_s=beat_s, seed=int(-level_db * 10 + beat_s * 10)))
+
+
+_LEVELS = [-36.0, -30.0, -24.0]
+
+
+@pytest.mark.parametrize("beat_s", [0.5, 1.2, 0.0], ids=["beat every 0.5 s", "beat every 1.2 s", "no beat"])
+@pytest.mark.parametrize("level_db", _LEVELS)
+def test_the_lift_does_not_pump_with_the_music(level_db, beat_s) -> None:
+    # Measured where no limit can flatten it. A lift pinned at +24 dB does not
+    # move whatever the reference does: that is how a reference chasing peaks
+    # once passed at 0.3 dB while swinging 2.5 dB everywhere else.
+    _, gains = _lift(_rooms(level_db, beat_s))
+    settled = [(now, gain) for now, gain in gains if now >= 3000.0]
+    assert all(0.0 < gain < ADAPTIVE_MAX_GAIN_DB for _, gain in settled), "the lift touched a limit"
+
+    worst, first = 0.0, 0
+    for index, (now, _gain) in enumerate(settled):
+        while settled[first][0] < now - 500.0:
+            first += 1
+        window = [gain for _, gain in settled[first:index + 1]]
+        worst = max(worst, max(window) - min(window))
+    assert worst <= 1.1, f"the lift swung {worst:.2f} dB within half a second"
+
+
+@pytest.mark.parametrize("beat_s", [0.5, 1.2], ids=["beat every 0.5 s", "beat every 1.2 s"])
+@pytest.mark.parametrize("level_db", _LEVELS)
+def test_a_beat_keeps_its_size_under_the_lift(level_db, beat_s) -> None:
+    """The lift must not eat the beat it lifts: each kick raises the lifted
+    level nearly as far as it would under a lift held where it was."""
+    blocks = _rooms(level_db, beat_s)
+    _, gains = _lift(blocks)
+    period_ms = beat_s * 1000.0
+
+    def level(index, gain_db):
+        return min(1.0, blocks[index][1] * 10 ** (gain_db / 20) / _SPAN) ** 0.5
+
+    live_rise = held_rise = 0.0
+    for index in range(1, len(blocks) - 8):
+        now, before = blocks[index][0], blocks[index - 1][0]
+        if now < 3000.0 or not (now % period_ms < 60.0 <= before % period_ms):
+            continue
+        held = gains[index - 1][1]
+        base = level(index - 1, held)
+        live_rise += max(level(i, gains[i][1]) for i in range(index, index + 8)) - base
+        held_rise += max(level(i, held) for i in range(index, index + 8)) - base
+    assert held_rise > 0.0, "the test needs beats"
+    assert live_rise >= 0.8 * held_rise, f"the lift ate {1 - live_rise / held_rise:.0%} of the beat"
+
+
+def test_the_lift_is_timed_in_seconds_not_in_blocks() -> None:
+    finals = []
+    for step_ms in (5.0, _BLOCK_MS):
+        reference, _ = _lift(_tune(10, -14.0, step_ms=step_ms, spread_db=0.0, kicks=False))
+        _, gains = _lift(_tune(5, -30.0, start_ms=10_000.0, step_ms=step_ms, spread_db=0.0, kicks=False), reference)
+        finals.append(gains[-1][1])
+
+    assert abs(finals[0] - finals[1]) <= 0.5, f"same music, different blocks: {finals}"
+
+
+def test_a_reset_forgets_the_lift() -> None:
+    reference, gains = _lift(_tune(5, -44.0))
+    assert gains[-1][1] > 0.0
+
+    reference.reset()
+
+    assert reference.gain_db(_SPAN) == 0.0
