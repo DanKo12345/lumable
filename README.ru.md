@@ -22,7 +22,9 @@ LumaBLE ищет поддерживаемые Bluetooth-контроллеры, 
 - [Español](README.es.md)
 - [中文](README.zh.md)
 
-![Управление цветом и яркостью в LumaBLE](docs/images/lumable-color-0.3.8-dark.png)
+![Предпросмотр экрана и музыки в LumaBLE 0.4.4](docs/images/lumable-screen-preview-0.4.4-dark.png)
+
+*Демонстрационные цвета предпросмотра. Лента и звуковое устройство не подключались.*
 
 ## Возможности
 

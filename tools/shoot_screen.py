@@ -326,6 +326,8 @@ def _apply_preview_demo(window) -> None:
     from PySide6.QtTest import QTest
 
     window._is_connected = False
+    window.power_button.setChecked(False)
+    window._sync_power_button()
     window._fusion_ui.set_mode("screen_music", persist=False)
     window._ambient_ui.sync_mode_segment()
     window.ambient_toggle_button.setChecked(True)
@@ -356,6 +358,8 @@ def _apply_music_demo(window) -> None:
     if preview_anim is not None:
         preview_anim.setCurrentTime(preview_anim.totalDuration())
     window.music_preview.set_color(225, 84, 142)
+    for band, level in (("bass", 0.72), ("mid", 0.49), ("treble", 0.24)):
+        window.music_band_meters[band].set_state(True, level)
 
 
 def _apply_groups_demo(window) -> None:

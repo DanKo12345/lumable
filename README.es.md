@@ -24,7 +24,9 @@ Otros idiomas:
 - [Русский](README.ru.md)
 - [中文](README.zh.md)
 
-![Controles de color y brillo de LumaBLE](docs/images/lumable-color-0.3.8-dark.png)
+![Vista previa de pantalla y música en LumaBLE 0.4.4](docs/images/lumable-screen-preview-0.4.4-dark.png)
+
+*Colores ilustrativos de la vista previa; no se conectó ninguna tira ni dispositivo de audio.*
 
 ## Funciones principales
 

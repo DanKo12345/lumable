@@ -16,11 +16,16 @@ python tools/shoot_screen.py automations --demo rule-edit  --size 1280x860 --the
 The public README images use separate, reproducible showcase states rather than
 real controller data:
 
-```
-python tools/shoot_screen.py color       --demo readme-color       --size 1280x860 --theme dark --language en --out docs/images/lumable-color-0.3.8-dark.png
+```powershell
+$env:LUMABLE_FORCE_PRO = '1'
+python tools/shoot_screen.py ambient     --demo preview            --size 1280x840 --theme dark --language en --out docs/images/lumable-screen-preview-0.4.4-dark.png
+python tools/shoot_screen.py music       --demo music              --size 1280x1100 --theme dark --language en --out docs/images/lumable-music-0.4.4-dark.png
 python tools/shoot_screen.py automations --demo readme-automations --size 1280x860 --theme dark --language en --out docs/images/lumable-automations-dark.png
-python tools/shoot_screen.py ambient     --demo readme-ambient     --size 1280x860 --theme dark --language en --out docs/images/lumable-screen-sync-0.4.0-dark.png
 ```
+
+`LUMABLE_FORCE_PRO` is a source-only demo switch for this isolated screenshot process;
+it does not change a licence or settings. The preview colours and music levels are
+illustrative, not measurements from live hardware.
 
 `860x420` is the app's minimum window size (`WINDOW_MIN_WIDTH`/`HEIGHT`), which is
 where clipping shows up first. Both themes are kept because the tinted icon tiles

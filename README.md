@@ -5,7 +5,7 @@
 <h1 align="center">LumaBLE</h1>
 
 <p align="center">
-  <b>Turn a cheap ELK-BLEDOM Bluetooth strip into responsive PC lighting. No hub required.</b>
+  <b>Make Bluetooth LED strips follow your screen, music and daily routines on Windows. No hub required.</b>
 </p>
 
 <p align="center">
@@ -29,14 +29,16 @@
   </sub>
 </p>
 
-![LumaBLE colour and brightness controls](docs/images/lumable-color-0.3.8-dark.png)
-
 Inexpensive Bluetooth LED strips — **ELK-BLEDOM**, **Triones** / Happy Lighting, **Magic Home**,
 **BanlanX SP61x / SP62x** — normally come with a phone app and nothing else. LumaBLE gives them a
 real Windows application: the strip follows what is on your screen, reacts to whatever the PC is
 playing, and switches scenes by itself when you open a game.
 
 No hub, no bridge, no account. The controller you already own, driven from the desktop.
+
+![Screen and music preview in LumaBLE 0.4.4](docs/images/lumable-screen-preview-0.4.4-dark.png)
+
+*Screen + music preview. The colours shown here are illustrative; no strip or audio device was connected.*
 
 > LumaBLE is currently in beta. Controller protocols vary between manufacturers, so please attach a
 > diagnostics report when requesting support for a new model.
@@ -58,9 +60,15 @@ No hub, no bridge, no account. The controller you already own, driven from the d
 
 ## Inside The App
 
-| Automation rules | Screen sync |
-| --- | --- |
-| ![Automation rules in LumaBLE](docs/images/lumable-automations-dark.png) | ![Screen and music sync controls in LumaBLE](docs/images/lumable-screen-sync-0.4.0-dark.png) |
+### Music reaction
+
+![Music reaction and frequency meters in LumaBLE 0.4.4](docs/images/lumable-music-0.4.4-dark.png)
+
+*Demonstration device and frequency levels in a temporary profile; no audio or Bluetooth connection was opened.*
+
+### Automations
+
+![Automation rules in LumaBLE](docs/images/lumable-automations-dark.png)
 
 ## Download And Start
 
