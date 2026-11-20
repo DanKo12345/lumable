@@ -48,6 +48,8 @@ def test_release_version_is_consistent_across_build_metadata() -> None:
 
     assert project["project"]["version"] == APP_VERSION
     assert f'#define MyAppVersion "{APP_VERSION}"' in installer
+    assert "AppVersion={#MyAppVersion}" in installer.splitlines()
+    assert "VersionInfoVersion={#MyAppVersion}" in installer.splitlines()
     assert f"StringStruct('FileVersion', '{APP_VERSION}')" in version_info
     assert f"StringStruct('ProductVersion', '{APP_VERSION}')" in version_info
     assert f"Download LumaBLE {APP_VERSION} beta for Windows" in readme

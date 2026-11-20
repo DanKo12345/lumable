@@ -54,7 +54,14 @@ jobs:
           Invoke-WebRequest 'https://github.com/DanKo12345/lumable/releases/download/v0.4.4-beta/LumaBLE-Setup-0.4.4.exe' -OutFile $oldInstaller
           $newInstaller = (Resolve-Path 'dist/installer/LumaBLE-Setup-0.4.5.exe').Path
           $portable = (Resolve-Path 'dist/LumaBLE/LumaBLE.exe').Path
-          if ((Get-Item $portable).VersionInfo.FileVersion -ne $version) { throw 'Portable version mismatch' }
+          $installerVersion = (Get-Item $newInstaller).VersionInfo
+          if ($installerVersion.FileVersion -notin @($version, "$version.0") -or $installerVersion.ProductVersion -ne $version) {
+            throw "Installer version mismatch: $($installerVersion.FileVersion), $($installerVersion.ProductVersion)"
+          }
+          $portableVersion = (Get-Item $portable).VersionInfo
+          if ($portableVersion.FileVersion -ne $version -or $portableVersion.ProductVersion -ne $version) {
+            throw "Portable version mismatch: $($portableVersion.FileVersion), $($portableVersion.ProductVersion)"
+          }
 
           function Invoke-Setup($file, $log, $arguments) {
             $process = Start-Process -FilePath $file -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
