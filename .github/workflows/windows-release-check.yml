@@ -55,7 +55,7 @@ jobs:
           $newInstaller = (Resolve-Path 'dist/installer/LumaBLE-Setup-0.4.5.exe').Path
           $portable = (Resolve-Path 'dist/LumaBLE/LumaBLE.exe').Path
           $installerVersion = (Get-Item $newInstaller).VersionInfo
-          if ($installerVersion.FileVersion -notin @($version, "$version.0") -or $installerVersion.ProductVersion -ne $version) {
+          if ($installerVersion.FileVersion.Trim() -notin @($version, "$version.0") -or $installerVersion.ProductVersion.Trim() -ne $version) {
             throw "Installer version mismatch: $($installerVersion.FileVersion), $($installerVersion.ProductVersion)"
           }
           $portableVersion = (Get-Item $portable).VersionInfo
