@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/DanKo12345/lumable/releases">
-    <img alt="Download LumaBLE 0.4.4 beta for Windows" src="https://img.shields.io/badge/Download_for_Windows-0.4.4_beta-2f78d4?style=for-the-badge&logo=windows11&logoColor=white">
+    <img alt="Download LumaBLE 0.4.5 beta for Windows" src="https://img.shields.io/badge/Download_for_Windows-0.4.5_beta-2f78d4?style=for-the-badge&logo=windows11&logoColor=white">
   </a>
 </p>
 
@@ -29,8 +29,8 @@
   </sub>
 </p>
 
-Inexpensive Bluetooth LED strips — **ELK-BLEDOM**, **Triones** / Happy Lighting, **Magic Home**,
-**BanlanX SP61x / SP62x** — normally come with a phone app and nothing else. LumaBLE gives them a
+Bluetooth LED strips such as **ELK-BLEDOM**, **Triones** / Happy Lighting, **Magic Home**,
+**BanlanX SP61x / SP62x**, and **Govee H617A** often come with just a phone app. LumaBLE gives them a
 real Windows application: the strip follows what is on your screen, reacts to whatever the PC is
 playing, and switches scenes by itself when you open a game.
 
@@ -89,6 +89,7 @@ run while LumaBLE is closed. Hardware compatibility is never restricted to Pro.
 ## Supported Controllers
 
 - BLEDOM / ELK-BLEDOM compatible controllers.
+- Govee H617A over Bluetooth: whole-strip colour, brightness, and 34 built-in scenes.
 - Magic Home / MagicLight BLE controllers.
 - BanlanX SP61x / SP62x BLE controllers.
 - Triones / Happy Lighting compatible BLE controllers.
@@ -150,4 +151,4 @@ support.
 
 Author: `dollza`
 
-Current release: `0.4.4 beta`
+Current release: `0.4.5 beta`

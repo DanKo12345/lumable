@@ -10,7 +10,7 @@ avanzadas.
 
 Autor: `dollza`
 
-Versión: `0.4.4 beta`
+Versión: `0.4.5 beta`
 
 Descarga la última build para Windows desde la página de
 [Releases](https://github.com/DanKo12345/lumable/releases).
@@ -47,6 +47,7 @@ Otros idiomas:
 ## Controladores compatibles
 
 - Controladores compatibles con BLEDOM / ELK-BLEDOM.
+- Govee H617A por Bluetooth: color de la tira completa, brillo y 34 escenas integradas.
 - Controladores BLE Magic Home / MagicLight.
 - Controladores BLE BanlanX SP61x / SP62x.
 - Controladores BLE compatibles con Triones / Happy Lighting.

@@ -30,11 +30,19 @@ class EffectPreset:
     code: int
 
 
+@dataclass(slots=True, frozen=True)
+class EffectSequence:
+    frames: tuple[bytes, ...]
+    interval_seconds: float
+
+
 class LedBleDriver:
     id = "generic"
     display_name = "Generic BLE LED"
     transport = "BLE"
     protocol_notes = ""
+    allow_protocol_guess = True
+    minimum_brightness_percent = 0
     name_tokens: tuple[str, ...] = ()
     scan_service_uuids: frozenset[str] = frozenset()
     known_write_uuids: frozenset[str] = frozenset()
@@ -137,6 +145,9 @@ class LedBleDriver:
         return type(self).brightness_payloads is not LedBleDriver.brightness_payloads
 
     def effect_payload(self, code: int) -> bytes | None:
+        return None
+
+    def effect_sequence(self, code: int) -> EffectSequence | None:
         return None
 
     def effect_payload_with_speed(self, code: int, value_percent: int) -> bytes | None:

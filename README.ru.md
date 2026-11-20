@@ -9,7 +9,7 @@ LumaBLE ищет поддерживаемые Bluetooth-контроллеры, 
 
 Автор: `dollza`
 
-Версия: `0.4.4 beta`
+Версия: `0.4.5 beta`
 
 Скачать последнюю Windows-сборку можно на странице [Releases](https://github.com/DanKo12345/lumable/releases).
 
@@ -43,6 +43,7 @@ LumaBLE ищет поддерживаемые Bluetooth-контроллеры, 
 ## Поддерживаемые Контроллеры
 
 - BLEDOM / ELK-BLEDOM совместимые контроллеры.
+- Govee H617A по Bluetooth: цвет всей ленты, яркость и 34 встроенные сцены.
 - Magic Home / MagicLight BLE контроллеры.
 - BanlanX SP61x / SP62x BLE контроллеры.
 - Triones / Happy Lighting совместимые BLE LED-контроллеры.

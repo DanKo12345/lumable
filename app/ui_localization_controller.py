@@ -110,20 +110,8 @@ class UiLocalizationController:
         primary_meta = getattr(host, "device_primary_meta", None)
         if primary_meta is not None and not host._is_connected:
             primary_meta.setText(host._tr("device.primary_empty"))
-        hint = getattr(host, "device_status_hint", None)
-        if hint is not None:
-            if host._is_connected:
-                name = str(host._settings.get("last_device_name") or host._settings.get("last_device_address") or "")
-                hint.setText(name)
-                wanted = bool(name)
-            else:
-                hint.setText(host._tr("device.connect_hint"))
-                wanted = True
-            apply_hint = getattr(host, "_set_status_hint_visible", None)
-            if callable(apply_hint):
-                apply_hint(wanted)  # compact sidebar may override on a short window
-            else:
-                hint.setVisible(wanted)
+        name = str(host._settings.get("last_device_name") or host._settings.get("last_device_address") or "")
+        host._ble_events._sync_sidebar_connection_hint(name)
         host._ble_events._sync_last_device_hint(autoconnecting=host._connect_in_progress)
         host.logs_toggle_button.setText(host._tr("device.show_logs"))
         host.supported_controllers_button.setText(host._tr("device.supported"))

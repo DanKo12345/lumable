@@ -41,8 +41,7 @@ class ShortcutController:
     def handle_power(self) -> None:
         if not self.accepts_action():
             return
-        self._host.power_button.setChecked(not self._host.power_button.isChecked())
-        self._host._toggle_power()
+        self._host.power_button.click()
 
     def handle_quick_mode(self, mode_key: str) -> None:
         if not self.accepts_action():

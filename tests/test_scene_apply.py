@@ -154,6 +154,20 @@ def test_per_strip_effect_speed_is_resolved_per_target() -> None:
     assert {"field": "effect_speed", "reason": "unsupported", "target": "SLOW"} in report["skipped"]
 
 
+def test_a_scene_skips_specific_effect_codes_not_supported_by_a_strip() -> None:
+    backend = FakeBackend()
+    scene = make_scene("Forest", {"effect": {"kind": "firmware", "ref": 0xC2}})
+
+    def caps_for(device_id):
+        codes = (0xC2,) if device_id == "GOVEE" else (0x87,)
+        return {"firmware_effects": True, "firmware_effect_codes": codes}
+
+    report = SceneApplyService(backend).apply(scene, device_ids=["BLEDOM", "GOVEE"], capabilities_for=caps_for)
+
+    assert backend.calls == [("pc_mode", "off", None), ("effect", 0xC2, None, "GOVEE")]
+    assert report["skipped"] == [{"field": "effect", "reason": "unsupported", "target": "BLEDOM"}]
+
+
 def test_snapshot_captures_light_and_active_mode() -> None:
     status = {"power": True, "color": {"r": 5, "g": 6, "b": 7}, "brightness": 55, "pc_mode": "music"}
     scene = scene_from_status(status, "Now")

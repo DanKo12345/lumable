@@ -323,8 +323,7 @@ class DiyUiController:
 
         motion_key = _clean_motion(step.get("motion", "none"))
         motion = host._pill(host._tr(f"diy.motion_{motion_key}"))
-        text_width = motion.fontMetrics().horizontalAdvance(motion.text())
-        motion.setFixedWidth(max(host._sz(74), text_width + host._sz(30)))
+        motion.fit_text(minimum=host._sz(74), padding=host._sz(30))
         motion.setToolTip(host._tr("diy.motion_hint"))
         # These chips sit in a bare row with no label beside them, so the
         # purpose has to come from the tooltip's wording.

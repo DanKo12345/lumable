@@ -42,6 +42,7 @@ def test_manual_power_toggle_clears_the_active_scene(monkeypatch) -> None:
         # Keep the click out of the real BLE stack: set_power would kick off a
         # connect/reconnect loop that the test teardown then waits on forever.
         monkeypatch.setattr(window._ble, "set_power", lambda *_a, **_k: None)
+        window._is_connected = True
         window._scene_ui._set_active_scene("scene-power")
         window.power_button.click()
         assert window._scene_ui._active_scene_id == ""
@@ -675,6 +676,7 @@ def test_power_button_uses_action_label_and_role_for_state() -> None:
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     try:
+        window._is_connected = True
         window.power_button.setChecked(False)
         window._sync_power_button()
 
@@ -725,6 +727,7 @@ def test_power_shortcut_toggles_power_when_focus_is_not_text_input() -> None:
     try:
         window._ble.shutdown()
         window._ble = DummyBle()
+        window._is_connected = True
         window.power_button.setChecked(False)
 
         window._handle_power_shortcut()
@@ -760,6 +763,7 @@ def test_power_off_clears_aurora_accent() -> None:
     try:
         window._ble.shutdown()
         window._ble = DummyBle()
+        window._is_connected = True
         window._aurora.set_accent_color(255, 255, 255)
         window.power_button.setChecked(False)
 

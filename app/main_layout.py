@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.constants import BODY_SPACING, ROOT_MARGINS, SECTION_SPACING, STATUS_MIN_WIDTH
+from app.constants import BODY_SPACING, COMPACT_SIDEBAR_HEIGHT, ROOT_MARGINS, SECTION_SPACING, STATUS_MIN_WIDTH
 from app.hero_header import build_brand, build_chrome_controls, build_mode_row
 from app.panels import (
     build_ambient_section,
@@ -100,7 +100,7 @@ _NAV_SECTIONS = (
     ("ambient", "nav.ambient", (build_ambient_section,)),
     ("music", "nav.music", (build_music_section,)),
     ("profiles", "nav.profiles", (build_configs_section,)),
-    ("schedule", "nav.schedule", (build_schedule_section, build_timers_section, build_app_triggers_section)),
+    ("schedule", "nav.schedule", (build_schedule_section, build_timers_section)),
     (
         "automations",
         "nav.automations",
@@ -109,6 +109,7 @@ _NAV_SECTIONS = (
             build_automation_rules_section,
             build_automation_journal_section,
             build_automation_bridge_section,
+            build_app_triggers_section,
         ),
     ),
     (
@@ -123,8 +124,6 @@ _NAV_SECTIONS = (
         ),
     ),
 )
-
-_LIVE_LIGHT_SECTIONS = frozenset({"color", "effects", "ambient", "music"})
 
 _NAV_ICONS = {
     "color": "color",
@@ -212,14 +211,20 @@ def select_section(host, key: str) -> None:
     body_scroll = getattr(host, "body_scroll", None)
     if body_scroll is not None:
         body_scroll.verticalScrollBar().setValue(0)
-    preview = getattr(host, "preview", None)
-    if preview is not None:
-        preview.set_compact(key not in _LIVE_LIGHT_SECTIONS)
+    sync_preview_density(host)
     _reveal_nav_item(host, key)
     # The music card listens and draws only while its page is the one shown.
     music_ui = getattr(host, "_music_ui", None)
     if music_ui is not None:
         music_ui.note_section_changed(key)
+
+
+def sync_preview_density(host, *, animate: bool = True) -> None:
+    preview = getattr(host, "preview", None)
+    if preview is None:
+        return
+    tall_color_page = host._section_stack.currentWidget() is host._nav_pages["color"] and host.height() >= COMPACT_SIDEBAR_HEIGHT
+    preview.set_compact(not tall_color_page, animate=animate)
 
 
 def _reveal_nav_item(host, key: str) -> None:
@@ -246,9 +251,8 @@ def _reveal_nav_item(host, key: str) -> None:
 def _on_status_clicked(host) -> None:
     # Disconnected → start a controller search right away; connected → open the
     # device card so the user can manage/disconnect.
-    if getattr(host, "_is_connected", False):
-        select_section(host, "settings")
-    else:
+    select_section(host, "settings")
+    if not getattr(host, "_is_connected", False):
         host._ble_events.connect_or_scan()
 
 
@@ -329,7 +333,6 @@ def _build_sidebar(host) -> QWidget:
     # A QPushButton sizes to its (empty) text, not to the child layout, so it
     # would clip the two-line content — pin a height that fits both lines.
     status_card.setMinimumHeight(host._sz(56))
-    status_card.setToolTip(host._tr("device.find"))
     status_card.clicked.connect(lambda: _on_status_clicked(host))
     status_outer = QVBoxLayout(status_card)
     status_outer.setContentsMargins(host._sz(12), host._sz(8), host._sz(12), host._sz(8))
@@ -351,8 +354,7 @@ def _build_sidebar(host) -> QWidget:
     status_row.addWidget(host.device_status_dot, 0, Qt.AlignVCenter)
     status_row.addWidget(host.device_status, 1)
     status_outer.addLayout(status_row)
-    # First-run hint: when disconnected, tell the user the card is the way to connect.
-    host.device_status_hint = QLabel(host._tr("device.connect_hint"))
+    host.device_status_hint = QLabel()
     host.device_status_hint.setObjectName("cardSubtitle")
     host.device_status_hint.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     # Indent so the second line aligns under the status text (past the dot).
@@ -390,8 +392,7 @@ def _build_main_area(host) -> QWidget:
     actions = QHBoxLayout()
     actions.setContentsMargins(0, 0, 0, 0)
     actions.setSpacing(host._sz(10))
-    actions.addLayout(build_mode_row(host))
-    actions.addStretch(1)
+    actions.addWidget(build_mode_row(host), 1)
     host.power_button = host._button(host._tr("color.power_on"), "ghost")
     host.power_button.setCheckable(True)
     host.power_button.setMaximumWidth(host._sz(190))

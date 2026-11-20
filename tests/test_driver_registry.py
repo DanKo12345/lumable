@@ -6,7 +6,7 @@ from app.widgets.effect_preview_strip import effect_semantic_key
 
 
 def test_driver_registry_contains_unique_supported_drivers() -> None:
-    assert [driver.id for driver in DRIVERS] == ["bledom", "banlanx", "magic_home", "triones"]
+    assert [driver.id for driver in DRIVERS] == ["govee_h617a", "bledom", "banlanx", "magic_home", "triones"]
     assert set(DRIVER_BY_ID) == {driver.id for driver in DRIVERS}
 
 
@@ -16,7 +16,9 @@ def test_all_declared_driver_effects_have_payloads_or_are_static() -> None:
             if effect.code == 0:
                 continue
 
-            assert driver.effect_payload(effect.code) is not None, (driver.id, effect)
+            payload = driver.effect_payload(effect.code)
+            sequence = driver.effect_sequence(effect.code)
+            assert (payload is not None) != (sequence is not None), (driver.id, effect)
 
 
 def test_all_declared_driver_effect_codes_are_unique() -> None:
@@ -34,12 +36,14 @@ def test_all_declared_driver_effects_reject_neighbor_out_of_range_codes() -> Non
 
         assert driver.effect_payload(min(non_static_codes) - 1) is None, driver.id
         assert driver.effect_payload(max(non_static_codes) + 1) is None, driver.id
+        assert driver.effect_sequence(min(non_static_codes) - 1) is None, driver.id
+        assert driver.effect_sequence(max(non_static_codes) + 1) is None, driver.id
 
 
-def test_all_declared_driver_effect_payloads_keep_their_code_byte() -> None:
+def test_single_packet_effect_payloads_keep_their_code_byte() -> None:
     for driver in DRIVERS:
         for effect in driver.effects:
-            if effect.code == 0:
+            if effect.code == 0 or driver.effect_sequence(effect.code) is not None:
                 continue
             payload = driver.effect_payload(effect.code)
 
@@ -84,6 +88,7 @@ def test_driver_effect_speed_support_is_explicit() -> None:
     support = {driver.id: driver.supports_effect_speed() for driver in DRIVERS}
 
     assert support == {
+        "govee_h617a": False,
         "bledom": True,
         "banlanx": True,
         "magic_home": False,

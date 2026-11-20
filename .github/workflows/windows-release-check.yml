@@ -36,7 +36,7 @@ jobs:
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           [System.IO.Compression.ZipFile]::CreateFromDirectory(
             (Resolve-Path 'dist/LumaBLE').Path,
-            (Join-Path (Resolve-Path 'dist/installer').Path 'LumaBLE-0.4.4-beta-windows.zip')
+            (Join-Path (Resolve-Path 'dist/installer').Path 'LumaBLE-0.4.5-beta-windows.zip')
           )
       - name: Check packages and installed app
         shell: pwsh
@@ -45,14 +45,14 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = '0.4.4'
+          $version = '0.4.5'
           $testRoot = Join-Path $env:RUNNER_TEMP 'lumable-release-check'
           $installDir = Join-Path $testRoot 'installed'
           $env:LUMABLE_DATA_DIR = Join-Path $testRoot 'app-data'
           New-Item -ItemType Directory -Force -Path $testRoot, $env:LUMABLE_DATA_DIR | Out-Null
-          $oldInstaller = Join-Path $testRoot 'LumaBLE-Setup-0.4.3.exe'
-          Invoke-WebRequest 'https://github.com/DanKo12345/lumable/releases/download/v0.4.3-beta/LumaBLE-Setup-0.4.3.exe' -OutFile $oldInstaller
-          $newInstaller = (Resolve-Path 'dist/installer/LumaBLE-Setup-0.4.4.exe').Path
+          $oldInstaller = Join-Path $testRoot 'LumaBLE-Setup-0.4.4.exe'
+          Invoke-WebRequest 'https://github.com/DanKo12345/lumable/releases/download/v0.4.4-beta/LumaBLE-Setup-0.4.4.exe' -OutFile $oldInstaller
+          $newInstaller = (Resolve-Path 'dist/installer/LumaBLE-Setup-0.4.5.exe').Path
           $portable = (Resolve-Path 'dist/LumaBLE/LumaBLE.exe').Path
           if ((Get-Item $portable).VersionInfo.FileVersion -ne $version) { throw 'Portable version mismatch' }
 
@@ -66,15 +66,15 @@ jobs:
 
           Invoke-Setup $oldInstaller (Join-Path $testRoot 'old-install.log') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$installDir", "/LOG=$testRoot/old-install.log")
           $oldRuntime = Join-Path $installDir '_internal'
-          if (-not (Test-Path (Join-Path $installDir 'LumaBLE.exe'))) { throw '0.4.3 install missing EXE' }
-          New-Item -ItemType File -Path (Join-Path $oldRuntime 'obsolete-043.txt') | Out-Null
+          if (-not (Test-Path (Join-Path $installDir 'LumaBLE.exe'))) { throw '0.4.4 install missing EXE' }
+          New-Item -ItemType File -Path (Join-Path $oldRuntime 'obsolete-044.txt') | Out-Null
           $savedData = Join-Path $env:LUMABLE_DATA_DIR 'preserve.txt'
           Set-Content -LiteralPath $savedData -Value 'keep'
 
           Invoke-Setup $newInstaller (Join-Path $testRoot 'upgrade.log') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$installDir", "/LOG=$testRoot/upgrade.log")
           $installedExe = Join-Path $installDir 'LumaBLE.exe'
           if ((Get-Item $installedExe).VersionInfo.FileVersion -ne $version) { throw 'Upgrade version mismatch' }
-          if (Test-Path (Join-Path $oldRuntime 'obsolete-043.txt')) { throw 'Obsolete runtime survived upgrade' }
+          if (Test-Path (Join-Path $oldRuntime 'obsolete-044.txt')) { throw 'Obsolete runtime survived upgrade' }
           if ((Get-Content -LiteralPath $savedData) -ne 'keep') { throw 'Saved data changed during upgrade' }
 
           $process = Start-Process -FilePath $installedExe -WorkingDirectory $installDir -PassThru -WindowStyle Hidden
@@ -96,8 +96,8 @@ jobs:
           if ($unwanted) { throw "Unwanted package files: $($unwanted.FullName -join ', ')" }
       - uses: actions/upload-artifact@v4
         with:
-          name: lumable-0.4.4-windows
+          name: lumable-0.4.5-windows
           path: |
-            dist/installer/LumaBLE-Setup-0.4.4.exe
-            dist/installer/LumaBLE-0.4.4-beta-windows.zip
+            dist/installer/LumaBLE-Setup-0.4.5.exe
+            dist/installer/LumaBLE-0.4.5-beta-windows.zip
           if-no-files-found: error

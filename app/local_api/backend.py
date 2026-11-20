@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal
 
 from app import scene_store
 from app.app_info import APP_VERSION
+from app.ble_drivers import get_driver_by_id
 from app.device_names import device_display_name
 from app.driver_capabilities import capabilities_for
 from app.quick_modes import QUICK_MODE_MAP
@@ -159,7 +160,7 @@ class QtApiBackend:
         if not isinstance(code, int) or code == 0:
             return None
         slider = getattr(host, "speed_slider", None)
-        speed = int(slider.value()) if slider is not None and hasattr(slider, "value") else None
+        speed = int(slider.value()) if hasattr(slider, "value") and host._ble.supports_effect_speed() else None
         return {"kind": "firmware", "ref": int(code), "speed": speed}
 
     def _pc_mode_detail(self, mode: str | None) -> str:
@@ -349,11 +350,23 @@ class QtApiBackend:
                 with host._suppress_signals():
                     host.brightness_slider.setValue(value)
             return
+        combo = getattr(host, "effect_combo", None)
+        uses_sequence = getattr(host._ble, "effect_uses_sequence", None)
+        if combo is not None and callable(uses_sequence) and uses_sequence(int(combo.currentData() or 0)):
+            with host._suppress_signals():
+                host.brightness_slider.setValue(value)
+            host._ble.set_brightness(host.brightness_slider.value())
+            return
         host.brightness_slider.setValue(value)
         host._apply_current_color()
 
     def _apply_effect(self, code: int, speed: int | None, device_id: str | None = None) -> None:
         host = self._host
+        uses_sequence = getattr(host._ble, "effect_uses_sequence", None)
+        sequenced = callable(uses_sequence) and uses_sequence(int(code))
+        if sequenced and (not device_id or self._is_primary(device_id)):
+            host.stop_streams()
+            host._color_apply_debounce.stop()
         if device_id:
             host._ble.set_effect_for_addresses(int(code), speed, [str(device_id).strip()])
             if self._is_primary(device_id):
@@ -368,9 +381,17 @@ class QtApiBackend:
                         slider.setValue(int(speed))
             return
         index = host.effect_combo.findData(int(code))
+        if sequenced:
+            with host._suppress_signals():
+                if index >= 0:
+                    host.effect_combo.setCurrentIndex(index)
+                    host._sync_effect_preview(reset_phase=True)
+                    host._sync_quick_mode_from_state()
+            host._ble.set_effect(int(code))
+            return
         if index >= 0:
             host.effect_combo.setCurrentIndex(index)
-            if speed is not None:
+            if speed is not None and host._ble.supports_effect_speed():
                 host._ble.set_effect_speed(int(speed))
         elif speed is not None:
             host._ble.set_effect_with_speed(int(code), int(speed))
@@ -464,9 +485,10 @@ class QtApiBackend:
             return self._strip_capabilities()
         ble = self._host._ble
         try:
-            caps = capabilities_for(ble.driver_id_for_address(device_id))
+            driver_id = ble.driver_id_for_address(device_id)
         except Exception:
-            caps = capabilities_for("")
+            driver_id = ""
+        caps = self._capabilities_with_effect_codes(driver_id)
         try:
             caps["effect_speed"] = bool(ble.supports_effect_speed_for_address(device_id))
         except Exception:
@@ -481,11 +503,19 @@ class QtApiBackend:
             driver_id = self._host._ble.active_driver_id()
         except Exception:
             driver_id = ""
-        caps = capabilities_for(driver_id)
+        caps = self._capabilities_with_effect_codes(driver_id)
         try:
             caps["effect_speed"] = bool(self._host._ble.supports_effect_speed())
         except Exception:
             pass
+        return caps
+
+    @staticmethod
+    def _capabilities_with_effect_codes(driver_id: str) -> dict[str, Any]:
+        caps: dict[str, Any] = capabilities_for(driver_id)
+        driver = get_driver_by_id(driver_id)
+        if driver is not None:
+            caps["firmware_effect_codes"] = tuple(effect.code for effect in driver.effects if effect.code != 0)
         return caps
 
     def _delete_scene(self, scene_id: str) -> bool:

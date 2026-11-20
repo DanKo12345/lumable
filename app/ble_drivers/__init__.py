@@ -6,11 +6,15 @@ from typing import Any
 from app.ble_drivers.banlanx import BanlanxDriver
 from app.ble_drivers.base import EffectPreset, LedBleDriver, normalize_uuid
 from app.ble_drivers.bledom import BLEDOM_EFFECTS, BledomDriver
+from app.ble_drivers.govee_h617a import GoveeH617ADriver
 from app.ble_drivers.magic_home import MagicHomeDriver
 from app.ble_drivers.triones import TrionesDriver
 from app.protocol_probe import DeviceProfile, DriverProfile, ProbeCandidate, rank_candidates
 
+_GOVEE_H617A = GoveeH617ADriver()
+
 _DRIVER_INSTANCES: tuple[LedBleDriver, ...] = (
+    _GOVEE_H617A,
     BledomDriver(),
     BanlanxDriver(),
     MagicHomeDriver(),
@@ -50,6 +54,7 @@ def _driver_profiles() -> list[DriverProfile]:
             known_write_uuids=norm(driver.known_write_uuids),
         )
         for driver in DRIVERS
+        if driver.allow_protocol_guess
     ]
 
 
@@ -78,6 +83,8 @@ def probe_driver_candidates(name: str, services: Iterable[Any]) -> list[ProbeCan
     inspection only (no writes). Empty when nothing is a confident-enough guess."""
     from app.protocol_probe import OFFER_THRESHOLD
 
+    if _GOVEE_H617A.matches_scan(name, ()):
+        return []
     return rank_candidates(
         _driver_profiles(),
         device_profile_from_services(name, services),
@@ -86,6 +93,9 @@ def probe_driver_candidates(name: str, services: Iterable[Any]) -> list[ProbeCan
 
 
 def detect_connected_driver(name: str, services: Iterable[Any], preferred_id: str | None = None) -> LedBleDriver | None:
+    if _GOVEE_H617A.matches_scan(name, ()):
+        # Do not fall back to a legacy driver on a known model with unexpected GATT.
+        return _GOVEE_H617A if _GOVEE_H617A.matches_services(name, services) else None
     preferred = get_driver_by_id(preferred_id)
     if preferred is not None and preferred.matches_services(name, services):
         return preferred

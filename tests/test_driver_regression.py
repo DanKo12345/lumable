@@ -76,9 +76,9 @@ def test_every_advertised_effect_can_be_built(driver) -> None:
     # The effect list is what the UI offers the user — each entry must map to a
     # real payload, or the strip silently ignores an effect we showed.
     for code in _real_effect_codes(driver):
-        payload = driver.effect_payload(code)
-        assert payload is not None, f"{driver.id}: advertised effect {code} builds nothing"
-        _assert_sane(_payload_list(payload), f"{driver.id} effect {code}")
+        sequence = driver.effect_sequence(code)
+        payloads = list(sequence.frames) if sequence is not None else _payload_list(driver.effect_payload(code))
+        _assert_sane(payloads, f"{driver.id} effect {code}")
 
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.id)
@@ -105,4 +105,4 @@ def test_every_driver_has_declared_capabilities(driver) -> None:
     # would silently fall back to the generic profile and lose its effects.
     caps = capabilities_for(driver.id)
     assert caps["rgb"] is True
-    assert caps["firmware_effects"] is bool(driver.effects)
+    assert caps["firmware_effects"] is any(preset.code != 0 for preset in driver.effects)

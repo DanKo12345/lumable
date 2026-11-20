@@ -299,6 +299,8 @@ class LocalizationManager:
             return t("status.ble.effect_speed_set", value=val()) + remainder
         if event == "effect_applied":
             return t("status.ble.effect_applied", code=str(payload.get("code", "")).strip()) + remainder
+        if event == "effect_sent":
+            return t("status.ble.effect_sent", code=str(payload.get("code", "")).strip()) + remainder
         if event == "driver_selected":
             return t("status.ble.driver_selected", driver=str(payload.get("driver", "")).strip()) + remainder
         if event == "candidate_characteristics":

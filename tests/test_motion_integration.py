@@ -808,17 +808,22 @@ def test_main_preview_size_matches_the_kind_of_section() -> None:
     class _Preview:
         compact = None
 
-        def set_compact(self, compact: bool) -> None:
+        def set_compact(self, compact: bool, *, animate: bool = True) -> None:
             self.compact = compact
 
     preview = _Preview()
-    host = SimpleNamespace(_nav_buttons={}, _nav_pages={}, preview=preview)
-    expected_full = {"color", "effects", "ambient", "music"}
-    sections = expected_full | {"scenes", "profiles", "schedule", "automations", "settings"}
+    sections = {"color", "effects", "ambient", "music", "scenes", "profiles", "schedule", "automations", "settings"}
+    stack = SimpleNamespace()
+    stack.setCurrentWidget = lambda page: setattr(stack, "current", page)
+    stack.currentWidget = lambda: stack.current
+    host = SimpleNamespace(
+        _nav_buttons={}, _nav_pages={section: object() for section in sections}, _section_stack=stack,
+        preview=preview, height=lambda: 800,
+    )
 
     for section in sections:
         select_section(host, section)
-        assert preview.compact is (section not in expected_full)
+        assert preview.compact is (section != "color")
 
 
 def _color_picker_labels() -> dict[str, str]:

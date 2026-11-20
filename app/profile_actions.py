@@ -251,4 +251,11 @@ class ProfileActions:
             )
             host._remember_current_color()
         else:
-            host._ble.set_effect_with_speed(effect_code, host.speed_slider.value())
+            uses_sequence = getattr(host._ble, "effect_uses_sequence", None)
+            if callable(uses_sequence) and uses_sequence(effect_code):
+                host.stop_streams()
+                host._color_apply_debounce.stop()
+                host._ble.set_brightness(host.brightness_slider.value())
+                host._ble.set_effect(effect_code)
+            else:
+                host._ble.set_effect_with_speed(effect_code, host.speed_slider.value())

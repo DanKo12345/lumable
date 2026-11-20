@@ -5,11 +5,9 @@ X?" without touching the BLE layer. This module answers that from plain data
 keyed by driver id, so it stays trivially testable and importable anywhere.
 
 Design rules (0.3.3):
-- **Conservative.** A capability is only ``True`` where the hardware genuinely
-  supports it. The four controllers LumaBLE speaks today (BLEDOM, Triones, Magic
-  Home, BanlanX) are plain RGB with built-in effects — none has a real white
-  channel or addressable segments — so ``cct``/``rgbw``/``segments`` stay
-  ``False``. We never emulate a white channel on an RGB-only strip.
+- **Conservative.** A capability is only ``True`` where LumaBLE supports it
+  on the hardware. Govee H617A can play scenes, but does not expose individual
+  segments through LumaBLE.
 - **effect *speed* is not here.** It is variant-dependent (e.g. BanlanX only on
   the v2 variant), so ask the live driver's ``supports_effect_speed()`` instead.
 - Unknown ids fall back to a safe RGB-only profile.
@@ -40,6 +38,7 @@ _MATRIX: dict[str, dict[str, bool]] = {
     "triones": dict(_RGB_WITH_EFFECTS),
     "magic_home": dict(_RGB_WITH_EFFECTS),
     "banlanx": dict(_RGB_WITH_EFFECTS),
+    "govee_h617a": dict(_RGB_WITH_EFFECTS),
     "generic": dict(_GENERIC),
 }
 

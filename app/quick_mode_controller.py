@@ -38,13 +38,15 @@ class QuickModeController:
             mode = host._custom_quick_modes[index]
             key = str(mode.get("key", ""))
             name = self.custom_name(mode, index)
-            button.setText(name[:18])
+            button.setText(name)
             button.setToolTip(name)
             button.setEnabled(self.effect_code(mode) is not None or key == host._active_mode_key)
             button.set_role("accent" if key == host._active_mode_key else "mode")
             button.set_embedded_action("x", lambda slot=index: self.finish_delete_custom(slot))
-            button.show()
-        host.save_quick_mode_button.setToolTip(host._tr("mode.save_current"))
+        save_label = host._tr("mode.save_current")
+        host.save_quick_mode_button.setToolTip(save_label)
+        host.save_quick_mode_button.setAccessibleName(save_label)
+        host.quick_modes_row.refresh()
 
     def set_active(self, mode_key: str | None, *, update_theme: bool = True) -> None:
         host = self._host
@@ -261,7 +263,7 @@ class QuickModeController:
         if mode_key != "rainbow":
             return None
         for effect in host._ble.effect_presets():
-            if effect.key in {"smooth_rainbow", "smooth_spectrum", "triones_rainbow", "magic_home_rainbow"}:
+            if effect.key in {"smooth_rainbow", "smooth_spectrum", "triones_rainbow", "magic_home_rainbow", "govee_rainbow"}:
                 if host._ble.supports_effect_code(effect.code):
                     return effect.code
         return None

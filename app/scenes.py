@@ -377,7 +377,11 @@ def plan_apply(state: dict[str, Any], capabilities: dict[str, Any] | None = None
     effect = state.get("effect")
     if effect is not None:
         kind = effect.get("kind")
-        if kind == "firmware" and not _supports(capabilities, "firmware_effects", True):
+        effect_codes = (capabilities or {}).get("firmware_effect_codes")
+        if kind == "firmware" and (
+            not _supports(capabilities, "firmware_effects", True)
+            or (effect_codes is not None and effect.get("ref") not in effect_codes)
+        ):
             skipped.append({"field": "effect", "reason": "unsupported"})
         elif kind == "firmware" and effect.get("speed") is not None and not _supports(capabilities, "effect_speed", True):
             # The effect itself is supported but its speed control isn't (e.g. a

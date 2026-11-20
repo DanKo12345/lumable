@@ -24,12 +24,13 @@ from app.ble_drivers import (
     get_driver_by_id,
     probe_driver_candidates,
 )
-from app.ble_drivers.base import LedBleDriver, clamp
+from app.ble_drivers.base import EffectSequence, LedBleDriver, clamp
 from app.ble_reliability import WritePacer, classify_disconnect, reconnect_delay
 from app.ble_routing import plan_targets, swap_primary
 from app.color_fade import color_distance, fade_frames
 from app.known_signatures import identify_record
 from app.localization import localization_manager
+from app.scan_choices import find_device
 from app.scan_observations import ScanObservations
 from app.scan_ranking import by_signal
 from app.scan_snapshot import (
@@ -624,11 +625,11 @@ class BleController(QObject):
         return True
 
     def set_brightness(self, value: int) -> None:
-        self._last_brightness = clamp(value, 0, 100)
+        self._last_brightness = clamp(value, self.minimum_brightness_percent(), 100)
         self._desired_power_on = True
         if self._driver is not None:
             self._driver.remember_brightness(self._last_brightness)
-        self._submit(self._set_brightness(value))
+        self._submit(self._set_brightness(self._last_brightness))
 
     def set_static_color(self, red: int, green: int, blue: int, brightness: int) -> None:
         self._fade_seq = getattr(self, "_fade_seq", 0) + 1
@@ -689,12 +690,21 @@ class BleController(QObject):
             return True
         if self._driver is None:
             return True
-        return self._driver.effect_payload(int(code)) is not None
+        return self._effect_sequence(self._driver, int(code)) is not None or self._driver.effect_payload(int(code)) is not None
 
     def supports_effect_speed(self) -> bool:
         if self._driver is None:
             return True
         return self._driver.supports_effect_speed()
+
+    def minimum_brightness_percent(self) -> int:
+        return getattr(self._driver, "minimum_brightness_percent", 0)
+
+    def active_effect_uses_sequence(self) -> bool:
+        return self.effect_uses_sequence(getattr(self, "_current_effect_code", 0))
+
+    def effect_uses_sequence(self, code: int) -> bool:
+        return self._driver is not None and self._effect_sequence(self._driver, code) is not None
 
     def active_driver_id(self) -> str:
         """The id of the driver currently bound to the connection ('' if none),
@@ -1033,12 +1043,23 @@ class BleController(QObject):
         await self._fan_out(lambda d: d.power_payloads(enabled))
         if enabled and restore_state:
             await asyncio.sleep(0.12)
-            await self._write_many(
-                driver.brightness_payloads(self._last_brightness),
-                localization_manager.status_ble_event("brightness_restore", value=self._last_brightness),
-            )
+            brightness = clamp(self._last_brightness, self.minimum_brightness_percent(), 100)
+            brightness_payloads = driver.brightness_payloads(brightness)
+            if brightness_payloads:
+                await self._write_many(
+                    brightness_payloads,
+                    localization_manager.status_ble_event("brightness_restore", value=brightness),
+                )
             await self._fan_out(lambda d: d.brightness_payloads(self._last_brightness))
             await asyncio.sleep(0.08)
+            if self.active_effect_uses_sequence():
+                code = self._current_effect_code
+                await self._set_effect(code)
+                await self._fan_out(
+                    lambda d: d.color_payloads(self._last_red, self._last_green, self._last_blue)
+                    if self._effect_sequence(d, code) is None else None
+                )
+                return
             await self._write_many(
                 driver.color_payloads(self._last_red, self._last_green, self._last_blue),
                 localization_manager.status_ble_event(
@@ -1056,6 +1077,8 @@ class BleController(QObject):
             driver.color_payloads(red, green, blue),
             localization_manager.status_ble_event("color_set", red=red, green=green, blue=blue),
         )
+        if self.active_effect_uses_sequence():
+            self._current_effect_code = 0
         await self._fan_out(lambda d: d.color_payloads(red, green, blue))
 
     async def _set_color_stream(self, red: int, green: int, blue: int) -> None:
@@ -1063,6 +1086,8 @@ class BleController(QObject):
         # already self-throttle by dropping frames when a write is in flight.
         driver = self._require_driver()
         await self._write_many(driver.color_payloads(red, green, blue), "", quiet=True, stream=True)
+        if self.active_effect_uses_sequence():
+            self._current_effect_code = 0
         await self._fan_out(lambda d: d.color_payloads(red, green, blue), stream=True)
 
     # ── addressed write implementations ────────────────────────────────
@@ -1092,6 +1117,8 @@ class BleController(QObject):
         # the command was aimed, not that anything got there.
         if plan["sync_primary"] and wrote_primary:
             self._last_red, self._last_green, self._last_blue = red, green, blue
+            if self.active_effect_uses_sequence():
+                self._current_effect_code = 0
         return None if wrote_primary or wrote_mirror else NO_TARGET
 
     async def _set_power_for_addresses(self, enabled: bool, addresses: list[str] | None):
@@ -1128,7 +1155,7 @@ class BleController(QObject):
             payloads = conn.driver.brightness_payloads(value) or conn.driver.color_payloads(red, green, blue)
             wrote_mirror |= await self._mirror_write_payloads(conn, payloads)
         if plan["sync_primary"] and wrote_primary:
-            self._last_brightness = value
+            self._last_brightness = max(value, self.minimum_brightness_percent())
         return None if wrote_primary or wrote_mirror else NO_TARGET
 
     async def _set_effect_for_addresses(self, code: int, speed: int | None, addresses: list[str] | None):
@@ -1142,13 +1169,23 @@ class BleController(QObject):
         wrote_primary = False
         wrote_mirror = False
         if self._primary_writable(plan):
-            payload = build(self._require_driver())
-            if payload is not None:
+            driver = self._require_driver()
+            sequence = self._effect_sequence(driver, code)
+            if sequence is not None:
+                await self._write_effect_sequence(sequence, code)
+                wrote_primary = True
+            elif (payload := build(driver)) is not None:
                 await self._write_many([payload], "", quiet=True)
                 wrote_primary = True
         for conn in self._targeted_mirrors(plan):
-            payload = build(conn.driver)
-            if payload is not None:
+            sequence = self._effect_sequence(conn.driver, code)
+            if sequence is not None:
+                try:
+                    await self._write_effect_sequence(sequence, code, conn=conn)
+                except BLE_OPERATION_ERRORS:
+                    continue
+                wrote_mirror = True
+            elif (payload := build(conn.driver)) is not None:
                 wrote_mirror |= await self._mirror_write_payloads(conn, [payload])
         # A driver with no payload for this effect wrote nothing, so the
         # command did not happen — however willing the plan was.
@@ -1238,12 +1275,59 @@ class BleController(QObject):
                 pass
         await self._set_color(*end)
 
+    @staticmethod
+    def _effect_sequence(driver: LedBleDriver, code: int) -> EffectSequence | None:
+        build = getattr(driver, "effect_sequence", None)
+        return build(code) if build is not None else None
+
+    async def _write_effect_sequence(
+        self, sequence: EffectSequence, code: int, *, conn: DeviceConnection | None = None,
+    ) -> None:
+        """Upload through the existing command lock, with no fragment retries."""
+        client = self._client if conn is None else conn.client
+        characteristic = self._write_characteristic if conn is None else conn.write_characteristic
+        if client is None or characteristic is None:
+            raise ConnectionLostError("Connect to the LED strip first.")
+
+        def check_connection() -> None:
+            current = client is self._client if conn is None else any(item is conn for item in self._mirror_connections)
+            if not current or not client.is_connected:
+                if conn is None and current:
+                    self._start_reconnect_after_connection_loss()
+                raise ConnectionLostError("BLE connection changed during the effect upload.")
+
+        for index, frame in enumerate(sequence.frames, 1):
+            check_connection()
+            error = await self._write_attempt(characteristic, frame, False, client=client)
+            if error is not None:
+                address = self._primary_address() if conn is None else conn.address
+                self._record_ble_history("effect_upload_failed", address=address, code=code, frame=index, error=str(error))
+                raise error
+            await asyncio.sleep(sequence.interval_seconds)
+        check_connection()
+        self.status_changed.emit(localization_manager.status_ble_event("effect_sent", code=f"{code:02X}"))
+
     async def _set_effect(self, code: int) -> None:
         if code == 0:
+            if self.active_effect_uses_sequence():
+                await self._set_color(self._last_red, self._last_green, self._last_blue)
             self._current_effect_code = 0
             self.status_changed.emit(localization_manager.status_ble_event("static_color_mode"))
             return
-        payload = self._require_driver().effect_payload(code)
+        driver = self._require_driver()
+        sequence = self._effect_sequence(driver, code)
+        if sequence is not None:
+            await self._write_effect_sequence(sequence, code)
+            self._current_effect_code = int(code)
+            for conn in tuple(self._mirror_connections):
+                mirror_sequence = self._effect_sequence(conn.driver, code)
+                if mirror_sequence is not None:
+                    try:
+                        await self._write_effect_sequence(mirror_sequence, code, conn=conn)
+                    except BLE_OPERATION_ERRORS:
+                        continue
+            return
+        payload = driver.effect_payload(code)
         if payload is None:
             raise RuntimeError("Built-in effects are not supported by this controller yet.")
         await self._write(payload, localization_manager.status_ble_event("effect_applied", code=f"{code:02X}"))
@@ -1261,7 +1345,7 @@ class BleController(QObject):
 
     async def _set_effect_with_speed(self, code: int, speed: int) -> None:
         driver = self._require_driver()
-        if code == 0:
+        if code == 0 or self._effect_sequence(driver, code) is not None:
             await self._set_effect(code)
             return
         combined_builder = getattr(driver, "effect_payload_with_speed", None)
@@ -1326,11 +1410,17 @@ class BleController(QObject):
                 pass
             raise
         services = client.services
-        driver = detect_connected_driver(device.name or "", services, preferred_id=preferred_driver_id)
+        name = (device.name or "").strip()
+        if not name and preferred_driver_id:
+            # The address lookup may finish before the scan response with the model name.
+            scanned = find_device(self._last_scan_results, address)
+            if scanned is not None and scanned.get("supported"):
+                name = scanned["name"]
+        driver = detect_connected_driver(name, services, preferred_id=preferred_driver_id)
         if driver is None and force_driver_id:
             # The user chose to try a specific driver on this unrecognised device.
             forced = get_driver_by_id(force_driver_id)
-            if forced is not None and forced.pick_write_characteristic(services) is not None:
+            if forced is not None and forced.allow_protocol_guess and forced.pick_write_characteristic(services) is not None:
                 driver = forced
         if driver is None:
             await client.disconnect()
@@ -1340,14 +1430,14 @@ class BleController(QObject):
             diagnostic = self._protocol_detection_diagnostic(device, services, preferred_driver_id)
             self._record_ble_history("protocol_mismatch", details=diagnostic)
             if offer_candidates and not force_driver_id:
-                candidates = probe_driver_candidates(device.name or "", services)
+                candidates = probe_driver_candidates(name, services)
                 if candidates:
                     best = candidates[0]
                     self.protocol_candidate_found.emit(address, best.driver_id, best.display_name)
             raise ProtocolCompatibilityError(localization_manager.t("error.controller_unsupported"))
         driver.reset_runtime_state()
         if hasattr(driver, "configure_for_device"):
-            driver.configure_for_device(device.name or "")
+            driver.configure_for_device(name)
         driver.remember_brightness(self._last_brightness)
         characteristic = driver.pick_write_characteristic(services)
         if characteristic is None:
@@ -1451,6 +1541,8 @@ class BleController(QObject):
         self._client = promoted.client
         self._device = promoted.device
         self._driver = promoted.driver
+        if getattr(current.driver, "id", None) != getattr(promoted.driver, "id", None):
+            self._current_effect_code = 0
         self._write_characteristic = promoted.write_characteristic
         self._write_characteristics = list(promoted.write_characteristics)
         self._preferred_payload_indices = dict(promoted.preferred_payload_indices)
@@ -1504,7 +1596,12 @@ class BleController(QObject):
             await self._mirror_write_payloads(conn, conn.driver.brightness_payloads(self._last_brightness))
             await asyncio.sleep(0.06)
             if self._current_effect_code:
-                payload = conn.driver.effect_payload(self._current_effect_code)
+                code = self._current_effect_code
+                sequence = self._effect_sequence(conn.driver, code)
+                if sequence is not None:
+                    await self._write_effect_sequence(sequence, code, conn=conn)
+                    return
+                payload = conn.driver.effect_payload(code)
                 if payload is not None:
                     await self._mirror_write_payloads(conn, [payload])
                     return
@@ -1774,7 +1871,7 @@ class BleController(QObject):
                 await self._set_power(False)
                 return
             await self._set_power(True, restore_state=True)
-            if self._current_effect_code:
+            if self._current_effect_code and not self.active_effect_uses_sequence():
                 await asyncio.sleep(0.08)
                 await self._set_effect(self._current_effect_code)
         except BLE_OPERATION_ERRORS as exc:

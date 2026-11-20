@@ -361,6 +361,19 @@ class StaticPopupComboBox(QComboBox):
 
     def eventFilter(self, watched, event) -> bool:
         if self._popup is not None and self._popup.isVisible():
+            if (
+                event.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress)
+                and (watched is self or self._is_popup_widget(watched))
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space, Qt.Key.Key_Escape)
+            ):
+                event.accept()
+                if event.type() == QEvent.Type.KeyPress:
+                    if event.key() == Qt.Key.Key_Escape:
+                        self.hidePopup()
+                    elif self._list is not None and (item := self._list.currentItem()) is not None:
+                        self._handle_item_clicked(item)
+                    self.setFocus(Qt.FocusReason.OtherFocusReason)
+                return True
             if event.type() == QEvent.Type.MouseButtonPress:
                 global_pos = event.globalPosition().toPoint()
                 popup_pos = self._popup.mapFromGlobal(global_pos)

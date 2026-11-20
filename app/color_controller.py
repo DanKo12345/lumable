@@ -80,6 +80,8 @@ class ColorController:
 
     def refresh_effect_names(self) -> None:
         host = self._host
+        with host._suppress_signals():
+            host.brightness_slider.setMinimum(host._ble.minimum_brightness_percent())
         current_code = host.effect_combo.currentData()
         effects = list(host._ble.effect_presets())
         unlocked_count = len(effects) if can_use("all_effects") else free_effect_limit()
@@ -94,7 +96,7 @@ class ColorController:
         idx = host.effect_combo.findData(current_code)
         host.effect_combo.setCurrentIndex(idx if idx >= 0 else 0)
         host.effect_combo.blockSignals(False)
-        host._sync_speed_controls()
+        self.sync_effect_preview(reset_phase=True)
 
     def sync_effect_preview(self, *, reset_phase: bool = False) -> None:
         host = self._host
@@ -108,15 +110,14 @@ class ColorController:
         host = self._host
         is_static = int(host.effect_combo.currentData() or 0) == 0
         supports_speed = host._ble.supports_effect_speed()
-        visible = not is_static
-        enabled = visible and supports_speed
+        visible = not is_static and supports_speed
         speed_label = host._slider_labels.get("effects.speed")
         if speed_label is not None:
             speed_label.setVisible(visible)
         host.speed_slider.setVisible(visible)
-        host.speed_slider.setEnabled(enabled)
+        host.speed_slider.setEnabled(visible)
         host.speed_value.setVisible(visible)
-        host.speed_value.setEnabled(enabled)
+        host.speed_value.setEnabled(visible)
 
     def apply_speed(self) -> None:
         host = self._host
@@ -152,6 +153,9 @@ class ColorController:
             host._sync_effect_preview(reset_phase=True)
             return
         code = int(data)
+        host.stop_streams()
+        pending_brightness = host._color_apply_debounce.isActive() and host._brightness_only_pending
+        host._color_apply_debounce.stop()
         if code == 0:
             host._ble.set_static_color(
                 host.red_slider.value(),
@@ -164,6 +168,11 @@ class ColorController:
             host._sync_effect_preview(reset_phase=True)
             host._sync_quick_mode_from_state()
             return
-        host._ble.set_effect_with_speed(code, host.speed_slider.value())
+        if host._ble.supports_effect_speed():
+            host._ble.set_effect_with_speed(code, host.speed_slider.value())
+        else:
+            if pending_brightness and host._ble.effect_uses_sequence(code):
+                host._ble.set_brightness(host.brightness_slider.value())
+            host._ble.set_effect(code)
         host._sync_effect_preview(reset_phase=True)
         host._sync_quick_mode_from_state()

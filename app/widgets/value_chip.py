@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Property, QAbstractAnimation, QEasingCurve, QRectF, Qt
+from PySide6.QtCore import Property, QAbstractAnimation, QEasingCurve, QEvent, QRectF, Qt
 from PySide6.QtGui import QColor, QKeyEvent, QPainter
 from PySide6.QtWidgets import QAbstractButton, QStyle, QStyleOption
 
@@ -23,6 +23,7 @@ class ValueChip(QAbstractButton):
         self._current_text = str(text)
         self._next_text = str(text)
         self._purpose = ""
+        self._text_fit: tuple[int, int] | None = None
         self._roll = 1.0
         self._roll_direction = 1
         self._roll_anim = make_property_animation(self, b"rollValue", 170, QEasingCurve.OutQuint)
@@ -45,6 +46,20 @@ class ValueChip(QAbstractButton):
         """
         self._purpose = str(purpose)
         self._refresh_accessible_name()
+
+    def fit_text(self, *, minimum: int, padding: int) -> None:
+        self._text_fit = (minimum, padding)
+        self._update_text_width()
+
+    def _update_text_width(self) -> None:
+        if (fit := getattr(self, "_text_fit", None)) is not None:
+            minimum, padding = fit
+            self.setFixedWidth(max(minimum, self.fontMetrics().horizontalAdvance(self.text()) + padding))
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._update_text_width()
 
     def _refresh_accessible_name(self) -> None:
         value = self._next_text
@@ -82,6 +97,7 @@ class ValueChip(QAbstractButton):
                 self._roll_direction = 1
         self._next_text = text
         super().setText(text)
+        self._update_text_width()
         self._refresh_accessible_name()
         if not running:
             restart_animation(self._roll_anim, 0.0, 1.0)

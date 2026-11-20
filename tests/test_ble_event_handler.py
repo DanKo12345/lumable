@@ -669,6 +669,7 @@ def test_primary_changed_saves_the_new_main_strip(monkeypatch) -> None:
     assert host.last_device_label.text == "device.last:name=TV,address=11:22:33:44:55:66"
     assert host.device_status_hint.text == "TV"
     assert address_of(host.device_combo.currentData()) == "11:22:33:44:55:66"
+    assert host.effect_refresh_count == host.quick_refresh_count == 1
     # Scene targets ("primary", groups) follow the new main strip.
     assert host._scene_ui.refreshed == 1
 

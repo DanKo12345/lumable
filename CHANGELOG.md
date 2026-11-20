@@ -2,6 +2,29 @@
 
 All notable changes to LumaBLE will be documented here.
 
+## [0.4.5] - 2026-11-20
+
+LumaBLE now controls the Govee H617A over Bluetooth, including its built-in lighting scenes.
+The desktop controls are easier to use on smaller windows and with a keyboard.
+
+### Added
+
+- Govee H617A support: power, brightness, whole-strip RGB, and 34 built-in scenes.
+- Screen Sync, Music Reaction, and Fusion work with the H617A using whole-strip colour.
+
+### Changed
+
+- First launch offers to find a strip without turning it on. The disconnected status now
+  distinguishes the colour preview from output sent to a strip.
+- Quick modes stay accessible in a compact window, with keyboard navigation and an option to
+  remove a pin from the overflow menu.
+- App-triggered rules are grouped under Automations; timers still have their own page.
+
+### Fixed
+
+- Switching themes after adding an automation row no longer crashes.
+- Long DIY motion labels wrap instead of crowding the controls.
+
 ## [0.4.4] - 2026-09-18
 
 Music reacts more clearly at everyday listening levels, and the microphone is easier to tune

@@ -295,6 +295,8 @@ class BleEventHandler:
         self._sync_last_device_hint(name=display, address=address)
         self._sync_sidebar_connection_hint(display)
         self.refresh_mirror_list(host._ble.mirror_addresses())
+        host._refresh_effect_names()
+        host._refresh_quick_mode_buttons()
         # Scene targets ("primary"/groups) and the group member chips are keyed
         # off the current primary, so they have to be rebuilt too.
         scene_ui = getattr(host, "_scene_ui", None)
@@ -878,8 +880,12 @@ class BleEventHandler:
         hint = getattr(host, "device_status_hint", None)
         if hint is None:
             return
-        text = str(name).strip() if host._is_connected else host._tr("device.connect_hint")
+        text = str(name).strip() if host._is_connected else host._tr("device.preview_hint")
         hint.setText(text)
+        card = getattr(host, "device_status_card", None)
+        if card is not None:
+            tooltip = host._tr("device.title") if host._is_connected else f"{host._tr('device.find_strip')}\n{text}"
+            card.setToolTip(tooltip)
         wanted = bool(text) if host._is_connected else True
         apply_hint = getattr(host, "_set_status_hint_visible", None)
         if callable(apply_hint):

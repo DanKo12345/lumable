@@ -13,6 +13,25 @@ from app.theme import qcolor_from_token, theme_manager
 def effect_semantic_key(effect_key: str, effect_code: int) -> str:
     key = effect_key or "static_color"
     code = int(effect_code)
+    if key.startswith("govee_"):
+        scene = key.removeprefix("govee_")
+        if scene in {"rainbow", "aurora", "aurora_b", "flower_field", "spring"}:
+            return "smooth_rainbow"
+        if scene in {"forest", "tree_shadow", "cornfield"}:
+            return "fade_green"
+        if scene in {"wave", "deep_sea", "stream", "ripple", "downpour"}:
+            return "fade_cyan"
+        if scene in {"fire", "sunset", "volcano_a", "volcano_b", "fall"}:
+            return "fade_red"
+        if scene in {"sunrise", "sunny", "summer", "gobi_desert", "desert_b", "sand_grains"}:
+            return "fade_yellow"
+        if scene in {"starry_sky", "moonlight", "lightning_a", "lightning_b", "meteor_shower"}:
+            return "fade_white"
+        if scene in {"winter", "glacier"}:
+            return "fade_blue"
+        if scene == "cherry_blossoms":
+            return "fade_magenta"
+        return "fade_spectrum"
     if key.startswith("banlanx_effect_"):
         banlanx_effects = {
             0x01: "smooth_rainbow",

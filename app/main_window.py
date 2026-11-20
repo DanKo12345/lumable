@@ -55,7 +55,7 @@ from app.license_presenter import LicenseStatusPresenter
 from app.license_refresh import LicenseRefresher
 from app.local_api.controller import LocalApiController
 from app.localization import localization_manager
-from app.main_layout import build_main_layout
+from app.main_layout import build_main_layout, select_section, sync_preview_density
 from app.motion_policy import DEFAULT_MOTION_MODE, motion_policy
 from app.music_ui_controller import MusicUiController
 from app.onboarding_controller import OnboardingController
@@ -282,7 +282,8 @@ class MainWindow(QMainWindow):
         self._color_apply_debounce = QTimer(self)
         self._color_apply_debounce.setSingleShot(True)
         self._color_apply_debounce.setInterval(120)
-        self._color_apply_debounce.timeout.connect(self._apply_current_color)
+        self._brightness_only_pending = False
+        self._color_apply_debounce.timeout.connect(self._apply_queued_color_update)
 
         self._local_color_debounce = QTimer(self)
         self._local_color_debounce.setSingleShot(True)
@@ -483,7 +484,14 @@ class MainWindow(QMainWindow):
         font.setPointSizeF(11.0 * self._ui_scale)
         font.setWeight(QFont.Weight.DemiBold)
         button.setFont(font)
-        self._buttons.append(button)
+        buttons = self._buttons
+        buttons.append(button)
+
+        def unregister() -> None:
+            if button in buttons:
+                buttons.remove(button)
+
+        button.destroyed.connect(unregister)
         return button
 
     def _slider(self, accent: str) -> LiquidSlider:
@@ -606,10 +614,8 @@ class MainWindow(QMainWindow):
         self._automation_ui.wire()
         self._hotkey_ui.wire()
         self._local_api.wire()
-        # Manual power and PC-mode starts (screen sync, music, software FX, DIY)
-        # also mean the strip no longer shows the applied scene.
+        # A PC-mode start means the strip no longer shows the applied scene.
         for scene_breaker in (
-            self.power_button,
             self.ambient_toggle_button,
             self.music_toggle_button,
             self.software_fx_toggle,
@@ -674,7 +680,7 @@ class MainWindow(QMainWindow):
 
     def _wire_color_events(self):
         self.pick_color_button.clicked.connect(self._pick_color)
-        self.power_button.clicked.connect(self._toggle_power)
+        self.power_button.clicked.connect(self._on_power_button_clicked)
         self.effect_combo.currentIndexChanged.connect(self._queue_selected_effect)
         self.speed_slider.valueChanged.connect(lambda v: self.speed_value.setText(f"{v}%"))
         self.speed_slider.valueChanged.connect(self.effect_preview.set_speed)
@@ -685,7 +691,7 @@ class MainWindow(QMainWindow):
         self._wire_rgb_slider_events()
         self.brightness_slider.valueChanged.connect(lambda v: self.brightness_value.setText(f"{v}%"))
         self.brightness_slider.valueChanged.connect(self.preview.set_brightness)
-        self.brightness_slider.valueChanged.connect(self._queue_current_color_update)
+        self.brightness_slider.valueChanged.connect(lambda _: self._queue_current_color_update(brightness_only=True))
         self.brightness_value.clicked.connect(
             lambda: self._edit_slider_value(self.brightness_slider, self.brightness_value, suffix="%")
         )
@@ -833,6 +839,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._apply_compact_sidebar()
+        sync_preview_density(self, animate=False)
 
     def _apply_compact_sidebar(self) -> None:
         # On a short window the sidebar can't fit its full-height footer, so drop
@@ -1005,13 +1012,27 @@ class MainWindow(QMainWindow):
             self._sync_effect_preview(reset_phase=True)
         self._sync_quick_mode_from_state()
 
-    def _queue_current_color_update(self):
+    def _queue_current_color_update(self, *, brightness_only: bool = False):
         if self._initializing:
             return
         if not self._is_connected:
             self._local_color_debounce.start()
             return
+        if not brightness_only or not self._color_apply_debounce.isActive():
+            self._brightness_only_pending = brightness_only
         self._color_apply_debounce.start()
+
+    def _apply_queued_color_update(self) -> None:
+        brightness_only = self._brightness_only_pending
+        self._brightness_only_pending = False
+        if (
+            brightness_only and not self._initializing and self._is_connected
+            and self._ble.effect_uses_sequence(int(self.effect_combo.currentData() or 0))
+        ):
+            self._ble.set_brightness(self.brightness_slider.value())
+            self._sync_quick_mode_from_state()
+            return
+        self._apply_current_color()
 
     def _stream_owners(self) -> tuple:
         """Every controller that can drive the strip's colour path. Exactly one
@@ -1079,13 +1100,24 @@ class MainWindow(QMainWindow):
         self._music_ui.refresh_shared_state()
         self._ambient_ui.refresh_status()
 
+    def _on_power_button_clicked(self, checked: bool) -> None:
+        if self._is_connected:
+            self._toggle_power()
+            self._note_manual_scene_change()
+            return
+        # The check state still holds the user's preferred power for a live link.
+        self.power_button.setChecked(not checked)
+        select_section(self, "settings")
+        self._ble_events.connect_or_scan()
+
     def _toggle_power(self):
         self._sync_power_button()
         if self._initializing:
             return
         enabled = self.power_button.isChecked()
         self.apply_power_to_streams(enabled)
-        self._ble.set_power(enabled)
+        if self._is_connected:
+            self._ble.set_power(enabled)
         self._remember_power_setting(enabled)
         self._sync_aurora_accent(enabled=enabled)
         self._sync_quick_mode_from_state()
@@ -1104,6 +1136,24 @@ class MainWindow(QMainWindow):
             pass
 
     def _sync_power_button(self):
+        if not self._is_connected:
+            self.power_button.set_role("accent")
+            if self._inspect_in_progress:
+                key = "device.inspect_running"
+            elif self._connect_in_progress:
+                key = "device.connecting"
+            elif self._scan_in_progress:
+                key = "device.status.scanning"
+            elif self._selected_device_is_unknown():
+                key = "device.inspect"
+            elif self._selected_device() is not None:
+                key = "device.connect"
+            else:
+                key = "device.find_strip"
+            self.power_button.setText(self._tr(key))
+            self.power_button.setEnabled(not (self._inspect_in_progress or self._connect_in_progress or self._scan_in_progress))
+            return
+        self.power_button.setEnabled(True)
         powered_on = self.power_button.isChecked()
         self.power_button.setText(self._tr("color.power_off") if powered_on else self._tr("color.power_on"))
         # When lit, the main action carries the current strip colour ("your
@@ -1164,6 +1214,7 @@ class MainWindow(QMainWindow):
 
     def _sync_connect_buttons(self):
         self._device_status.sync()
+        self._sync_power_button()
 
     def _update_status_dot(self) -> None:
         self._device_status.update_dot()
